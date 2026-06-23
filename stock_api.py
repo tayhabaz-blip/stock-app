@@ -31,10 +31,14 @@ def get_stock(ticker: str):
         return {"error": "מניה לא נמצאה"}
     info = stock.info
     closes = [clean(v) for v in hist["Close"].tolist()]
+    highs  = [clean(v) for v in hist["High"].tolist()]
+    lows   = [clean(v) for v in hist["Low"].tolist()]
     labels = [str(d.date()) for d in hist.index]
     return {
         "ticker": ticker.upper(),
         "closes": closes,
+        "highs": highs,
+        "lows": lows,
         "labels": labels,
         "name": info.get("longName", ticker),
         "description": info.get("longBusinessSummary", ""),
@@ -99,3 +103,37 @@ def scan():
             continue
     return {"results": results}
 
+@app.get("/sentiment/{ticker}")
+def get_sentiment(ticker: str):
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        rec = stock.recommendations
+        if rec is not None and not rec.empty:
+            latest = rec.tail(4)
+            strong_buy  = int(latest["strongBuy"].sum())  if "strongBuy"  in latest.columns else 0
+            buy         = int(latest["buy"].sum())        if "buy"        in latest.columns else 0
+            hold        = int(latest["hold"].sum())       if "hold"       in latest.columns else 0
+            sell        = int(latest["sell"].sum())       if "sell"       in latest.columns else 0
+            strong_sell = int(latest["strongSell"].sum()) if "strongSell" in latest.columns else 0
+        else:
+            strong_buy = buy = hold = sell = strong_sell = 0
+        total = strong_buy + buy + hold + sell + strong_sell
+        bull_pct    = round((strong_buy + buy) / total * 100, 1) if total else None
+        bear_pct    = round((sell + strong_sell) / total * 100, 1) if total else None
+        neutral_pct = round(hold / total * 100, 1) if total else None
+        short_pct   = info.get("shortPercentOfFloat")
+        return {
+            "ticker": ticker.upper(),
+            "bull_pct": bull_pct,
+            "bear_pct": bear_pct,
+            "neutral_pct": neutral_pct,
+            "votes": {
+                "strong_buy": strong_buy, "buy": buy, "hold": hold,
+                "sell": sell, "strong_sell": strong_sell, "total": total
+            },
+            "short_pct_float": round(short_pct * 100, 2) if short_pct else None,
+            "recommendation": info.get("recommendationKey", ""),
+        }
+    except Exception as e:
+        return {"error": str(e)}
