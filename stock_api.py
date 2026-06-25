@@ -1,6 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import yfinance as yf
+import requests
+session = requests.Session()
+session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
 yf.set_tz_cache_location("/tmp")
 import math
 
@@ -26,7 +29,7 @@ def clean(v):
 
 @app.get("/stock/{ticker}")
 def get_stock(ticker: str):
-    stock = yf.Ticker(ticker, session=None)
+    stock = yf.Ticker(ticker, session=session)
     stock.fast_info
     hist = stock.history(period="1y")
     if hist.empty:
@@ -69,7 +72,7 @@ def scan():
     results = []
     for ticker in WATCHLIST:
         try:
-            stock = yf.Ticker(ticker, session=None)
+            stock = yf.Ticker(ticker, session=session)
             hist = stock.history(period="3mo")
             if hist.empty or len(hist) < 20:
                 continue
@@ -108,7 +111,7 @@ def scan():
 @app.get("/sentiment/{ticker}")
 def get_sentiment(ticker: str):
     try:
-        stock = yf.Ticker(ticker, session=None)
+        stock = yf.Ticker(ticker, session=session)
         info = stock.info
         rec = stock.recommendations
         if rec is not None and not rec.empty:
