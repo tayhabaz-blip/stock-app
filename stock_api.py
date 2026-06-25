@@ -1,13 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import yfinance as yf
 import requests
-import requests_cache
-requests_cache.install_cache("/tmp/yfinance_cache", expire_after=3600)
-session = requests_cache.CachedSession("/tmp/yfinance_cache", expire_after=3600)
-session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
-yf.set_tz_cache_location("/tmp")
-import math
 
 app = FastAPI()
 
@@ -18,71 +11,76 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+AV_KEY = "J2TC8FW0KVOA52L7"
+AV_URL = "https://www.alphavantage.co/query"
+
+def get_overview(ticker):
+    r = requests.get(AV_URL, params={"function": "OVERVIEW", "symbol": ticker, "apikey": AV_KEY})
+    return r.json()
+
+def get_daily(ticker):
+    r = requests.get(AV_URL, params={"function": "TIME_SERIES_DAILY", "symbol": ticker, "outputsize": "compact", "apikey": AV_KEY})
+    return r.json()
+
 def clean(v):
     try:
-        if v is None:
-            return None
         f = float(v)
-        if f != f:
-            return None
-        return f
+        return None if f != f else f
     except:
         return None
 
 @app.get("/stock/{ticker}")
 def get_stock(ticker: str):
-    stock = yf.Ticker(ticker, session=session)
-    stock.fast_info
-    hist = stock.history(period="1y")
-    if hist.empty:
-        return {"error": "מניה לא נמצאה"}
-    info = stock.info
-    closes = [clean(v) for v in hist["Close"].tolist()]
-    highs  = [clean(v) for v in hist["High"].tolist()]
-    lows   = [clean(v) for v in hist["Low"].tolist()]
-    labels = [str(d.date()) for d in hist.index]
-    return {
-        "ticker": ticker.upper(),
-        "closes": closes,
-        "highs": highs,
-        "lows": lows,
-        "labels": labels,
-        "name": info.get("longName", ticker),
-        "description": info.get("longBusinessSummary", ""),
-        "sector": info.get("sector", ""),
-        "industry": info.get("industry", ""),
-        "market_cap": clean(info.get("marketCap")),
-        "pe_ratio": clean(info.get("trailingPE")),
-        "eps": clean(info.get("trailingEps")),
-        "week_high": clean(info.get("fiftyTwoWeekHigh")),
-        "week_low": clean(info.get("fiftyTwoWeekLow")),
-        "dividend": clean(info.get("dividendYield")),
-        "employees": clean(info.get("fullTimeEmployees")),
-        "website": info.get("website", ""),
-        "country": info.get("country", ""),
-    }
+    try:
+        overview = get_overview(ticker)
+        daily = get_daily(ticker)
+        if "Time Series (Daily)" not in daily:
+            return {"error": "מניה לא נמצאה"}
+        ts = daily["Time Series (Daily)"]
+        dates = sorted(ts.keys())[-252:]
+        closes = [float(ts[d]["4. close"]) for d in dates]
+        highs  = [float(ts[d]["2. high"])  for d in dates]
+        lows   = [float(ts[d]["3. low"])   for d in dates]
+        labels = dates
+        return {
+            "ticker": ticker.upper(),
+            "closes": closes,
+            "highs": highs,
+            "lows": lows,
+            "labels": labels,
+            "name": overview.get("Name", ticker),
+            "description": overview.get("Description", ""),
+            "sector": overview.get("Sector", ""),
+            "industry": overview.get("Industry", ""),
+            "market_cap": clean(overview.get("MarketCapitalization")),
+            "pe_ratio": clean(overview.get("PERatio")),
+            "eps": clean(overview.get("EPS")),
+            "week_high": clean(overview.get("52WeekHigh")),
+            "week_low": clean(overview.get("52WeekLow")),
+            "dividend": clean(overview.get("DividendYield")),
+            "employees": clean(overview.get("FullTimeEmployees")),
+            "country": overview.get("Country", ""),
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
-WATCHLIST = [
-    "AAPL","MSFT","NVDA","TSLA","META","AMZN","GOOGL","AMD",
-    "NFLX","PYPL","INTC","SOFI","PLTR","RIVN","CIFR",
-    "MARA","RIOT","COIN","HOOD","SNAP","UBER","SQ",
-    "SHOP","TEVA","MRNA","PFE","BABA","NIO"
-]
+WATCHLIST = ["AAPL","MSFT","NVDA","TSLA","META","SOFI","PLTR","COIN","HOOD","AMD"]
 
 @app.get("/scan")
 def scan():
     results = []
-    for ticker in WATCHLIST:
+    for ticker in WATCHLIST[:5]:
         try:
-            stock = yf.Ticker(ticker, session=session)
-            hist = stock.history(period="3mo")
-            if hist.empty or len(hist) < 20:
+            daily = get_daily(ticker)
+            if "Time Series (Daily)" not in daily:
                 continue
-            closes = [float(v) for v in hist["Close"].tolist() if v == v]
+            ts = daily["Time Series (Daily)"]
+            dates = sorted(ts.keys())[-30:]
+            closes = [float(ts[d]["4. close"]) for d in dates]
             if len(closes) < 20:
                 continue
             price = closes[-1]
-            ma9 = sum(closes[-9:]) / 9
+            ma9  = sum(closes[-9:])  / 9
             ma20 = sum(closes[-20:]) / 20
             gains, losses = 0, 0
             for i in range(-14, 0):
@@ -94,18 +92,8 @@ def scan():
             if rsi < 35: signals.append("RSI נמוך")
             if rsi > 70: signals.append("RSI גבוה")
             if ma9 > ma20: signals.append("MA9 מעל MA20")
-            recent = sorted(closes[-30:])
-            support = recent[int(len(recent)*0.15)]
-            resist = recent[int(len(recent)*0.85)]
-            if abs(price - support) / price < 0.03: signals.append("קרוב לתמיכה")
-            if abs(price - resist) / price < 0.03: signals.append("קרוב להתנגדות")
             if signals:
-                results.append({
-                    "ticker": ticker,
-                    "price": round(price, 2),
-                    "rsi": round(rsi, 1),
-                    "signals": signals
-                })
+                results.append({"ticker": ticker, "price": round(price, 2), "rsi": round(rsi, 1), "signals": signals})
         except:
             continue
     return {"results": results}
@@ -113,7 +101,8 @@ def scan():
 @app.get("/sentiment/{ticker}")
 def get_sentiment(ticker: str):
     try:
-        stock = yf.Ticker(ticker, session=session)
+        import yfinance as yf
+        stock = yf.Ticker(ticker)
         info = stock.info
         rec = stock.recommendations
         if rec is not None and not rec.empty:
@@ -132,13 +121,8 @@ def get_sentiment(ticker: str):
         short_pct   = info.get("shortPercentOfFloat")
         return {
             "ticker": ticker.upper(),
-            "bull_pct": bull_pct,
-            "bear_pct": bear_pct,
-            "neutral_pct": neutral_pct,
-            "votes": {
-                "strong_buy": strong_buy, "buy": buy, "hold": hold,
-                "sell": sell, "strong_sell": strong_sell, "total": total
-            },
+            "bull_pct": bull_pct, "bear_pct": bear_pct, "neutral_pct": neutral_pct,
+            "votes": {"strong_buy": strong_buy, "buy": buy, "hold": hold, "sell": sell, "strong_sell": strong_sell, "total": total},
             "short_pct_float": round(short_pct * 100, 2) if short_pct else None,
             "recommendation": info.get("recommendationKey", ""),
         }
