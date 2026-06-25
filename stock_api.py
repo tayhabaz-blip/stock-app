@@ -1,17 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import yfinance as yf
 import requests
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-FH_KEY = "d8uha31r01qinhui0algd8uha31r01qinhui0am0"
-FH_URL = "https://finnhub.io/api/v1"
-
-def fh(endpoint, params):
-    params["token"] = FH_KEY
-    r = requests.get(FH_URL + endpoint, params=params, timeout=10)
-    return r.json()
+session = requests.Session()
+session.headers.update({"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "Accept": "application/json", "Accept-Language": "en-US,en;q=0.9"})
 
 def clean(v):
     try:
@@ -23,32 +19,30 @@ def clean(v):
 @app.get("/stock/{ticker}")
 def get_stock(ticker: str):
     try:
-        candles = fh("/stock/candle", {"symbol": ticker, "resolution": "D", "from": 1700000000, "to": 9999999999})
-        if candles.get("s") != "ok":
+        stock = yf.Ticker(ticker, session=session)
+        hist = stock.history(period="1y")
+        if hist.empty:
             return {"error": "מניה לא נמצאה"}
-        closes = candles["c"]
-        highs  = candles["h"]
-        lows   = candles["l"]
-        import datetime
-        labels = [str(datetime.date.fromtimestamp(t)) for t in candles["t"]]
-        profile = fh("/stock/profile2", {"symbol": ticker})
-        metric  = fh("/stock/metric", {"symbol": ticker, "metric": "all"})
-        m = metric.get("metric", {})
+        info = stock.info
+        closes = [clean(v) for v in hist["Close"].tolist()]
+        highs  = [clean(v) for v in hist["High"].tolist()]
+        lows   = [clean(v) for v in hist["Low"].tolist()]
+        labels = [str(d.date()) for d in hist.index]
         return {
             "ticker": ticker.upper(),
             "closes": closes, "highs": highs, "lows": lows, "labels": labels,
-            "name": profile.get("name", ticker),
-            "description": "",
-            "sector": profile.get("finnhubIndustry", ""),
-            "industry": profile.get("finnhubIndustry", ""),
-            "market_cap": clean(profile.get("marketCapitalization")),
-            "pe_ratio": clean(m.get("peNormalizedAnnual")),
-            "eps": clean(m.get("epsNormalizedAnnual")),
-            "week_high": clean(m.get("52WeekHigh")),
-            "week_low": clean(m.get("52WeekLow")),
-            "dividend": clean(m.get("dividendYieldIndicatedAnnual")),
-            "employees": clean(profile.get("employeeTotal")),
-            "country": profile.get("country", ""),
+            "name": info.get("longName", ticker),
+            "description": info.get("longBusinessSummary", ""),
+            "sector": info.get("sector", ""),
+            "industry": info.get("industry", ""),
+            "market_cap": clean(info.get("marketCap")),
+            "pe_ratio": clean(info.get("trailingPE")),
+            "eps": clean(info.get("trailingEps")),
+            "week_high": clean(info.get("fiftyTwoWeekHigh")),
+            "week_low": clean(info.get("fiftyTwoWeekLow")),
+            "dividend": clean(info.get("dividendYield")),
+            "employees": clean(info.get("fullTimeEmployees")),
+            "country": info.get("country", ""),
         }
     except Exception as e:
         return {"error": str(e)}
@@ -60,12 +54,11 @@ def scan():
     results = []
     for ticker in WATCHLIST:
         try:
-            candles = fh("/stock/candle", {"symbol": ticker, "resolution": "D", "from": 1700000000, "to": 9999999999})
-            if candles.get("s") != "ok":
+            stock = yf.Ticker(ticker, session=session)
+            hist = stock.history(period="3mo")
+            if hist.empty or len(hist) < 20:
                 continue
-            closes = candles["c"][-30:]
-            if len(closes) < 20:
-                continue
+            closes = [float(v) for v in hist["Close"].tolist()]
             price = closes[-1]
             ma9  = sum(closes[-9:])  / 9
             ma20 = sum(closes[-20:]) / 20
@@ -88,24 +81,28 @@ def scan():
 @app.get("/sentiment/{ticker}")
 def get_sentiment(ticker: str):
     try:
-        rec = fh("/stock/recommendation", {"symbol": ticker})
-        if not rec:
-            return {"error": "אין נתונים"}
-        latest = rec[0]
-        strong_buy  = latest.get("strongBuy", 0)
-        buy         = latest.get("buy", 0)
-        hold        = latest.get("hold", 0)
-        sell        = latest.get("sell", 0)
-        strong_sell = latest.get("strongSell", 0)
+        stock = yf.Ticker(ticker, session=session)
+        info = stock.info
+        rec = stock.recommendations
+        if rec is not None and not rec.empty:
+            latest = rec.tail(4)
+            strong_buy  = int(latest["strongBuy"].sum())  if "strongBuy"  in latest.columns else 0
+            buy         = int(latest["buy"].sum())        if "buy"        in latest.columns else 0
+            hold        = int(latest["hold"].sum())       if "hold"       in latest.columns else 0
+            sell        = int(latest["sell"].sum())       if "sell"       in latest.columns else 0
+            strong_sell = int(latest["strongSell"].sum()) if "strongSell" in latest.columns else 0
+        else:
+            strong_buy = buy = hold = sell = strong_sell = 0
         total = strong_buy + buy + hold + sell + strong_sell
+        short_pct = info.get("shortPercentOfFloat")
         return {
             "ticker": ticker.upper(),
             "bull_pct": round((strong_buy + buy) / total * 100, 1) if total else None,
             "bear_pct": round((sell + strong_sell) / total * 100, 1) if total else None,
             "neutral_pct": round(hold / total * 100, 1) if total else None,
             "votes": {"strong_buy": strong_buy, "buy": buy, "hold": hold, "sell": sell, "strong_sell": strong_sell, "total": total},
-            "short_pct_float": None,
-            "recommendation": "",
+            "short_pct_float": round(short_pct * 100, 2) if short_pct else None,
+            "recommendation": info.get("recommendationKey", ""),
         }
     except Exception as e:
         return {"error": str(e)}
