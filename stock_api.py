@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import yfinance as yf
+yf.set_tz_cache_location("/tmp")
 import math
 
 app = FastAPI()
