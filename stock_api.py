@@ -2,7 +2,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import yfinance as yf
 import requests
-session = requests.Session()
+import requests_cache
+requests_cache.install_cache("/tmp/yfinance_cache", expire_after=3600)
+session = requests_cache.CachedSession("/tmp/yfinance_cache", expire_after=3600)
 session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
 yf.set_tz_cache_location("/tmp")
 import math
