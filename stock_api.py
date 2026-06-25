@@ -26,7 +26,8 @@ def clean(v):
 
 @app.get("/stock/{ticker}")
 def get_stock(ticker: str):
-    stock = yf.Ticker(ticker)
+    stock = yf.Ticker(ticker, session=None)
+    stock.fast_info
     hist = stock.history(period="1y")
     if hist.empty:
         return {"error": "מניה לא נמצאה"}
@@ -68,7 +69,7 @@ def scan():
     results = []
     for ticker in WATCHLIST:
         try:
-            stock = yf.Ticker(ticker)
+            stock = yf.Ticker(ticker, session=None)
             hist = stock.history(period="3mo")
             if hist.empty or len(hist) < 20:
                 continue
@@ -107,7 +108,7 @@ def scan():
 @app.get("/sentiment/{ticker}")
 def get_sentiment(ticker: str):
     try:
-        stock = yf.Ticker(ticker)
+        stock = yf.Ticker(ticker, session=None)
         info = stock.info
         rec = stock.recommendations
         if rec is not None and not rec.empty:
