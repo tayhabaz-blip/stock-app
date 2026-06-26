@@ -484,7 +484,7 @@ async function loadNews(){
   }catch(e){return headline;}
 }
 
-const translated = await Promise.all(items.map(n=>translateHeadline(n.headline)));
+const translated = await Promise.all(items.map(async n=>{await new Promise(r=>setTimeout(r,200));return translateHeadline(n.headline);}));
     c.innerHTML=items.map((n,i)=>{
       const time = new Date(n.datetime*1000);
       const diff = Math.floor((Date.now()-time)/3600000);
