@@ -447,14 +447,27 @@ async function loadNews(){
     const news = await res.json();
     if(!news||news.length===0){c.innerHTML='<div class="loading-state">אין חדשות כרגע</div>';return;}
     const items = news.slice(0,8);
-    c.innerHTML=items.map(n=>{
+    async function translateHeadline(headline){
+  try{
+    const r = await fetch('https://api.groq.com/openai/v1/chat/completions',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+GROQ_KEY},
+      body:JSON.stringify({model:'llama-3.3-70b-versatile',messages:[{role:'user',content:'תרגם לעברית קצר ותמציתי, רק את התרגום בלי שום הסבר: '+headline}]})
+    });
+    const d = await r.json();
+    return d.choices?.[0]?.message?.content||headline;
+  }catch(e){return headline;}
+}
+
+const translated = await Promise.all(items.map(n=>translateHeadline(n.headline)));
+    c.innerHTML=items.map((n,i)=>{
       const time = new Date(n.datetime*1000);
       const diff = Math.floor((Date.now()-time)/3600000);
       const timeStr = diff<1?'לפני פחות משעה':diff<24?`לפני ${diff} שעות`:`לפני ${Math.floor(diff/24)} ימים`;
       return `<div class="news-card" onclick="window.open('${n.url}','_blank')">
         <div class="news-dot"></div>
         <div class="news-card-content">
-          <div class="news-card-title">${n.headline}</div>
+          <div class="news-card-title">${translated[i]}</div>
           <div class="news-card-meta">${timeStr} · ${n.source}</div>
         </div>
       </div>`;
