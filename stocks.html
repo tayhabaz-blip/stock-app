@@ -381,6 +381,30 @@
 
 <script>
 let pc=null, rc=null;
+
+let currentTicker = null;
+
+async function updatePrice(){
+  if(!currentTicker) return;
+  try{
+    const res = await fetch(API+'/stock/'+currentTicker, {headers:{'ngrok-skip-browser-warning':'true'}});
+    const json = await res.json();
+    if(json.error) return;
+    const closes = json.closes;
+    const price = closes[closes.length-1];
+    const prev = closes[closes.length-2];
+    const ch = ((price-prev)/prev*100).toFixed(2);
+    const isUp = parseFloat(ch)>=0;
+    const priceEl = document.querySelector('.company-price-value');
+    const changeEl = document.querySelector('.company-price-change');
+    if(priceEl) priceEl.textContent = '$'+price.toFixed(2);
+    if(changeEl){
+      changeEl.textContent = (isUp?'▲':'▼')+' '+Math.abs(ch)+'% היום';
+      changeEl.className = 'company-price-change '+(isUp?'up':'down');
+    }
+  }catch(e){}
+}
+
 const API='https://stock-app-1-dbrs.onrender.com';
 const GROQ_KEY='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';
 
@@ -400,6 +424,7 @@ function showHome(){
   ['btnHome','btnAnalyze','btnWatchlist','btnScan'].forEach(id=>document.getElementById(id).classList.remove('active'));
   document.getElementById('btnHome').classList.add('active');
   loadNews();
+setInterval(loadNews, 5*60*1000);
 }
 function showAnalyze(){
   ['homePage','analyzePage','watchlistPage','scanPage'].forEach(id=>document.getElementById(id).style.display='none');
@@ -697,6 +722,9 @@ async function fetchAndRenderSentiment(ticker){
 async function analyze(){
   const t=document.getElementById('ticker').value.trim().toUpperCase();
   if(!t)return;
+  currentTicker=t;
+  if(window.priceInterval) clearInterval(window.priceInterval);
+  window.priceInterval=setInterval(updatePrice,30000);
   if(pc){pc.destroy();pc=null;}if(rc){rc.destroy();rc=null;}
   document.getElementById('results').innerHTML='<div class="loading-state">טוען נתונים עבור '+t+'...</div>';
   try{
