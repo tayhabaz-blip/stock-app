@@ -474,17 +474,14 @@ async function loadNews(){
     const items = news.slice(0,8);
     async function translateHeadline(headline){
   try{
-    const r = await fetch('https://api.groq.com/openai/v1/chat/completions',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+GROQ_KEY},
-      body:JSON.stringify({model:'llama-3.3-70b-versatile',messages:[{role:'user',content:'תרגם לעברית קצר ותמציתי, רק את התרגום בלי שום הסבר: '+headline}]})
-    });
+    const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=he&dt=t&q='+encodeURIComponent(headline);
+    const r = await fetch(url);
     const d = await r.json();
-    return d.choices?.[0]?.message?.content||headline;
+    return d[0].map(x=>x[0]).join('');
   }catch(e){return headline;}
 }
 
-const translated = await Promise.all(items.map(async n=>{await new Promise(r=>setTimeout(r,200));return translateHeadline(n.headline);}));
+const translated = await Promise.all(items.map(n=>translateHeadline(n.headline)));
     c.innerHTML=items.map((n,i)=>{
       const time = new Date(n.datetime*1000);
       const diff = Math.floor((Date.now()-time)/3600000);
