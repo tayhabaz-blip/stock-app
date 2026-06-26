@@ -575,7 +575,7 @@ async function runScan(){
         `).join('')}
       </div>`;
   }catch(e){
-    document.getElementById('scanResults').innerHTML='<div class="error-state">שגיאה בסריקה — ודא שה-backend רץ</div>';
+    document.getElementById('scanResults').innerHTML='<div class="error-state">שגיאה בסריקה — נסה שוב</div>';
   }
 }
 function loadFromScan(ticker){
