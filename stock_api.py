@@ -1,13 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from curl_cffi import requests as crequests
 import yfinance as yf
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-from curl_cffi import requests as cr
-session = cr.Session(impersonate="chrome")
-
+session = crequests.Session(impersonate="chrome")
 
 def clean(v):
     try:
@@ -26,11 +25,12 @@ def get_stock(ticker: str):
         info = stock.info
         closes = [clean(v) for v in hist["Close"].tolist()]
         highs  = [clean(v) for v in hist["High"].tolist()]
-        lows   = [clean(v) for v in hist["Low"].tolist()]
+        lows    = [clean(v) for v in hist["Low"].tolist()]
+        volumes = [clean(v) for v in hist["Volume"].tolist()]
         labels = [str(d.date()) for d in hist.index]
         return {
             "ticker": ticker.upper(),
-            "closes": closes, "highs": highs, "lows": lows, "labels": labels,
+            "closes": closes, "highs": highs, "lows": lows, "volumes": volumes, "labels": labels,
             "name": info.get("longName", ticker),
             "description": info.get("longBusinessSummary", ""),
             "sector": info.get("sector", ""),
