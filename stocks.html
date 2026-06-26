@@ -439,18 +439,29 @@ const NEWS_DATA=[
   {title:'Tesla: משלוחי רכבים ב-Q3 עולים על תחזיות האנליסטים',time:'לפני 8 שעות',ticker:'TSLA'},
   {title:'Meta מכריזה על תוכנית רכישה עצמית של $50 מיליארד',time:'לפני 10 שעות',ticker:'META'},
 ];
-function loadNews(){
+async function loadNews(){
   const c=document.getElementById('newsContainer');
-  c.innerHTML=NEWS_DATA.map(n=>`
-    <div class="news-card" onclick="loadTickerFromNews('${n.ticker}')">
-      <div class="news-dot"></div>
-      <div class="news-card-content">
-        <div class="news-card-title">${n.title}</div>
-        <div class="news-card-meta">${n.time}</div>
-      </div>
-      <span class="news-ticker-badge">${n.ticker}</span>
-    </div>
-  `).join('');
+  c.innerHTML='<div class="loading-state">טוען חדשות...</div>';
+  try{
+    const res = await fetch('https://finnhub.io/api/v1/news?category=general&token=d8uha31r01qinhui0algd8uha31r01qinhui0am0');
+    const news = await res.json();
+    if(!news||news.length===0){c.innerHTML='<div class="loading-state">אין חדשות כרגע</div>';return;}
+    const items = news.slice(0,8);
+    c.innerHTML=items.map(n=>{
+      const time = new Date(n.datetime*1000);
+      const diff = Math.floor((Date.now()-time)/3600000);
+      const timeStr = diff<1?'לפני פחות משעה':diff<24?`לפני ${diff} שעות`:`לפני ${Math.floor(diff/24)} ימים`;
+      return `<div class="news-card" onclick="window.open('${n.url}','_blank')">
+        <div class="news-dot"></div>
+        <div class="news-card-content">
+          <div class="news-card-title">${n.headline}</div>
+          <div class="news-card-meta">${timeStr} · ${n.source}</div>
+        </div>
+      </div>`;
+    }).join('');
+  }catch(e){
+    c.innerHTML='<div class="loading-state">לא ניתן לטעון חדשות</div>';
+  }
 }
 function loadTickerFromNews(ticker){
   showAnalyze();
