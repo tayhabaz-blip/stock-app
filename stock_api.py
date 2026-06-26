@@ -29,7 +29,7 @@ def get_stock(ticker: str):
         labels = [str(d.date()) for d in hist.index]
         return {
             "ticker": ticker.upper(),
-            "closes": closes, "highs": highs, "lows": lows, "labels": labels,
+            "closes": closes, "highs": highs, "lows": lows, "volumes": volumes, "labels": labels,
             "name": info.get("longName", ticker),
             "description": info.get("longBusinessSummary", ""),
             "sector": info.get("sector", ""),
