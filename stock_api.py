@@ -25,7 +25,8 @@ def get_stock(ticker: str):
         info = stock.info
         closes = [clean(v) for v in hist["Close"].tolist()]
         highs  = [clean(v) for v in hist["High"].tolist()]
-        lows   = [clean(v) for v in hist["Low"].tolist()]
+        lows    = [clean(v) for v in hist["Low"].tolist()]
+        volumes = [clean(v) for v in hist["Volume"].tolist()]
         labels = [str(d.date()) for d in hist.index]
         return {
             "ticker": ticker.upper(),
