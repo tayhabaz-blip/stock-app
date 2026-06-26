@@ -591,59 +591,20 @@ function toggleDesc(){
 
 async function fetchAIAnalysis(data){
   const {ticker,name,price,change,rsiVal,m9,m20,signal,zones,pe,shortPct,bullPct,bearPct}=data;
-  const prompt=`אתה אנליסט מניות. כתוב בעברית בלבד. קצר וברור.
-מניה: ${ticker} | מחיר: $${price} | RSI: ${rsiVal} | P/E: ${pe||'N/A'}
-שורים: ${bullPct||'N/A'}% | דובים: ${bearPct||'N/A'}%
+  const stopLoss = parseFloat((zones[0]?.p || (price * 0.95)).toFixed(2));
+  const riskAmt = parseFloat((price - stopLoss).toFixed(2));
+  const target1 = parseFloat((price + riskAmt * 2).toFixed(2));
+  const trendDir = (lm9 && lm20 && parseFloat(lm9) > parseFloat(lm20)) ? 'עולה' : 'יורד';
+  const rsiTxt = rsiVal < 35 ? 'נמוך' : rsiVal > 70 ? 'גבוה' : 'נייטרלי';
+  const prompt = `כתוב בעברית. אסור לשנות מספרים.
+מניה: ${ticker} | מגמה: ${trendDir} | RSI: ${rsiTxt}
 כתוב בדיוק:
 מגמה: [משפט אחד]
-כניסה: $[מחיר]
-סטופ: $[מחיר]
-יעד: $[מחיר - פי 2 לפחות מהמרחק לסטופ]
+כניסה: $${price}
+סטופ: $${stopLoss}
+יעד: $${target1}
 סיכום: [משפט אחד]
 [📈 או ⚠️ או 📉]`
-  try{
-    const response=await fetch('https://api.groq.com/openai/v1/chat/completions',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+GROQ_KEY},
-      body:JSON.stringify({model:'llama-3.1-8b-instant',messages:[{role:'user',content:prompt}]})
-    });
-    const d=await response.json();
-    return d.choices?.[0]?.message?.content||null;
-  }catch(e){return null;}
-}
-
-async function fetchAndRenderSentiment(ticker){
-  const card=document.getElementById('sentimentCard');
-  if(!card)return null;
-  try{
-    const res=await fetch(API+'/sentiment/'+ticker);
-    const d=await res.json();
-    if(d.error){card.style.display='none';return null;}
-    const bull=d.bull_pct||0,bear=d.bear_pct||0,neutral=d.neutral_pct||0,total=d.votes?.total||0;
-    card.innerHTML=`
-      <div class="sentiment-header">
-        <div class="sentiment-title">🐂 שורים / 🐻 דובים</div>
-        <div class="sentiment-analysts">${total} אנליסטים</div>
-      </div>
-      <div class="sentiment-bar-wrap">
-        <div class="sentiment-bar-bull" style="width:${bull}%">${bull>10?bull+'%':''}</div>
-        <div class="sentiment-bar-neutral" style="width:${neutral}%">${neutral>10?neutral+'%':''}</div>
-        <div class="sentiment-bar-bear" style="width:${bear}%">${bear>10?bear+'%':''}</div>
-      </div>
-      <div class="sentiment-labels">
-        <span class="sentiment-label-bull">🐂 ${bull}% שורים</span>
-        <span class="sentiment-label-neutral">Hold ${neutral}%</span>
-        <span class="sentiment-label-bear">${bear}% דובים 🐻</span>
-      </div>
-      <div class="sentiment-votes">
-        <span class="vote-chip">💪 Strong Buy: ${d.votes?.strong_buy||0}</span>
-        <span class="vote-chip">✅ Buy: ${d.votes?.buy||0}</span>
-        <span class="vote-chip">⏸ Hold: ${d.votes?.hold||0}</span>
-        <span class="vote-chip">⚠️ Sell: ${d.votes?.sell||0}</span>
-        <span class="vote-chip">🚨 Strong Sell: ${d.votes?.strong_sell||0}</span>
-      </div>
-      ${d.short_pct_float?`<div class="short-row"><span class="short-label">אחוז שורט</span><span class="short-val">${d.short_pct_float}%</span></div>`:''}
-    `;
     return d;
   }catch(e){card.style.display='none';return null;}
 }
