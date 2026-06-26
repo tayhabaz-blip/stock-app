@@ -653,6 +653,7 @@ function toggleDesc(){
 }
 
 async function fetchAIAnalysis(data){
+  const vols = data.vols || [];
   const cacheKey = 'ai_'+data.ticker;
   const cached = localStorage.getItem(cacheKey);
   if(cached){
