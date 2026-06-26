@@ -591,13 +591,16 @@ function toggleDesc(){
 
 async function fetchAIAnalysis(data){
   const {ticker,name,price,change,rsiVal,m9,m20,signal,zones,pe,shortPct,bullPct,bearPct}=data;
-  const prompt=`אתה יועץ השקעות מקצועי. נתח את המניה הבאה בעברית ב-3-4 משפטים קצרים וישירים.
-מניה: ${ticker} (${name}) | מחיר: $${price} | שינוי: ${change}%
-RSI: ${rsiVal} | MA9: $${m9} | MA20: $${m20}
-איתות: ${signal} | P/E: ${pe||'N/A'}
-שורים: ${bullPct||'N/A'}% | דובים: ${bearPct||'N/A'}% | שורט: ${shortPct||'N/A'}%
-אזורים: ${zones.map(z=>z.t+' '+z.str+' $'+z.p).join(' | ')}
-תהיה ספציפי. בסוף: 📈 מגמה חיובית / ⚠️ זהירות / 📉 לחץ מכירה.`;
+  const prompt=`אתה אנליסט מניות. כתוב בעברית בלבד. קצר וברור.
+מניה: ${ticker} | מחיר: $${price} | RSI: ${rsiVal} | P/E: ${pe||'N/A'}
+שורים: ${bullPct||'N/A'}% | דובים: ${bearPct||'N/A'}%
+כתוב בדיוק:
+מגמה: [משפט אחד]
+כניסה: $[מחיר]
+סטופ: $[מחיר]
+יעד: $[מחיר - פי 2 לפחות מהמרחק לסטופ]
+סיכום: [משפט אחד]
+[📈 או ⚠️ או 📉]`
   try{
     const response=await fetch('https://api.groq.com/openai/v1/chat/completions',{
       method:'POST',
