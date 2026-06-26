@@ -664,6 +664,7 @@ async function fetchAIAnalysis(data){
 RSI: ${rsiVal} | ממוצע 9: $${m9} | ממוצע 20: $${m20}
 מכפיל רווח: ${pe||'לא זמין'} | שורים: ${bullPct||'לא זמין'}% | דובים: ${bearPct||'לא זמין'}%
 תמיכה קרובה: $${zones[0]?.p||'לא זמין'} | התנגדות קרובה: $${zones[2]?.p||'לא זמין'}
+נפח יומי: ${vols.length>0?Math.round(vols[vols.length-1]).toLocaleString():'N/A'} | ממוצע נפח 20 יום: ${vols.length>=20?Math.round(vols.slice(-20).reduce((a,b)=>a+b,0)/20).toLocaleString():'N/A'}
 
 כתוב בדיוק בפורמט הזה. הכלל החשוב ביותר: היעד חייב להיות לפחות פי 2 מהמרחק לסטופ. אם יש רמת התנגדות חזקה יותר רחוק — תן יעד של 1:3 או 1:4. תן את היחס הריאלי ביותר לפי הנתונים.
 מגמה: [משפט אחד על המגמה]
@@ -732,7 +733,7 @@ async function analyze(){
     const res=await fetch(API+'/stock/'+t);
     const json=await res.json();
     if(json.error)throw new Error(json.error);
-    const d=json.closes,lb=json.labels;
+    const d=json.closes,lb=json.labels,vols=json.volumes||[];
     const highs=json.highs||null,lows=json.lows||null;
     const m9=ma(d,9),m20=ma(d,20),m150=ma(d,150),m200=ma(d,200),rv=rsi(d);
     const zs=zones(d,highs,lows);
