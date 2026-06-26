@@ -678,7 +678,7 @@ RSI: ${rsiVal} | ממוצע 9: $${m9} | ממוצע 20: $${m20}
 סיכום: [המלצה קצרה]
 [📈 מגמה חיובית / ⚠️ זהירות / 📉 לחץ מכירה]`
   try{
-    const response=await fetch('https://api.groq.com/openai/v1/chat/completions',{
+    const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),8000);const response=await fetch('https://api.groq.com/openai/v1/chat/completions',{signal:controller.signal,
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+GROQ_KEY},
       body:JSON.stringify({model:'llama-3.3-70b-versatile',messages:[{role:'user',content:prompt}]})
@@ -687,7 +687,7 @@ RSI: ${rsiVal} | ממוצע 9: $${m9} | ממוצע 20: $${m20}
     const text = d.choices?.[0]?.message?.content||null;
     if(text) localStorage.setItem(cacheKey, JSON.stringify({text, time:Date.now()}));
     return text;
-  }catch(e){return null;}
+  }catch(e){return e.name=="AbortError"?"⏱️ ניתוח AI לא זמין כרגע — נסה שוב":null;}
 }
 
 async function fetchAndRenderSentiment(ticker){
