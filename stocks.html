@@ -653,6 +653,12 @@ function toggleDesc(){
 }
 
 async function fetchAIAnalysis(data){
+  const cacheKey = 'ai_'+data.ticker;
+  const cached = localStorage.getItem(cacheKey);
+  if(cached){
+    const {text, time} = JSON.parse(cached);
+    if(Date.now()-time < 3*60*60*1000) return text;
+  }
   const {ticker,name,price,change,rsiVal,m9,m20,signal,zones,pe,shortPct,bullPct,bearPct}=data;
   const prompt=`אתה אנליסט טכני מקצועי ישראלי. כתוב בעברית בלבד. ללא מילים באנגלית. ללא קודים.
 
@@ -678,7 +684,9 @@ RSI: ${rsiVal} | ממוצע 9: $${m9} | ממוצע 20: $${m20}
       body:JSON.stringify({model:'llama-3.3-70b-versatile',messages:[{role:'user',content:prompt}]})
     });
     const d=await response.json();
-    return d.choices?.[0]?.message?.content||null;
+    const text = d.choices?.[0]?.message?.content||null;
+    if(text) localStorage.setItem(cacheKey, JSON.stringify({text, time:Date.now()}));
+    return text;
   }catch(e){return null;}
 }
 
