@@ -659,7 +659,7 @@ async function fetchAIAnalysis(data){
     const {text, time} = JSON.parse(cached);
     if(Date.now()-time < 3*60*60*1000) return text;
   }
-  const {ticker,name,price,change,rsiVal,m9,m20,signal,zones,pe,shortPct,bullPct,bearPct}=data;
+  const {ticker,name,price,change,rsiVal,m9,m20,signal,zones,pe,shortPct,bullPct,bearPct,vols=[]}=data;
   const prompt=`אתה אנליסט טכני מקצועי ישראלי. כתוב בעברית בלבד. ללא מילים באנגלית. ללא קודים.
 
 נתונים על ${ticker}:
@@ -667,6 +667,7 @@ async function fetchAIAnalysis(data){
 RSI: ${rsiVal} | ממוצע 9: $${m9} | ממוצע 20: $${m20}
 מכפיל רווח: ${pe||'לא זמין'} | שורים: ${bullPct||'לא זמין'}% | דובים: ${bearPct||'לא זמין'}%
 תמיכה קרובה: $${zones[0]?.p||'לא זמין'} | התנגדות קרובה: $${zones[2]?.p||'לא זמין'}
+נפח היום: $${vols.length>0?Math.round(vols[vols.length-1]/1000000).toFixed(1)+'M':'N/A'} | ממוצע 20 יום: $${vols.length>=20?Math.round(vols.slice(-20).filter(v=>v).reduce((a,b)=>a+b,0)/20/1000000).toFixed(1)+'M':'N/A'}
 נפח יומי: ${vols.length>0?Math.round(vols[vols.length-1]).toLocaleString():'N/A'} | ממוצע נפח 20 יום: ${vols.length>=20?Math.round(vols.slice(-20).reduce((a,b)=>a+b,0)/20).toLocaleString():'N/A'}
 
 כתוב בדיוק בפורמט הזה. הכלל החשוב ביותר: היעד חייב להיות לפחות פי 2 מהמרחק לסטופ. אם יש רמת התנגדות חזקה יותר רחוק — תן יעד של 1:3 או 1:4. תן את היחס הריאלי ביותר לפי הנתונים.
@@ -859,7 +860,7 @@ async function analyze(){
       fetchAIAnalysis({
         ticker:t,name:json.name||t,price:price.toFixed(2),change:ch,
         rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),
-        signal:sg.l,zones:zs,pe:json.pe_ratio?.toFixed(1),
+        signal:sg.l,zones:zs,vols:vols,pe:json.pe_ratio?.toFixed(1),
         shortPct:sentData?.short_pct_float,
         bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct
       }).then(text=>{
