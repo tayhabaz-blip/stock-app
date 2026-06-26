@@ -653,7 +653,6 @@ function toggleDesc(){
 }
 
 async function fetchAIAnalysis(data){
-  const vols = data.vols || [];
   const cacheKey = 'ai_'+data.ticker;
   const cached = localStorage.getItem(cacheKey);
   if(cached){
@@ -679,7 +678,7 @@ RSI: ${rsiVal} | ממוצע 9: $${m9} | ממוצע 20: $${m20}
 סיכום: [המלצה קצרה]
 [📈 מגמה חיובית / ⚠️ זהירות / 📉 לחץ מכירה]`
   try{
-    const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),8000);const response=await fetch('https://api.groq.com/openai/v1/chat/completions',{signal:controller.signal,
+    const response=await fetch('https://api.groq.com/openai/v1/chat/completions',{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+GROQ_KEY},
       body:JSON.stringify({model:'llama-3.3-70b-versatile',messages:[{role:'user',content:prompt}]})
@@ -688,7 +687,7 @@ RSI: ${rsiVal} | ממוצע 9: $${m9} | ממוצע 20: $${m20}
     const text = d.choices?.[0]?.message?.content||null;
     if(text) localStorage.setItem(cacheKey, JSON.stringify({text, time:Date.now()}));
     return text;
-  }catch(e){return e.name=="AbortError"?"⏱️ ניתוח AI לא זמין כרגע — נסה שוב":null;}
+  }catch(e){return null;}
 }
 
 async function fetchAndRenderSentiment(ticker){
@@ -856,7 +855,7 @@ async function analyze(){
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
         scales:{x:{ticks:{color:tc,maxTicksLimit:7,font:{size:11}},grid:{color:gc}},y:{min:0,max:100,ticks:{color:tc,font:{size:11},stepSize:30},grid:{color:gc}}}}});
 
-    fetchAndRenderSentiment(t).then(sentData=>{
+    document.getElementById("aiText").className="ai-text";document.getElementById("aiText").textContent="טוען...";fetchAndRenderSentiment(t).then(sentData=>{
       fetchAIAnalysis({
         ticker:t,name:json.name||t,price:price.toFixed(2),change:ch,
         rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),
