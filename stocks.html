@@ -855,7 +855,7 @@ async function analyze(){
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
         scales:{x:{ticks:{color:tc,maxTicksLimit:7,font:{size:11}},grid:{color:gc}},y:{min:0,max:100,ticks:{color:tc,font:{size:11},stepSize:30},grid:{color:gc}}}}});
 
-    document.getElementById("aiText").className="ai-text";document.getElementById("aiText").textContent="טוען...";fetchAndRenderSentiment(t).then(sentData=>{
+    document.getElementById("aiText").className="ai-text";document.getElementById("aiText").textContent="טוען...";setTimeout(()=>{fetchAndRenderSentiment(t).then(sentData=>{
       fetchAIAnalysis({
         ticker:t,name:json.name||t,price:price.toFixed(2),change:ch,
         rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),
