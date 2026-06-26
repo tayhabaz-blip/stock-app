@@ -602,6 +602,32 @@ function calcGrade(price, lm9, lm20, lm150, lm200, rv, pe) {
   return {grade: 'D', color: '#f87171', label: 'חלש'};
 }
 
+
+function calcFairValue(eps,pe,price){
+  if(!eps||eps<=0)return null;
+  const normalPE=Math.min(pe||20,30);
+  const fv=parseFloat((eps*normalPE).toFixed(2));
+  const diff=parseFloat(((price-fv)/fv*100).toFixed(1));
+  let label,color;
+  if(diff>20){label='יקרה מאוד';color='#f87171';}
+  else if(diff>5){label='יקרה קצת';color='#fbbf24';}
+  else if(diff<-20){label='זולה מאוד';color='#4ade80';}
+  else if(diff<-5){label='זולה קצת';color='#4ade80';}
+  else{label='שווי הוגן';color='#a78bfa';}
+  return {fv,diff,label,color};
+}
+function calcGrade(price,lm9,lm20,lm150,lm200,rv,pe){
+  let score=0;
+  if(lm200&&price>lm200)score+=2;else score--;
+  if(lm150&&price>lm150)score+=2;else score--;
+  if(lm9&&lm20&&lm9>lm20)score+=2;else score--;
+  if(rv<35)score+=3;else if(rv>70)score-=2;else if(rv<55)score+=1;
+  if(pe&&pe<20)score+=2;else if(pe&&pe>50)score--;
+  if(score>=8)return{grade:'A',color:'#4ade80',label:'חזק מאוד'};
+  if(score>=5)return{grade:'B',color:'#a3e635',label:'חיובי'};
+  if(score>=2)return{grade:'C',color:'#fbbf24',label:'ניטרלי'};
+  return{grade:'D',color:'#f87171',label:'חלש'};
+}
 function ma(d,p){return d.map((_,i)=>{if(i<p-1)return null;const s=d.slice(i-p+1,i+1).filter(v=>v!==null);if(s.length<p)return null;return parseFloat((s.reduce((a,b)=>a+b,0)/s.length).toFixed(2));});}
 function rsi(d,p=14){const r=d.map(()=>null);for(let i=p;i<d.length;i++){let g=0,l=0;for(let j=i-p+1;j<=i;j++){const x=d[j]-d[j-1];if(x>0)g+=x;else l-=x;}r[i]=parseFloat((100-100/(1+g/(l||0.0001))).toFixed(1));}return r;}
 function zones(closes,highs,lows){
@@ -796,6 +822,7 @@ async function analyze(){
       </div>
 
       ${gradeCard}
+      <div id="gradeAndFV" style="margin-bottom:1.5rem"></div>
       <div class="signal-banner ${sg.c}">
         <div class="signal-dot dot-${sg.c}"></div>
         <div>
