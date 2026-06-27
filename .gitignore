@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.save
+fix_yfinance.py
+rebuild2.py
+.env

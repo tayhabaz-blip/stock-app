@@ -1,4 +1,4 @@
 fastapi
-uvicorn
+uvicorn[standard]
 yfinance
-requests-cache
+curl_cffi
