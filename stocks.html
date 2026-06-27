@@ -287,9 +287,9 @@ function fmt(n){if(!n)return'—';if(n>1e12)return'$'+(n/1e12).toFixed(2)+'T';if
 
 // ── AI — JavaScript חישב הכל, AI כותב רק את המגמה ──
 async function getAI(data){
-  const {ticker,price,rsiVal,m9,m20,sg,zs,bullPct,bearPct,pe}=data;
+  const {ticker,price,rsiVal,m9,m20,sg,zs,bullPct,bearPct,pe,closes}=data;
   // חישוב JavaScript — לא AI!
-  const priceNum=parseFloat(price); const recent=d.filter(v=>v&&v<priceNum).slice(-30); const stop=parseFloat((recent.length?Math.min(...recent.slice(-10)):priceNum*0.95).toFixed(2));
+  const priceNum=parseFloat(price); const recent=(closes||[]).filter(v=>v&&v<priceNum).slice(-30); const stop=parseFloat((recent.length?Math.min(...recent.slice(-10)):priceNum*0.95).toFixed(2));
   const risk=parseFloat((priceNum-stop).toFixed(2));
   const target=parseFloat((priceNum+risk*2).toFixed(2));
   const trend=m9&&m20&&m9>m20?'עולה':'יורד';
@@ -429,7 +429,7 @@ async function analyze(){
 
     // AI + Sentiment
     getSentiment(t).then(sentData=>{
-      getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio}).then(text=>{
+      getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,closes:d}).then(text=>{
         const el=document.getElementById('aiText');
         if(el){el.className='ai-text';el.textContent=text||'לא ניתן לטעון ניתוח AI.';}
       });
