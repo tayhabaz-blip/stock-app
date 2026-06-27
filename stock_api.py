@@ -15,9 +15,11 @@ app.add_middleware(
 
 session = crequests.Session(impersonate="chrome")
 
+# ── מפתחות מגיעים ממשתני סביבה ב-Render, לא מהקוד ──
 GROQ_KEY = os.environ.get("GROQ_KEY", "")
 FINNHUB_KEY = os.environ.get("FINNHUB_KEY", "")
 
+# ── מטמון פשוט בזיכרון כדי לא להעמיס על Yahoo ──
 _cache = {}
 
 
@@ -46,6 +48,7 @@ def root():
     return {"status": "ok", "service": "StockIQ API"}
 
 
+# ── נתוני מניה מלאים (מטמון 5 דקות) ──
 @app.get("/stock/{ticker}")
 def get_stock(ticker: str):
     key = "stock:" + ticker.upper()
@@ -65,12 +68,14 @@ def get_stock(ticker: str):
         labels = [str(d.date()) for d in hist.index]
         last_price = next((c for c in reversed(closes) if c is not None), None)
 
+        # ── דיבידנד מחושב נכון: סכום שנתי / מחיר (ולא הכפלה עיוורת ב-100) ──
         div_rate = clean(info.get("dividendRate"))
         if div_rate and last_price:
             dividend_pct = round(div_rate / last_price * 100, 2)
         else:
             dy = clean(info.get("dividendYield"))
             if dy:
+                # yfinance מחזיר לפעמים אחוז ולפעמים שבר — מנרמלים
                 dividend_pct = round(dy if dy >= 1 else dy * 100, 2)
             else:
                 dividend_pct = None
@@ -86,6 +91,7 @@ def get_stock(ticker: str):
             "market_cap": clean(info.get("marketCap")),
             "pe_ratio": clean(info.get("trailingPE")),
             "eps": clean(info.get("trailingEps")),
+            "earnings_growth": clean(info.get("earningsGrowth")) or clean(info.get("revenueGrowth")),
             "week_high": clean(info.get("fiftyTwoWeekHigh")),
             "week_low": clean(info.get("fiftyTwoWeekLow")),
             "dividend_pct": dividend_pct,
@@ -97,6 +103,7 @@ def get_stock(ticker: str):
         return {"error": str(e)}
 
 
+# ── מחיר בלבד — קל משקל, לרענון כל 30 שניות (מטמון 30 שניות) ──
 @app.get("/price/{ticker}")
 def get_price(ticker: str):
     key = "price:" + ticker.upper()
@@ -126,6 +133,7 @@ def get_price(ticker: str):
 WATCHLIST = ["AAPL", "MSFT", "NVDA", "TSLA", "META", "SOFI", "PLTR", "COIN", "HOOD", "AMD"]
 
 
+# ── סורק מניות (מטמון 5 דקות) ──
 @app.get("/scan")
 def scan():
     cached = cache_get("scan", 300)
@@ -169,6 +177,7 @@ def scan():
     return cache_set("scan", {"results": results})
 
 
+# ── סנטימנט אנליסטים (מטמון שעה) ──
 @app.get("/sentiment/{ticker}")
 def get_sentiment(ticker: str):
     key = "sent:" + ticker.upper()
@@ -205,6 +214,7 @@ def get_sentiment(ticker: str):
         return {"error": str(e)}
 
 
+# ── פרוקסי ל-Groq: המפתח נשאר בשרת, המודל כותב רק משפט מגמה ──
 @app.post("/ai")
 async def ai_analysis(req: Request):
     if not GROQ_KEY:
@@ -219,9 +229,11 @@ async def ai_analysis(req: Request):
     bull = body.get("bullPct", "N/A")
     bear = body.get("bearPct", "N/A")
     prompt = (
-        "כתוב משפט אחד קצר בעברית על מגמת המניה " + str(ticker) +
-        ". מגמה: " + str(trend) + ", RSI: " + str(rsi_txt) +
-        ", שורים: " + str(bull) + "%, דובים: " + str(bear) + "%. רק משפט אחד."
+        "אתה אנליסט מניות. כתוב ניתוח קצר בעברית (2-3 משפטים) על מגמת המניה " + str(ticker) +
+        ". נתונים: מגמה " + str(trend) + ", RSI " + str(rsi_txt) +
+        ", שורים " + str(bull) + "%, דובים " + str(bear) + "%. "
+        "התייחס למשמעות של ה-RSI ולסנטימנט האנליסטים, וסיים בשורת תובנה אחת. "
+        "אל תכתוב מספרים של מחיר/כניסה/סטופ/יעד — רק ניתוח מגמה במילים."
     )
     try:
         r = crequests.post(
@@ -232,7 +244,7 @@ async def ai_analysis(req: Request):
             },
             json={
                 "model": "llama-3.1-8b-instant",
-                "max_tokens": 80,
+                "max_tokens": 220,
                 "messages": [{"role": "user", "content": prompt}],
             },
             impersonate="chrome",
@@ -245,6 +257,7 @@ async def ai_analysis(req: Request):
         return {"text": "", "error": str(e)}
 
 
+# ── פרוקסי לחדשות Finnhub: הטוקן נשאר בשרת (מטמון 5 דקות) ──
 @app.get("/news")
 def get_news():
     cached = cache_get("news", 300)
