@@ -363,11 +363,16 @@ async function analyze(){
   if(pc){pc.destroy();pc=null;}if(rc){rc.destroy();rc=null;}
   document.getElementById('results').innerHTML='<div class="loading-state">טוען '+t+'...</div>';
   try{
-    const res=await fetch(API+'/stock/'+t);const json=await res.json();
+    const [res,pres]=await Promise.all([fetch(API+'/stock/'+t),fetch(API+'/price/'+t)]);
+    const json=await res.json();
     if(json.error)throw new Error(json.error);
+    let live=null;try{live=await pres.json();}catch(e){}
     const d=json.closes,lb=json.labels,highs=json.highs||null,lows=json.lows||null;
     const m9v=ma(d,9),m20v=ma(d,20),m150v=ma(d,150),m200v=ma(d,200),rv=rsi(d);
-    const closes_clean=d.filter(v=>v!==null); const price=closes_clean[closes_clean.length-1],prev=closes_clean[closes_clean.length-2];
+    const closes_clean=d.filter(v=>v!==null);
+    const histLast=closes_clean[closes_clean.length-1],histPrev=closes_clean[closes_clean.length-2];
+    const price=(live&&live.price!=null)?live.price:histLast;
+    const prev=(live&&live.prev!=null)?live.prev:histPrev;
     const ch=((price-prev)/prev*100).toFixed(2);const isUp=parseFloat(ch)>=0;
     const rv_=rv.filter(v=>v!==null).pop();
     const lm9=m9v.filter(v=>v!==null).pop(),lm20=m20v.filter(v=>v!==null).pop();
