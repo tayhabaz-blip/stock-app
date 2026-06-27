@@ -237,7 +237,8 @@ function loadScan(t){showAnalyze();document.getElementById('ticker').value=t;ana
 function ma(d,p){return d.map((_,i)=>{if(i<p-1)return null;const s=d.slice(i-p+1,i+1).filter(v=>v!==null);if(s.length<p)return null;return parseFloat((s.reduce((a,b)=>a+b,0)/s.length).toFixed(2));});}
 function rsi(d,p=14){const r=d.map(()=>null);for(let i=p;i<d.length;i++){let g=0,l=0;for(let j=i-p+1;j<=i;j++){const x=d[j]-d[j-1];if(x>0)g+=x;else l-=x;}r[i]=parseFloat((100-100/(1+g/(l||0.0001))).toFixed(1));}return r;}
 function zones(closes,highs,lows){
-  const price=closes[closes.length-1];
+  const closes_f=closes.filter(v=>v!==null);
+  const price=closes_f[closes_f.length-1];
   const s=[...closes.filter(v=>v!==null).slice(-90)].sort((a,b)=>a-b);
   const h=[...((highs||[]).filter(v=>v!==null).slice(-90))].sort((a,b)=>b-a);
   return[
