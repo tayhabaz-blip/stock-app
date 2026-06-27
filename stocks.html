@@ -354,7 +354,7 @@ async function analyze(){
     if(json.error)throw new Error(json.error);
     const d=json.closes,lb=json.labels,highs=json.highs||null,lows=json.lows||null;
     const m9v=ma(d,9),m20v=ma(d,20),m150v=ma(d,150),m200v=ma(d,200),rv=rsi(d);
-    const price=d[d.length-1],prev=d[d.length-2];
+    const closes_clean=d.filter(v=>v!==null); const price=closes_clean[closes_clean.length-1],prev=closes_clean[closes_clean.length-2];
     const ch=((price-prev)/prev*100).toFixed(2);const isUp=parseFloat(ch)>=0;
     const rv_=rv.filter(v=>v!==null).pop();
     const lm9=m9v.filter(v=>v!==null).pop(),lm20=m20v.filter(v=>v!==null).pop();
