@@ -258,11 +258,16 @@ function signal(price,m9,m20,m150,m200,rv,zs){
   if(sc<=-1)return{c:'red',l:'זהירות — חולשה',rs};
   return{c:'yellow',l:'תמונה מעורבת',rs};
 }
-function calcFV(eps,pe,price){
+function calcFV(eps,pe,price,growth){
   if(!eps||eps<=0)return null;
-  // מכפיל ייחוס קבוע (ממוצע שוק היסטורי) — לא ה-P/E של המניה עצמה, כדי שלא יהיה מעגלי
-  const REF_PE=20;
-  const fv=parseFloat((eps*REF_PE).toFixed(2));
+  // מכפיל הוגן ≈ קצב צמיחת הרווחים (כלל PEG=1), מוגבל לטווח 12–45
+  let fairPE;
+  if(growth&&growth>0){
+    fairPE=Math.max(12,Math.min(growth*100,45));
+  }else{
+    fairPE=Math.min(pe||20,25); // אין נתון צמיחה — נופלים למכפיל שמרני
+  }
+  const fv=parseFloat((eps*fairPE).toFixed(2));
   const diff=parseFloat(((price-fv)/fv*100).toFixed(1));
   let label,color;
   if(diff>20){label='יקרה מאוד';color='#f87171';}
@@ -370,7 +375,7 @@ async function analyze(){
     const zs=zones(d,highs,lows);
     const sg=signal(price,lm9,lm20,lm150,lm200,rv_,zs);
     const gradeData=calcGrade(price,lm9,lm20,lm150,lm200,rv_,json.pe_ratio);
-    const fvData=calcFV(json.eps,json.pe_ratio,price);
+    const fvData=calcFV(json.eps,json.pe_ratio,price,json.earnings_growth);
     const gc='rgba(255,255,255,0.04)',tc='rgba(255,255,255,0.25)';
 
     document.getElementById('results').innerHTML=
