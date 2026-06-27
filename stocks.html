@@ -241,9 +241,9 @@ function zones(closes,highs,lows){
   const s=[...closes.filter(v=>v!==null).slice(-90)].sort((a,b)=>a-b);
   const h=[...((highs||[]).filter(v=>v!==null).slice(-90))].sort((a,b)=>b-a);
   return[
-    {p:parseFloat(s[Math.floor(s.length*.1)].toFixed(2)),t:'תמיכה',str:'חזקה'},
-    {p:parseFloat(s[Math.floor(s.length*.25)].toFixed(2)),t:'תמיכה',str:'בינונית'},
-    {p:parseFloat(s[Math.floor(s.length*.75)].toFixed(2)),t:'התנגדות',str:'בינונית'},
+    {p:parseFloat((s[Math.floor(s.length*.1)]||s[0]||0).toFixed(2)),t:'תמיכה',str:'חזקה'},
+    {p:parseFloat((s[Math.floor(s.length*.25)]||s[0]||0).toFixed(2)),t:'תמיכה',str:'בינונית'},
+    {p:parseFloat((s[Math.floor(s.length*.75)]||s[0]||0).toFixed(2)),t:'התנגדות',str:'בינונית'},
     {p:parseFloat((h.length?h[Math.floor(h.length*.1)]:s[Math.floor(s.length*.9)]).toFixed(2)),t:'התנגדות',str:'חזקה'},
   ];
 }
