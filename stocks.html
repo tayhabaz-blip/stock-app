@@ -289,7 +289,7 @@ function fmt(n){if(!n)return'—';if(n>1e12)return'$'+(n/1e12).toFixed(2)+'T';if
 async function getAI(data){
   const {ticker,price,rsiVal,m9,m20,sg,zs,bullPct,bearPct,pe}=data;
   // חישוב JavaScript — לא AI!
-  const priceNum=parseFloat(price); const stop=parseFloat((zs[0]?.p||priceNum*0.95).toFixed(2));
+  const priceNum=parseFloat(price); const recent=d.filter(v=>v&&v<priceNum).slice(-30); const stop=parseFloat((recent.length?Math.min(...recent.slice(-10)):priceNum*0.95).toFixed(2));
   const risk=parseFloat((priceNum-stop).toFixed(2));
   const target=parseFloat((priceNum+risk*2).toFixed(2));
   const trend=m9&&m20&&m9>m20?'עולה':'יורד';
