@@ -173,8 +173,8 @@
   </div>
 </main>
 <script>
+// ── כתובת הבקאנד — שנה כאן בלבד אם עוברים ל-ngrok ──
 const API='https://stock-app-1-dbrs.onrender.com';
-const GROQ='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';
 let pc=null,rc=null,currentTicker=null;
 
 // ── NAV ──
@@ -197,9 +197,9 @@ async function loadNews(){
   const box=document.getElementById('newsBox');
   box.innerHTML='<div class="loading-state">טוען חדשות...</div>';
   try{
-    const res=await fetch('https://finnhub.io/api/v1/news?category=general&token=d8uha31r01qinhui0algd8uha31r01qinhui0am0');
-    const news=await res.json();
-    const items=news.slice(0,8);
+    const res=await fetch(API+'/news');
+    const data=await res.json();
+    const items=(data.news||[]).slice(0,8);
     const translated=await Promise.all(items.map(n=>translateLine(n.headline)));
     box.innerHTML=items.map((n,i)=>{
       const diff=Math.floor((Date.now()-n.datetime*1000)/3600000);
@@ -260,8 +260,9 @@ function signal(price,m9,m20,m150,m200,rv,zs){
 }
 function calcFV(eps,pe,price){
   if(!eps||eps<=0)return null;
-  const np=Math.min(pe||20,30);
-  const fv=parseFloat((eps*np).toFixed(2));
+  // מכפיל ייחוס קבוע (ממוצע שוק היסטורי) — לא ה-P/E של המניה עצמה, כדי שלא יהיה מעגלי
+  const REF_PE=20;
+  const fv=parseFloat((eps*REF_PE).toFixed(2));
   const diff=parseFloat(((price-fv)/fv*100).toFixed(1));
   let label,color;
   if(diff>20){label='יקרה מאוד';color='#f87171';}
@@ -276,7 +277,7 @@ function calcGrade(price,m9,m20,m150,m200,rv,pe){
   if(m200)price>m200?s+=2:s--;
   if(m150)price>m150?s+=2:s--;
   if(m9&&m20)m9>m20?s+=2:s--;
-  if(rv<35)s+=3;else if(rv>70)s-=2;else s+=1;
+  if(rv!==null&&rv<35)s+=3;else if(rv!==null&&rv>70)s-=2;else s+=1;
   if(pe)pe<20?s+=2:pe>50?s--:null;
   if(s>=8)return{grade:'A',color:'#4ade80',label:'חזק מאוד'};
   if(s>=5)return{grade:'B',color:'#a3e635',label:'חיובי'};
@@ -287,25 +288,31 @@ function fmt(n){if(!n)return'—';if(n>1e12)return'$'+(n/1e12).toFixed(2)+'T';if
 
 // ── AI — JavaScript חישב הכל, AI כותב רק את המגמה ──
 async function getAI(data){
-  const {ticker,price,rsiVal,m9,m20,sg,zs,bullPct,bearPct,pe,closes}=data;
+  const {ticker,price,rsiVal,m9,m20,sg,zs,bullPct,bearPct,pe,lows}=data;
   // חישוב JavaScript — לא AI!
-  const priceNum=parseFloat(price); const recent=(closes||[]).filter(v=>v&&v<priceNum).slice(-30); const stop=parseFloat((recent.length?Math.min(...recent.slice(-10)):priceNum*0.95).toFixed(2));
+  const priceNum=parseFloat(price);
+  // סטופ = שפל אמיתי של 14 הימים האחרונים, מוגבל ל-12% מהמחיר
+  const recentLows=(lows||[]).filter(v=>v!=null).slice(-14);
+  let stop=recentLows.length?Math.min(...recentLows):priceNum*0.95;
+  if(stop>=priceNum)stop=priceNum*0.97;
+  if((priceNum-stop)/priceNum>0.12)stop=priceNum*0.88;
+  stop=parseFloat(stop.toFixed(2));
   const risk=parseFloat((priceNum-stop).toFixed(2));
   const target=parseFloat((priceNum+risk*2).toFixed(2));
   const trend=m9&&m20&&m9>m20?'עולה':'יורד';
   const rsiTxt=rsiVal<35?'נמוך — אזור קנייה':rsiVal>70?'גבוה — אזור מכירה':'נייטרלי';
   const emoji=rsiVal<35?'📈':rsiVal>70?'📉':'⚠️';
 
-  // AI — רק משפט אחד על המגמה
+  // AI — משפט אחד על המגמה, דרך הבקאנד (המפתח לא נמצא בצד-לקוח)
   let trendText='';
   try{
-    const r=await fetch('https://api.groq.com/openai/v1/chat/completions',{
+    const r=await fetch(API+'/ai',{
       method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+GROQ},
-      body:JSON.stringify({model:'llama-3.1-8b-instant',max_tokens:80,messages:[{role:'user',content:'כתוב משפט אחד קצר בעברית על מגמת המניה '+ticker+'. מגמה: '+trend+', RSI: '+rsiTxt+', שורים: '+(bullPct||'N/A')+'%, דובים: '+(bearPct||'N/A')+'%. רק משפט אחד.'}]})
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ticker,trend,rsiTxt,bullPct:bullPct||'N/A',bearPct:bearPct||'N/A'})
     });
     const d=await r.json();
-    trendText=d.choices?.[0]?.message?.content?.trim()||'';
+    trendText=(d.text||'').trim();
   }catch(e){}
 
   return 'מגמה: '+(trendText||trend)+'\nכניסה: $'+price+'\nסטופ: $'+stop+'\nיעד: $'+target+' (יחס 1:2)\nסיכום: '+sg.l+'\n'+emoji;
@@ -331,9 +338,9 @@ async function getSentiment(ticker){
 async function updatePrice(){
   if(!currentTicker)return;
   try{
-    const r=await fetch(API+'/stock/'+currentTicker);const d=await r.json();
-    if(d.error)return;
-    const p=d.closes[d.closes.length-1];const prev=d.closes[d.closes.length-2];
+    const r=await fetch(API+'/price/'+currentTicker);const d=await r.json();
+    if(d.error||d.price==null)return;
+    const p=d.price;const prev=d.prev||p;
     const ch=((p-prev)/prev*100).toFixed(2);const up=parseFloat(ch)>=0;
     const pe=document.querySelector('.company-price-value');const ce=document.querySelector('.company-price-change');
     if(pe)pe.textContent='$'+p.toFixed(2);
@@ -382,7 +389,7 @@ async function analyze(){
       '<div class="glass fund-card"><div class="fund-label">EPS</div><div class="fund-value">'+(json.eps?'$'+json.eps.toFixed(2):'—')+'</div></div>'+
       '<div class="glass fund-card"><div class="fund-label">52W גבוה</div><div class="fund-value">'+(json.week_high?'$'+json.week_high.toFixed(2):'—')+'</div></div>'+
       '<div class="glass fund-card"><div class="fund-label">52W נמוך</div><div class="fund-value">'+(json.week_low?'$'+json.week_low.toFixed(2):'—')+'</div></div>'+
-      '<div class="glass fund-card"><div class="fund-label">דיבידנד</div><div class="fund-value">'+(json.dividend?(json.dividend*100).toFixed(2)+'%':'—')+'</div></div>'+
+      '<div class="glass fund-card"><div class="fund-label">דיבידנד</div><div class="fund-value">'+(json.dividend_pct?json.dividend_pct.toFixed(2)+'%':'—')+'</div></div>'+
       '</div>'+
       // Grade + FV
       '<div style="display:grid;grid-template-columns:1fr'+(fvData?' 1fr':'')+';gap:12px;margin-bottom:1.5rem">'+
@@ -429,7 +436,7 @@ async function analyze(){
 
     // AI + Sentiment
     getSentiment(t).then(sentData=>{
-      getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,closes:d}).then(text=>{
+      getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows}).then(text=>{
         const el=document.getElementById('aiText');
         if(el){el.className='ai-text';el.textContent=text||'לא ניתן לטעון ניתוח AI.';}
       });
