@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
 <meta charset="UTF-8">
@@ -237,16 +237,48 @@ function loadScan(t){showAnalyze();document.getElementById('ticker').value=t;ana
 function ma(d,p){return d.map((_,i)=>{if(i<p-1)return null;const s=d.slice(i-p+1,i+1).filter(v=>v!==null);if(s.length<p)return null;return parseFloat((s.reduce((a,b)=>a+b,0)/s.length).toFixed(2));});}
 function rsi(d,p=14){const r=d.map(()=>null);for(let i=p;i<d.length;i++){let g=0,l=0;for(let j=i-p+1;j<=i;j++){const x=d[j]-d[j-1];if(x>0)g+=x;else l-=x;}r[i]=parseFloat((100-100/(1+g/(l||0.0001))).toFixed(1));}return r;}
 function zones(closes,highs,lows){
-  const closes_f=closes.filter(v=>v!==null);
-  const price=closes_f[closes_f.length-1];
-  const s=[...closes.filter(v=>v!==null).slice(-90)].sort((a,b)=>a-b);
-  const h=[...((highs||[]).filter(v=>v!==null).slice(-90))].sort((a,b)=>b-a);
-  return[
-    {p:parseFloat((s[Math.floor(s.length*.1)]||s[0]||0).toFixed(2)),t:'תמיכה',str:'חזקה'},
-    {p:parseFloat((s[Math.floor(s.length*.25)]||s[0]||0).toFixed(2)),t:'תמיכה',str:'בינונית'},
-    {p:parseFloat((s[Math.floor(s.length*.75)]||s[0]||0).toFixed(2)),t:'התנגדות',str:'בינונית'},
-    {p:parseFloat((h.length?h[Math.floor(h.length*.1)]:s[Math.floor(s.length*.9)]).toFixed(2)),t:'התנגדות',str:'חזקה'},
-  ];
+  const cl=closes.filter(v=>v!==null);
+  const price=cl[cl.length-1];
+  const H=(highs||[]).map(v=>v), L=(lows||[]).map(v=>v);
+  const lookback=5; // כמה נרות מכל צד כדי לאשר נקודת ציר
+
+  // ── שלב 1: איסוף נקודות ציר (שיאים ושפלים מקומיים) ──
+  const pivots=[];
+  for(let i=lookback;i<closes.length-lookback;i++){
+    if(H[i]==null||L[i]==null)continue;
+    let isHigh=true,isLow=true;
+    for(let j=i-lookback;j<=i+lookback;j++){
+      if(j===i)continue;
+      if(H[j]!=null&&H[j]>=H[i])isHigh=false;
+      if(L[j]!=null&&L[j]<=L[i])isLow=false;
+    }
+    if(isHigh)pivots.push(H[i]);
+    if(isLow)pivots.push(L[i]);
+  }
+  if(!pivots.length)return[];
+
+  // ── שלב 2: קיבוץ נקודות קרובות לאשכולות (טווח 2.5%) ──
+  const tol=0.025;
+  const clusters=[];
+  pivots.sort((a,b)=>a-b).forEach(p=>{
+    const c=clusters.find(c=>Math.abs(c.level-p)/c.level<=tol);
+    if(c){c.points.push(p);c.level=c.points.reduce((a,b)=>a+b,0)/c.points.length;}
+    else clusters.push({level:p,points:[p]});
+  });
+
+  // ── שלב 3: ציון חוזק = כמה נגיעות (נקודות) יש באשכול ──
+  const ranked=clusters
+    .map(c=>({p:parseFloat(c.level.toFixed(2)),touches:c.points.length}))
+    .filter(c=>c.touches>=2)            // לפחות 2 נגיעות כדי להיחשב רמה אמיתית
+    .sort((a,b)=>b.touches-a.touches);  // החזקות קודם
+
+  // ── שלב 4: סיווג לתמיכה (מתחת למחיר) / התנגדות (מעל) + תווית חוזק ──
+  return ranked.map(c=>({
+    p:c.p,
+    t:c.p<price?'תמיכה':'התנגדות',
+    str:c.touches>=4?'חזקה מאוד':c.touches===3?'חזקה':'בינונית',
+    touches:c.touches
+  }));
 }
 function signal(price,m9,m20,m150,m200,rv,zs){
   let sc=0,rs=[];
