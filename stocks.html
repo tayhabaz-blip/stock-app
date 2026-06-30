@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
 <meta charset="UTF-8">
@@ -72,6 +72,10 @@
   .ai-loading{display:flex;align-items:center;gap:10px;font-size:13px;color:rgba(255,255,255,0.4)}
   .ai-spinner{width:14px;height:14px;border:2px solid rgba(255,255,255,0.1);border-top-color:#a78bfa;border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0}
   @keyframes spin{to{transform:rotate(360deg)}}
+  .trade-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin:1rem 0 0.5rem}
+  .trade-cell{padding:0.85rem;border-radius:10px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08)}
+  .trade-cell-label{font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:5px}
+  .trade-cell-value{font-size:15px;font-weight:700}
   .sentiment-card{border-radius:16px;padding:1.5rem;margin-bottom:1.25rem}
   .sentiment-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1.25rem}
   .sentiment-title{font-size:13px;font-weight:600;color:rgba(255,255,255,0.7)}
@@ -236,13 +240,13 @@ function loadScan(t){showAnalyze();document.getElementById('ticker').value=t;ana
 // ── MATH ──
 function ma(d,p){return d.map((_,i)=>{if(i<p-1)return null;const s=d.slice(i-p+1,i+1).filter(v=>v!==null);if(s.length<p)return null;return parseFloat((s.reduce((a,b)=>a+b,0)/s.length).toFixed(2));});}
 function rsi(d,p=14){const r=d.map(()=>null);for(let i=p;i<d.length;i++){let g=0,l=0;for(let j=i-p+1;j<=i;j++){const x=d[j]-d[j-1];if(x>0)g+=x;else l-=x;}r[i]=parseFloat((100-100/(1+g/(l||0.0001))).toFixed(1));}return r;}
+
+// ── ZONES — זיהוי תמיכה/התנגדות לפי כמות נגיעות (clustering) ──
 function zones(closes,highs,lows){
   const cl=closes.filter(v=>v!==null);
   const price=cl[cl.length-1];
   const H=(highs||[]).map(v=>v), L=(lows||[]).map(v=>v);
-  const lookback=5; // כמה נרות מכל צד כדי לאשר נקודת ציר
-
-  // ── שלב 1: איסוף נקודות ציר (שיאים ושפלים מקומיים) ──
+  const lookback=5;
   const pivots=[];
   for(let i=lookback;i<closes.length-lookback;i++){
     if(H[i]==null||L[i]==null)continue;
@@ -256,8 +260,6 @@ function zones(closes,highs,lows){
     if(isLow)pivots.push(L[i]);
   }
   if(!pivots.length)return[];
-
-  // ── שלב 2: קיבוץ נקודות קרובות לאשכולות (טווח 2.5%) ──
   const tol=0.025;
   const clusters=[];
   pivots.sort((a,b)=>a-b).forEach(p=>{
@@ -265,14 +267,10 @@ function zones(closes,highs,lows){
     if(c){c.points.push(p);c.level=c.points.reduce((a,b)=>a+b,0)/c.points.length;}
     else clusters.push({level:p,points:[p]});
   });
-
-  // ── שלב 3: ציון חוזק = כמה נגיעות (נקודות) יש באשכול ──
   const ranked=clusters
     .map(c=>({p:parseFloat(c.level.toFixed(2)),touches:c.points.length}))
-    .filter(c=>c.touches>=2)            // לפחות 2 נגיעות כדי להיחשב רמה אמיתית
-    .sort((a,b)=>b.touches-a.touches);  // החזקות קודם
-
-  // ── שלב 4: סיווג לתמיכה (מתחת למחיר) / התנגדות (מעל) + תווית חוזק ──
+    .filter(c=>c.touches>=2)
+    .sort((a,b)=>b.touches-a.touches);
   return ranked.map(c=>({
     p:c.p,
     t:c.p<price?'תמיכה':'התנגדות',
@@ -292,12 +290,11 @@ function signal(price,m9,m20,m150,m200,rv,zs){
 }
 function calcFV(eps,pe,price,growth){
   if(!eps||eps<=0)return null;
-  // מכפיל הוגן ≈ קצב צמיחת הרווחים (כלל PEG=1), מוגבל לטווח 12–45
   let fairPE;
   if(growth&&growth>0){
     fairPE=Math.max(12,Math.min(growth*100,45));
   }else{
-    fairPE=Math.min(pe||20,25); // אין נתון צמיחה — נופלים למכפיל שמרני
+    fairPE=Math.min(pe||20,25);
   }
   const fv=parseFloat((eps*fairPE).toFixed(2));
   const diff=parseFloat(((price-fv)/fv*100).toFixed(1));
@@ -323,24 +320,52 @@ function calcGrade(price,m9,m20,m150,m200,rv,pe){
 }
 function fmt(n){if(!n)return'—';if(n>1e12)return'$'+(n/1e12).toFixed(2)+'T';if(n>1e9)return'$'+(n/1e9).toFixed(2)+'B';if(n>1e6)return'$'+(n/1e6).toFixed(2)+'M';return'$'+n.toFixed(0);}
 
-// ── AI — JavaScript חישב הכל, AI כותב רק את המגמה ──
+// ── AI — כניסה על פריצה, יעד לפי התנגדות חזקה, דלק. JavaScript מחשב, AI רק מנסח ──
 async function getAI(data){
   const {ticker,price,rsiVal,m9,m20,sg,zs,bullPct,bearPct,pe,lows}=data;
-  // חישוב JavaScript — לא AI!
   const priceNum=parseFloat(price);
-  // סטופ = שפל אמיתי של 14 הימים האחרונים, מוגבל ל-12% מהמחיר
-  const recentLows=(lows||[]).filter(v=>v!=null).slice(-14);
-  let stop=recentLows.length?Math.min(...recentLows):priceNum*0.95;
-  if(stop>=priceNum)stop=priceNum*0.97;
-  if((priceNum-stop)/priceNum>0.12)stop=priceNum*0.88;
-  stop=parseFloat(stop.toFixed(2));
-  const risk=parseFloat((priceNum-stop).toFixed(2));
-  const target=parseFloat((priceNum+risk*2).toFixed(2));
-  const trend=m9&&m20&&m9>m20?'עולה':'יורד';
-  const rsiTxt=rsiVal<35?'נמוך — אזור קנייה':rsiVal>70?'גבוה — אזור מכירה':'נייטרלי';
-  const emoji=rsiVal<35?'📈':rsiVal>70?'📉':'⚠️';
+  const rnd=v=>parseFloat(v.toFixed(priceNum<1?4:2));
 
-  // AI — משפט אחד על המגמה, דרך הבקאנד (המפתח לא נמצא בצד-לקוח)
+  // מפרידים את האזורים: התנגדויות מעל המחיר, תמיכות מתחת
+  const resists =(zs||[]).filter(z=>z.t==='התנגדות'&&z.p>priceNum).sort((a,b)=>a.p-b.p);
+  const supports=(zs||[]).filter(z=>z.t==='תמיכה'&&z.p<priceNum).sort((a,b)=>b.p-a.p);
+
+  let entry,stop,target,rr,distToBreakPct,potentialPct,headline,measured=null,openField=false;
+
+  if(resists.length){
+    // יש התנגדות מעל → כניסה על פריצה
+    const breakLevel=resists[0].p;                 // ההתנגדות הקרובה = נקודת הפריצה
+    entry=rnd(breakLevel*1.005);                   // כניסה מעט מעל הפריצה (אישור 0.5%)
+    stop = supports.length?rnd(supports[0].p):rnd(breakLevel*0.96); // סטופ מתחת לפריצה/תמיכה
+    target = resists.length>1?rnd(resists[1].p):null;  // יעד = ההתנגדות החזקה הבאה
+    // אם אין התנגדות נוספת מעל הפריצה — יעד מדוד (Measured Move)
+    if(target===null){
+      const rangeBottom=supports.length?supports[0].p:breakLevel*0.92;
+      measured=rnd(breakLevel+(breakLevel-rangeBottom));
+      target=measured;
+    }
+    rr=parseFloat(((target-entry)/(entry-stop)).toFixed(2));
+    // מרחק לפריצה = מהמחיר הנוכחי עד נקודת הכניסה
+    distToBreakPct=parseFloat(((breakLevel-priceNum)/priceNum*100).toFixed(2));
+    // פוטנציאל אחרי פריצה = מהכניסה עד היעד
+    potentialPct=parseFloat(((target-entry)/entry*100).toFixed(2));
+    headline=distToBreakPct<=0.3?'נוגע בפריצה':'נדרשת פריצה מעל $'+breakLevel;
+  }else{
+    // אין התנגדות מעל → שדה פתוח
+    openField=true;
+    entry=rnd(priceNum);
+    stop = supports.length?rnd(supports[0].p):rnd(priceNum*0.92);
+    target=null;
+    rr=null;
+    distToBreakPct=null;
+    potentialPct=null;
+    headline='שדה פתוח — אין התנגדות קרובה מעל';
+  }
+
+  const trend=m9&&m20&&parseFloat(m9)>parseFloat(m20)?'עולה':'יורד';
+  const rsiTxt=rsiVal<35?'נמוך — אזור קנייה':rsiVal>70?'גבוה — אזור מכירה':'נייטרלי';
+
+  // AI — משפט ניסוח בלבד, דרך הבקאנד
   let trendText='';
   try{
     const r=await fetch(API+'/ai',{
@@ -352,7 +377,24 @@ async function getAI(data){
     trendText=(d.text||'').trim();
   }catch(e){}
 
-  return 'מגמה: '+(trendText||trend)+'\nכניסה: $'+price+'\nסטופ: $'+stop+'\nיעד: $'+target+' (יחס 1:2)\nסיכום: '+sg.l+'\n'+emoji;
+  // בניית הטקסט להצגה
+  let out='מגמה: '+(trendText||trend)+'\n\n';
+  out+='כניסה: $'+entry+(openField?' (מחיר נוכחי)':' (מעל הפריצה)')+'\n';
+  out+='סטופ: $'+stop+'\n';
+  if(target!==null){
+    out+='יעד: $'+target+(measured!==null?' (יעד מדוד אחרי פריצה)':' (התנגדות הבאה)')+'\n';
+    out+='יחס סיכון/סיכוי: 1:'+rr+'\n';
+  }else{
+    out+='יעד: '+headline+'\n';
+  }
+  if(distToBreakPct!==null){
+    out+='מרחק לפריצה: '+(distToBreakPct<=0?'הגיע':distToBreakPct+'%')+'\n';
+  }
+  if(potentialPct!==null){
+    out+='פוטנציאל אחרי פריצה: '+potentialPct+'%\n';
+  }
+  out+='\nסיכום: '+sg.l;
+  return {text:out,entry,stop,target,rr,distToBreakPct,potentialPct,openField};
 }
 
 // ── SENTIMENT ──
@@ -415,6 +457,9 @@ async function analyze(){
     const fvData=calcFV(json.eps,json.pe_ratio,price,json.earnings_growth);
     const gc='rgba(255,255,255,0.04)',tc='rgba(255,255,255,0.25)';
 
+    // לתצוגה: 4 האזורים החזקים ביותר, ממוינים לפי מחיר
+    const topZones=[...zs].sort((a,b)=>b.touches-a.touches).slice(0,4).sort((a,b)=>b.p-a.p);
+
     document.getElementById('results').innerHTML=
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">'+
       '<span class="back-btn" onclick="showHome()">← בית</span>'+
@@ -433,7 +478,6 @@ async function analyze(){
       '<div class="glass fund-card"><div class="fund-label">52W נמוך</div><div class="fund-value">'+(json.week_low?'$'+json.week_low.toFixed(2):'—')+'</div></div>'+
       '<div class="glass fund-card"><div class="fund-label">דיבידנד</div><div class="fund-value">'+(json.dividend_pct?json.dividend_pct.toFixed(2)+'%':'—')+'</div></div>'+
       '</div>'+
-      // Grade + FV
       '<div style="display:grid;grid-template-columns:1fr'+(fvData?' 1fr':'')+';gap:12px;margin-bottom:1.5rem">'+
       '<div style="padding:1.25rem;border-radius:14px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.09);display:flex;align-items:center;gap:14px">'+
       '<div style="width:50px;height:50px;border-radius:10px;background:'+gradeData.color+'22;border:2px solid '+gradeData.color+';display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;color:'+gradeData.color+'">'+gradeData.grade+'</div>'+
@@ -441,26 +485,19 @@ async function analyze(){
       '</div>'+
       (fvData?'<div style="padding:1.25rem;border-radius:14px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.09)"><div style="font-size:11px;color:rgba(255,255,255,0.3);margin-bottom:6px">FAIR VALUE</div><div style="font-size:18px;font-weight:700">$'+fvData.fv+'</div><div style="font-size:12px;font-weight:600;color:'+fvData.color+';margin-top:4px">'+fvData.label+' ('+Math.abs(fvData.diff)+'%)</div></div>':'')+
       '</div>'+
-      // AI Card
       '<div class="ai-card"><div class="ai-card-header"><span class="ai-badge">AI</span><span class="ai-card-title">ניתוח חכם — '+t+'</span></div>'+
       '<div id="aiText" class="ai-loading"><div class="ai-spinner"></div>מנתח...</div></div>'+
-      // Signal
       '<div class="signal-banner '+sg.c+'"><div class="signal-dot dot-'+sg.c+'"></div><div><div class="signal-title '+sg.c+'">ניתוח טכני — '+sg.l+'</div><div class="signal-reasons">'+sg.rs.join(' · ')+'</div></div></div>'+
-      // Sentiment
       '<div class="glass sentiment-card" id="sentCard"><div class="ai-loading"><div class="ai-spinner"></div>טוען נתוני אנליסטים...</div></div>'+
-      // Metrics
       '<div class="metrics">'+
       '<div class="glass metric"><div class="metric-label">RSI (14)</div><div class="metric-value" style="color:'+(rv_>70?'#f87171':rv_<30?'#4ade80':'#fff')+'">'+rv_+'</div><div class="metric-sub">'+(rv_>70?'Overbought':rv_<30?'Oversold':'Neutral')+'</div></div>'+
       '<div class="glass metric"><div class="metric-label">MA9 / MA20</div><div class="metric-value" style="font-size:16px">$'+(lm9?.toFixed(2)||'—')+'</div><div class="metric-sub">/ $'+(lm20?.toFixed(2)||'—')+'</div></div>'+
       '<div class="glass metric"><div class="metric-label">MA200</div><div class="metric-value" style="font-size:16px">'+(lm200?'$'+lm200.toFixed(2):'—')+'</div></div>'+
       '</div>'+
-      // Chart Price
       '<div class="glass chart-card"><div class="chart-header"><div class="chart-header-title">גרף מחיר — 12 חודשים</div></div><div style="position:relative;height:240px"><canvas id="pc"></canvas></div></div>'+
-      // Chart RSI
       '<div class="glass chart-card"><div class="chart-header"><div class="chart-header-title">RSI (14)</div></div><div style="position:relative;height:130px"><canvas id="rc"></canvas></div></div>'+
-      // Zones
-      '<div class="glass chart-card"><div class="section-title">אזורי תמיכה והתנגדות</div>'+
-      zs.map(z=>'<div class="zone-row '+(z.t==='תמיכה'?'support':'resist')+'"><div class="zone-label">'+z.t+' '+z.str+'</div><div style="display:flex;align-items:center;gap:10px"><span class="zone-badge '+(z.t==='תמיכה'?'badge-support':'badge-resist')+'">'+z.t+'</span><span class="zone-price">$'+z.p+'</span></div></div>').join('')+
+      '<div class="glass chart-card"><div class="section-title">אזורי תמיכה והתנגדות (לפי נגיעות)</div>'+
+      (topZones.length?topZones.map(z=>'<div class="zone-row '+(z.t==='תמיכה'?'support':'resist')+'"><div class="zone-label">'+z.t+' '+z.str+' · '+z.touches+' נגיעות</div><div style="display:flex;align-items:center;gap:10px"><span class="zone-badge '+(z.t==='תמיכה'?'badge-support':'badge-resist')+'">'+z.t+'</span><span class="zone-price">$'+z.p+'</span></div></div>').join(''):'<div style="color:rgba(255,255,255,0.3);font-size:13px">אין מספיק נתונים לזיהוי אזורים</div>')+
       '</div>';
 
     pc=new Chart(document.getElementById('pc'),{type:'line',data:{labels:lb,datasets:[
@@ -476,11 +513,10 @@ async function analyze(){
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
         scales:{x:{ticks:{color:tc,maxTicksLimit:7,font:{size:11}},grid:{color:gc}},y:{min:0,max:100,ticks:{color:tc,font:{size:11},stepSize:30},grid:{color:gc}}}}});
 
-    // AI + Sentiment
     getSentiment(t).then(sentData=>{
-      getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows}).then(text=>{
+      getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows}).then(res=>{
         const el=document.getElementById('aiText');
-        if(el){el.className='ai-text';el.textContent=text||'לא ניתן לטעון ניתוח AI.';}
+        if(el){el.className='ai-text';el.textContent=res.text||'לא ניתן לטעון ניתוח AI.';}
       });
     });
 
