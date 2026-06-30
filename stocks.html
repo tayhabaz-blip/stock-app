@@ -320,7 +320,7 @@ function calcGrade(price,m9,m20,m150,m200,rv,pe){
 }
 function fmt(n){if(!n)return'—';if(n>1e12)return'$'+(n/1e12).toFixed(2)+'T';if(n>1e9)return'$'+(n/1e9).toFixed(2)+'B';if(n>1e6)return'$'+(n/1e6).toFixed(2)+'M';return'$'+n.toFixed(0);}
 
-// ── AI — כניסה על פריצה, יעד לפי התנגדות חזקה, דלק. JavaScript מחשב, AI רק מנסח ──
+// ── AI — כניסה על פריצה, שרשרת יעדים עם אחוז ממחיר הפריצה. JavaScript מחשב, AI רק מנסח ──
 async function getAI(data){
   const {ticker,price,rsiVal,m9,m20,sg,zs,bullPct,bearPct,pe,lows}=data;
   const priceNum=parseFloat(price);
@@ -330,37 +330,42 @@ async function getAI(data){
   const resists =(zs||[]).filter(z=>z.t==='התנגדות'&&z.p>priceNum).sort((a,b)=>a.p-b.p);
   const supports=(zs||[]).filter(z=>z.t==='תמיכה'&&z.p<priceNum).sort((a,b)=>b.p-a.p);
 
-  let entry,stop,target,rr,distToBreakPct,potentialPct,headline,measured=null,openField=false;
+  let entry,stop,breakLevel,distToBreakPct,targets=[],headline,openField=false;
 
   if(resists.length){
-    // יש התנגדות מעל → כניסה על פריצה
-    const breakLevel=resists[0].p;                 // ההתנגדות הקרובה = נקודת הפריצה
+    // ההתנגדות הקרובה = נקודת הפריצה
+    breakLevel=resists[0].p;
     entry=rnd(breakLevel*1.005);                   // כניסה מעט מעל הפריצה (אישור 0.5%)
-    stop = supports.length?rnd(supports[0].p):rnd(breakLevel*0.96); // סטופ מתחת לפריצה/תמיכה
-    target = resists.length>1?rnd(resists[1].p):null;  // יעד = ההתנגדות החזקה הבאה
-    // אם אין התנגדות נוספת מעל הפריצה — יעד מדוד (Measured Move)
-    if(target===null){
-      const rangeBottom=supports.length?supports[0].p:breakLevel*0.92;
-      measured=rnd(breakLevel+(breakLevel-rangeBottom));
-      target=measured;
-    }
-    rr=parseFloat(((target-entry)/(entry-stop)).toFixed(2));
-    // מרחק לפריצה = מהמחיר הנוכחי עד נקודת הכניסה
+    stop = supports.length?rnd(supports[0].p):rnd(breakLevel*0.96);
     distToBreakPct=parseFloat(((breakLevel-priceNum)/priceNum*100).toFixed(2));
-    // פוטנציאל אחרי פריצה = מהכניסה עד היעד
-    potentialPct=parseFloat(((target-entry)/entry*100).toFixed(2));
+
+    // שרשרת יעדים = כל ההתנגדויות שמעל נקודת הפריצה. אחוז נמדד ממחיר הפריצה.
+    const above=resists.filter(z=>z.p>breakLevel).sort((a,b)=>a.p-b.p);
+    if(above.length){
+      targets=above.slice(0,3).map(z=>({
+        p:rnd(z.p),
+        pct:parseFloat(((z.p-breakLevel)/breakLevel*100).toFixed(2)),
+        str:z.str
+      }));
+    }else{
+      // אין התנגדות נוספת → יעד מדוד (Measured Move) ממחיר הפריצה
+      const rangeBottom=supports.length?supports[0].p:breakLevel*0.92;
+      const mt=rnd(breakLevel+(breakLevel-rangeBottom));
+      targets=[{p:mt,pct:parseFloat(((mt-breakLevel)/breakLevel*100).toFixed(2)),str:'יעד מדוד'}];
+    }
     headline=distToBreakPct<=0.3?'נוגע בפריצה':'נדרשת פריצה מעל $'+breakLevel;
   }else{
-    // אין התנגדות מעל → שדה פתוח
     openField=true;
     entry=rnd(priceNum);
     stop = supports.length?rnd(supports[0].p):rnd(priceNum*0.92);
-    target=null;
-    rr=null;
     distToBreakPct=null;
-    potentialPct=null;
     headline='שדה פתוח — אין התנגדות קרובה מעל';
   }
+
+  // הפוטנציאל הגדול = היעד הרחוק ביותר בשרשרת
+  const maxPot=targets.length?targets[targets.length-1].pct:null;
+  // יחס סיכון/סיכוי לפי היעד הראשון
+  const rr=(targets.length&&entry>stop)?parseFloat(((targets[0].p-entry)/(entry-stop)).toFixed(2)):null;
 
   const trend=m9&&m20&&parseFloat(m9)>parseFloat(m20)?'עולה':'יורד';
   const rsiTxt=rsiVal<35?'נמוך — אזור קנייה':rsiVal>70?'גבוה — אזור מכירה':'נייטרלי';
@@ -379,22 +384,25 @@ async function getAI(data){
 
   // בניית הטקסט להצגה
   let out='מגמה: '+(trendText||trend)+'\n\n';
-  out+='כניסה: $'+entry+(openField?' (מחיר נוכחי)':' (מעל הפריצה)')+'\n';
+  out+='כניסה: $'+entry+(openField?' (מחיר נוכחי)':' (מעל הפריצה $'+breakLevel+')')+'\n';
   out+='סטופ: $'+stop+'\n';
-  if(target!==null){
-    out+='יעד: $'+target+(measured!==null?' (יעד מדוד אחרי פריצה)':' (התנגדות הבאה)')+'\n';
-    out+='יחס סיכון/סיכוי: 1:'+rr+'\n';
-  }else{
-    out+='יעד: '+headline+'\n';
-  }
   if(distToBreakPct!==null){
     out+='מרחק לפריצה: '+(distToBreakPct<=0?'הגיע':distToBreakPct+'%')+'\n';
   }
-  if(potentialPct!==null){
-    out+='פוטנציאל אחרי פריצה: '+potentialPct+'%\n';
+  if(targets.length){
+    out+='\nיעדים (אחוז ממחיר הפריצה):\n';
+    targets.forEach((t,i)=>{
+      out+='יעד '+(i+1)+' ('+t.str+'): $'+t.p+' · +'+t.pct+'%\n';
+    });
+    if(maxPot!==null&&maxPot>=15){
+      out+='\n🚀 פוטנציאל פריצה גדול: עד +'+maxPot+'%\n';
+    }
+    if(rr!==null)out+='יחס סיכון/סיכוי (יעד 1): 1:'+rr+'\n';
+  }else{
+    out+='יעד: '+headline+'\n';
   }
   out+='\nסיכום: '+sg.l;
-  return {text:out,entry,stop,target,rr,distToBreakPct,potentialPct,openField};
+  return {text:out,entry,stop,breakLevel,targets,maxPot,rr,distToBreakPct,openField};
 }
 
 // ── SENTIMENT ──
