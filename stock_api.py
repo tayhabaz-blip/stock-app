@@ -143,13 +143,17 @@ def scan():
     for ticker in WATCHLIST:
         try:
             stock = yf.Ticker(ticker, session=session)
-            hist = stock.history(period="3mo")
+            hist = stock.history(period="6mo")
             if hist.empty or len(hist) < 20:
                 continue
             closes = [float(v) for v in hist["Close"].tolist()]
+            highs = [float(v) for v in hist["High"].tolist()]
+            lows = [float(v) for v in hist["Low"].tolist()]
             price = closes[-1]
             ma9 = sum(closes[-9:]) / 9
             ma20 = sum(closes[-20:]) / 20
+
+            # ── RSI ──
             gains, losses = 0, 0
             for i in range(-14, 0):
                 d = closes[i] - closes[i - 1]
@@ -158,24 +162,74 @@ def scan():
                 else:
                     losses -= d
             rsi = 100 - 100 / (1 + gains / (losses or 0.0001))
+
+            # ── זיהוי אזורי תמיכה/התנגדות לפי נגיעות (clustering) ──
+            lookback = 5
+            pivots = []
+            for i in range(lookback, len(closes) - lookback):
+                is_high = all(highs[j] <= highs[i] for j in range(i - lookback, i + lookback + 1) if j != i)
+                is_low = all(lows[j] >= lows[i] for j in range(i - lookback, i + lookback + 1) if j != i)
+                if is_high:
+                    pivots.append(highs[i])
+                if is_low:
+                    pivots.append(lows[i])
+            tol = 0.025
+            clusters = []
+            for p in sorted(pivots):
+                placed = False
+                for c in clusters:
+                    if abs(c["level"] - p) / c["level"] <= tol:
+                        c["points"].append(p)
+                        c["level"] = sum(c["points"]) / len(c["points"])
+                        placed = True
+                        break
+                if not placed:
+                    clusters.append({"level": p, "points": [p]})
+            zones = [{"p": round(c["level"], 2), "touches": len(c["points"])}
+                     for c in clusters if len(c["points"]) >= 2]
+
+            # ── קרבה לפריצת התנגדות ──
+            resists = sorted([z for z in zones if z["p"] > price], key=lambda z: z["p"])
+            dist_to_break = None
+            if resists:
+                break_level = resists[0]["p"]
+                dist_to_break = round((break_level - price) / price * 100, 2)
+
+            # ── בניית איתותים ──
             signals = []
+            if dist_to_break is not None and dist_to_break <= 5:
+                signals.append("🎯 קרוב לפריצה " + str(dist_to_break) + "%")
             if rsi < 35:
                 signals.append("RSI נמוך")
             if rsi > 70:
                 signals.append("RSI גבוה")
             if ma9 > ma20:
                 signals.append("MA9 מעל MA20")
+
             if signals:
+                # ── ציון חוזק ההזדמנות (למיון) ──
+                score = 0
+                if dist_to_break is not None and dist_to_break <= 5:
+                    score += (5 - dist_to_break) * 3   # ככל שקרוב יותר לפריצה — חזק יותר
+                if rsi < 35:
+                    score += (35 - rsi) / 5
+                if rsi > 70:
+                    score += (rsi - 70) / 5
+                if ma9 > ma20:
+                    score += 1
                 results.append({
                     "ticker": ticker,
                     "price": round(price, 2),
                     "rsi": round(rsi, 1),
+                    "dist_to_break": dist_to_break,
                     "signals": signals,
+                    "score": round(score, 1),
                 })
         except Exception:
             continue
+    # ── מיון לפי חוזק ההזדמנות (הגבוה ביותר קודם) ──
+    results.sort(key=lambda r: r["score"], reverse=True)
     return cache_set("scan", {"results": results})
-
 
 # ── סנטימנט אנליסטים (מטמון שעה) ──
 @app.get("/sentiment/{ticker}")
