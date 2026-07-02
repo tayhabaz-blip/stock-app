@@ -130,8 +130,14 @@ def get_price(ticker: str):
         return {"error": str(e)}
 
 
-WATCHLIST = ["AAPL", "MSFT", "NVDA", "TSLA", "META", "SOFI", "PLTR", "COIN", "HOOD", "AMD"]
-
+STOCK_UNIVERSE = [
+    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "AMD", "NFLX",
+    "SOFI", "PLTR", "COIN", "HOOD", "SQ", "PYPL", "AFRM", "NU", "UBER", "ABNB",
+    "SHOP", "CRWD", "SNOW", "DDOG", "NET", "MDB", "PANW", "ZS", "ARM", "MU",
+    "INTC", "QCOM", "MRVL", "SMCI", "DELL", "ORCL", "ADBE", "CRM", "NOW", "INTU",
+    "DIS", "BA", "JPM", "BAC", "V", "MA", "WMT", "COST", "PEP", "KO",
+    "XOM", "CVX", "LLY", "UNH", "RIVN"
+]
 
 # ── סורק מניות (מטמון 5 דקות) ──
 @app.get("/scan")
