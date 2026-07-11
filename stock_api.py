@@ -146,7 +146,7 @@ def scan():
     if cached:
         return cached
     results = []
-    for ticker in WATCHLIST:
+    for ticker in STOCK_UNIVERSE:
         try:
             stock = yf.Ticker(ticker, session=session)
             hist = stock.history(period="6mo")
