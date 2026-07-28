@@ -120,6 +120,7 @@
   .scan-card:hover{border-color:rgba(63,169,224,0.4)}
   .scan-card.overbought{border-color:rgba(248,113,113,0.35);background:rgba(248,113,113,0.04)}
   .overbought-badge{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:999px;background:rgba(248,113,113,0.15);color:#f87171;border:1px solid rgba(248,113,113,0.25);margin-inline-start:8px}
+  .scan-grade{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:7px;font-size:12px;font-weight:700;margin-inline-end:8px;flex-shrink:0}
   .scan-ticker{font-size:18px;font-weight:600}
   .scan-rsi{font-size:12px;color:rgba(255,255,255,0.4);margin:6px 0}
   .scan-signals{display:flex;flex-wrap:wrap;gap:6px}
@@ -248,12 +249,19 @@ function renderWL(){
 function loadWL(t){showAnalyze();document.getElementById('ticker').value=t;analyze();}
 
 // ── SCANNER ──
+function scanGrade(r){
+  if(r.overbought)return{g:'D',c:'#f87171',l:'מתוחה'};
+  if(r.score>=10)return{g:'A',c:'#4ade80',l:'חזק מאוד'};
+  if(r.score>=5)return{g:'B',c:'#a3e635',l:'חיובי'};
+  if(r.score>=1)return{g:'C',c:'#fbbf24',l:'ניטרלי'};
+  return{g:'D',c:'#f87171',l:'חלש'};
+}
 async function runScan(){
   document.getElementById('scanResults').innerHTML='<div class="loading-state">סורק... עשוי לקחת 30 שניות</div>';
   try{
     const res=await fetch(API+'/scan');const d=await res.json();
     if(!d.results||!d.results.length){document.getElementById('scanResults').innerHTML='<div class="empty"><div class="empty-icon">😴</div><div class="empty-title">אין איתותים כרגע</div></div>';return;}
-    document.getElementById('scanResults').innerHTML='<div class="scan-grid">'+d.results.map(r=>'<div class="glass scan-card'+(r.overbought?' overbought':'')+'" onclick="loadScan(\''+r.ticker+'\')"><div class="scan-ticker">'+r.ticker+(r.overbought?'<span class="overbought-badge">⚠️ מתוחה</span>':'')+'</div><div class="scan-rsi">RSI: '+r.rsi+' · $'+r.price+'</div><div class="scan-signals">'+r.signals.map(s=>'<span class="sig '+(s.includes('נמוך')?'sig-green':s.includes('גבוה')?'sig-red':'sig-blue')+'">'+s+'</span>').join('')+'</div></div>').join('')+'</div>';
+    document.getElementById('scanResults').innerHTML='<div class="scan-grid">'+d.results.map(r=>{const gr=scanGrade(r);return'<div class="glass scan-card'+(r.overbought?' overbought':'')+'" onclick="loadScan(\''+r.ticker+'\')"><div class="scan-ticker"><span class="scan-grade" style="background:'+gr.c+'22;border:1.5px solid '+gr.c+';color:'+gr.c+'">'+gr.g+'</span>'+r.ticker+(r.overbought?'<span class="overbought-badge">⚠️ מתוחה</span>':'')+'</div><div class="scan-rsi">RSI: '+r.rsi+' · $'+r.price+'</div><div class="scan-signals">'+r.signals.map(s=>'<span class="sig '+(s.includes('נמוך')?'sig-green':s.includes('גבוה')?'sig-red':'sig-blue')+'">'+s+'</span>').join('')+'</div></div>';}).join('')+'</div>';
   }catch(e){document.getElementById('scanResults').innerHTML='<div class="error-state">שגיאה בסריקה</div>';}
 }
 function loadScan(t){showAnalyze();document.getElementById('ticker').value=t;analyze();}
