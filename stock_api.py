@@ -369,8 +369,7 @@ async def ai_analysis(req: Request):
             },
             json={
                 "model": "openai/gpt-oss-120b",
-                "max_completion_tokens": 600,
-                "reasoning_effort": "low",
+                "max_tokens": 320,
                 "messages": [{"role": "user", "content": prompt}],
             },
             impersonate="chrome",
@@ -380,7 +379,7 @@ async def ai_analysis(req: Request):
         text = d["choices"][0]["message"]["content"].strip()
         return {"text": text}
     except Exception as e:
-        return {"text": "", "error": str(e)}
+        return {"text": "", "error": str(e), "debug_status": getattr(r, "status_code", None), "debug_body": (r.text[:500] if hasattr(r, "text") else None)}
 
 
 # ── פרוקסי לחדשות Finnhub: הטוקן נשאר בשרת (מטמון 5 דקות) ──
