@@ -217,6 +217,9 @@ def _scan_one(ticker, hist):
 
     overbought = rsi > 70
 
+    # ── מיני-גרף: 20 נקודות אחרונות בלבד, לתצוגה בכרטיס הסריקה ──
+    spark = [round(v, 2) for v in closes[-20:]]
+
     return {
         "ticker": ticker,
         "price": round(price, 2),
@@ -225,6 +228,7 @@ def _scan_one(ticker, hist):
         "signals": signals,
         "score": round(score, 1),
         "overbought": overbought,
+        "spark": spark,
     }
 
 
