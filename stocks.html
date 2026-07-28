@@ -360,7 +360,7 @@ function fmt(n){if(!n)return'—';if(n>1e12)return'$'+(n/1e12).toFixed(2)+'T';if
 
 // ── AI — כניסה על פריצה, שרשרת יעדים עם אחוז ממחיר הפריצה. JavaScript מחשב, AI רק מנסח ──
 async function getAI(data){
-  const {ticker,price,rsiVal,m9,m20,sg,zs,bullPct,bearPct,pe,lows}=data;
+  const {ticker,price,rsiVal,m9,m20,sg,zs,bullPct,bearPct,pe,lows,sector,weekHigh,weekLow}=data;
   const priceNum=parseFloat(price);
   const rnd=v=>parseFloat(v.toFixed(priceNum<1?4:2));
 
@@ -409,12 +409,26 @@ async function getAI(data){
   const rsiTxt=rsiVal<35?'נמוך — אזור קנייה':rsiVal>70?'גבוה — אזור מכירה':'נייטרלי';
 
   // AI — משפט ניסוח בלבד, דרך הבקאנד
+  // מיקום המחיר בטווח 52 השבועות (0% = שפל שנתי, 100% = שיא שנתי)
+  let weekPos=null;
+  if(weekHigh&&weekLow&&weekHigh>weekLow){
+    weekPos=Math.round(((priceNum-weekLow)/(weekHigh-weekLow))*100);
+  }
+
   let trendText='';
   try{
     const r=await fetch(API+'/ai',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ticker,trend,rsiTxt,bullPct:bullPct||'N/A',bearPct:bearPct||'N/A'})
+      body:JSON.stringify({
+        ticker,trend,rsiTxt,
+        rsiNum:rsiVal,
+        bullPct:bullPct||'N/A',bearPct:bearPct||'N/A',
+        sector:sector||null,
+        peRatio:pe||null,
+        weekPos,
+        distToBreakPct
+      })
     });
     const d=await r.json();
     trendText=(d.text||'').trim();
@@ -560,7 +574,7 @@ async function analyze(){
         scales:{x:{ticks:{color:tc,maxTicksLimit:7,font:{size:11}},grid:{color:gc}},y:{min:0,max:100,ticks:{color:tc,font:{size:11},stepSize:30},grid:{color:gc}}}}});
 
     getSentiment(t).then(sentData=>{
-      getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows}).then(res=>{
+      getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows,sector:json.sector,weekHigh:json.week_high,weekLow:json.week_low}).then(res=>{
         const el=document.getElementById('aiText');
         if(el){el.className='ai-text';el.textContent=res.text||'לא ניתן לטעון ניתוח AI.';}
       });
