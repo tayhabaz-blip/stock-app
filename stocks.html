@@ -126,6 +126,25 @@
   .sig-red{background:rgba(248,113,113,0.15);color:#f87171;border:1px solid rgba(248,113,113,0.2)}
   .sig-blue{background:rgba(63,169,224,0.15);color:#7fd8ff;border:1px solid rgba(63,169,224,0.2)}
 </style>
+<!-- ===== PWA ===== -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#070d18">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="StockIQ">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('sw.js')
+      .then(function (reg) { console.log('SW ready:', reg.scope); })
+      .catch(function (err) { console.log('SW failed:', err); });
+  });
+}
+</script>
+<!-- ===== /PWA ===== -->
 </head>
 <body>
 <nav>
