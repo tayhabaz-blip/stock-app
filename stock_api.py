@@ -205,15 +205,17 @@ def _scan_one(ticker, hist):
         return None
 
     # ── ציון חוזק ההזדמנות (למיון) ──
+    # RSI גבוה הוא סימן אזהרה (מניה "מתוחה"), לא הזדמנות — לכן הוא לא
+    # מוסיף לציון. הוא מסומן בנפרד כדי שהמשתמש יבחין בזה במבט מהיר.
     score = 0
     if dist_to_break is not None and dist_to_break <= 5:
         score += (5 - dist_to_break) * 3   # ככל שקרוב יותר לפריצה — חזק יותר
     if rsi < 35:
-        score += (35 - rsi) / 5
-    if rsi > 70:
-        score += (rsi - 70) / 5
+        score += (35 - rsi) / 5            # אזור מכירת יתר — פוטנציאל להיפוך
     if ma9 > ma20:
         score += 1
+
+    overbought = rsi > 70
 
     return {
         "ticker": ticker,
@@ -222,6 +224,7 @@ def _scan_one(ticker, hist):
         "dist_to_break": dist_to_break,
         "signals": signals,
         "score": round(score, 1),
+        "overbought": overbought,
     }
 
 
