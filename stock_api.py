@@ -379,7 +379,7 @@ async def ai_analysis(req: Request):
         text = d["choices"][0]["message"]["content"].strip()
         return {"text": text}
     except Exception as e:
-        return {"text": "", "error": str(e), "debug_status": getattr(r, "status_code", None), "debug_body": (r.text[:500] if hasattr(r, "text") else None)}
+        return {"text": "", "error": str(e)}
 
 
 # ── פרוקסי לחדשות Finnhub: הטוקן נשאר בשרת (מטמון 5 דקות) ──
