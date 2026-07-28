@@ -402,8 +402,12 @@ async function getAI(data){
 
   // הפוטנציאל הגדול = היעד הרחוק ביותר בשרשרת
   const maxPot=targets.length?targets[targets.length-1].pct:null;
-  // יחס סיכון/סיכוי לפי היעד הראשון
-  const rr=(targets.length&&entry>stop)?parseFloat(((targets[0].p-entry)/(entry-stop)).toFixed(2)):null;
+  // יחס סיכון/סיכוי לכל יעד בנפרד — הסיכון קבוע (עד הסטופ), הסיכוי גדל ככל שהיעד רחוק יותר
+  const riskAmt=entry-stop;
+  if(riskAmt>0){
+    targets.forEach(t=>{t.rr=parseFloat(((t.p-entry)/riskAmt).toFixed(2));});
+  }
+  const rr=(targets.length&&targets[0].rr!=null)?targets[0].rr:null;
 
   const trend=m9&&m20&&parseFloat(m9)>parseFloat(m20)?'עולה':'יורד';
   const rsiTxt=rsiVal<35?'נמוך — אזור קנייה':rsiVal>70?'גבוה — אזור מכירה':'נייטרלי';
@@ -442,14 +446,13 @@ async function getAI(data){
     out+='מרחק לפריצה: '+(distToBreakPct<=0?'הגיע':distToBreakPct+'%')+'\n';
   }
   if(targets.length){
-    out+='\nיעדים (אחוז ממחיר הפריצה):\n';
+    out+='\nיעדים (אחוז ממחיר הפריצה, וסיכוי מול סיכון לכל יעד):\n';
     targets.forEach((t,i)=>{
-      out+='יעד '+(i+1)+' ('+t.str+'): $'+t.p+' · +'+t.pct+'%\n';
+      out+='יעד '+(i+1)+' ('+t.str+'): $'+t.p+' · +'+t.pct+'%'+(t.rr!=null?' · סיכוי/סיכון 1:'+t.rr:'')+'\n';
     });
     if(maxPot!==null&&maxPot>=15){
       out+='\n🚀 פוטנציאל פריצה גדול: עד +'+maxPot+'%\n';
     }
-    if(rr!==null)out+='יחס סיכון/סיכוי (יעד 1): 1:'+rr+'\n';
   }else{
     out+='יעד: '+headline+'\n';
   }
