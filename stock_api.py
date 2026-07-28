@@ -369,7 +369,8 @@ async def ai_analysis(req: Request):
             },
             json={
                 "model": "openai/gpt-oss-120b",
-                "max_tokens": 320,
+                "max_completion_tokens": 600,
+                "reasoning_effort": "low",
                 "messages": [{"role": "user", "content": prompt}],
             },
             impersonate="chrome",
