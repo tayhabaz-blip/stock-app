@@ -331,14 +331,34 @@ async def ai_analysis(req: Request):
     ticker = body.get("ticker", "")
     trend = body.get("trend", "")
     rsi_txt = body.get("rsiTxt", "")
+    rsi_num = body.get("rsiNum")
     bull = body.get("bullPct", "N/A")
     bear = body.get("bearPct", "N/A")
+    sector = body.get("sector")
+    pe = body.get("peRatio")
+    week_pos = body.get("weekPos")       # 0-100: מיקום המחיר בטווח 52 השבועות
+    dist_break = body.get("distToBreakPct")
+
+    # ── בניית רשימת עובדות מדויקות — ככל שיש יותר נתונים אמיתיים, הניתוח פחות כללי ──
+    facts = ["מניית " + str(ticker) + (" בסקטור " + str(sector) if sector else "") + "."]
+    facts.append("מגמה טכנית (ממוצעים נעים): " + str(trend) + ".")
+    facts.append("RSI: " + (str(rsi_num) if rsi_num is not None else "לא זמין") + " (" + str(rsi_txt) + ").")
+    if pe:
+        facts.append("מכפיל רווח P/E: " + str(pe) + ".")
+    if week_pos is not None:
+        facts.append("מיקום המחיר בטווח 52 השבועות: " + str(week_pos) + "% (100% = שיא שנתי, 0% = שפל שנתי).")
+    if dist_break is not None:
+        facts.append("מרחק מההתנגדות הקרובה ביותר: " + str(dist_break) + "%.")
+    facts.append("סנטימנט אנליסטים: " + str(bull) + "% שוריים, " + str(bear) + "% דוביים.")
+
     prompt = (
-        "אתה אנליסט מניות. כתוב ניתוח קצר בעברית (2-3 משפטים) על מגמת המניה " + str(ticker) +
-        ". נתונים: מגמה " + str(trend) + ", RSI " + str(rsi_txt) +
-        ", שורים " + str(bull) + "%, דובים " + str(bear) + "%. "
-        "התייחס למשמעות של ה-RSI ולסנטימנט האנליסטים, וסיים בשורת תובנה אחת. "
-        "אל תכתוב מספרים של מחיר/כניסה/סטופ/יעד — רק ניתוח מגמה במילים."
+        "אתה אנליסט מניות מנוסה. הנה נתונים עובדתיים בלבד על מניה:\n"
+        + "\n".join(facts) +
+        "\n\nכתוב ניתוח קצר בעברית, 3-4 משפטים בלבד: "
+        "משפט אחד על מה שתומך בתמונה החיובית, משפט אחד על הסיכון או החולשה המרכזית שכדאי להיות מודעים אליה, "
+        "ומשפט סיכום שמחבר בין התמונה הטכנית לנתונים הפונדמנטליים. "
+        "אל תכתוב מספרי מחיר, כניסה, סטופ או יעד — אלה כבר מחושבים בנפרד. "
+        "אל תמליץ לקנות או למכור, ואל תשתמש במילים כמו 'כדאי' או 'מומלץ' — רק תאר את התמונה במאוזן."
     )
     try:
         r = crequests.post(
@@ -348,8 +368,8 @@ async def ai_analysis(req: Request):
                 "Content-Type": "application/json",
             },
             json={
-                "model": "llama-3.1-8b-instant",
-                "max_tokens": 220,
+                "model": "openai/gpt-oss-120b",
+                "max_tokens": 320,
                 "messages": [{"role": "user", "content": prompt}],
             },
             impersonate="chrome",
