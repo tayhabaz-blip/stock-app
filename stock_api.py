@@ -1,5 +1,7 @@
 import os
 import time
+from datetime import datetime, time as dtime
+from zoneinfo import ZoneInfo
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from curl_cffi import requests as crequests
@@ -104,6 +106,20 @@ def get_stock(ticker: str):
 
 
 # ── מחיר בלבד — קל משקל, לרענון כל 30 שניות (מטמון 30 שניות) ──
+def _extended_hours_window():
+    """True כשעדיין לא/כבר לא נמצאים בשעות המסחר הרגילות של ניו יורק —
+    כלומר טרום-מסחר או מסחר לאחר סגירה. משמש כדי לא לבצע קריאה נוספת
+    ומיותרת ל-yfinance בשעות המסחר הרגילות, שם ממילא אין מסחר מורחב."""
+    try:
+        now_et = datetime.now(ZoneInfo("America/New_York"))
+    except Exception:
+        return False
+    if now_et.weekday() >= 5:
+        return False
+    t = now_et.time()
+    return dtime(4, 0) <= t < dtime(9, 30) or dtime(16, 0) <= t <= dtime(20, 0)
+
+
 @app.get("/price/{ticker}")
 def get_price(ticker: str):
     key = "price:" + ticker.upper()
@@ -125,6 +141,29 @@ def get_price(ticker: str):
             price = cl[-1] if cl else None
             prev = cl[-2] if len(cl) > 1 else price
         result = {"ticker": ticker.upper(), "price": price, "prev": prev}
+
+        # ── מסחר מורחב (טרום-מסחר / לאחר סגירה) — רק בחלון הזמן הרלוונטי,
+        # כדי לא להכביד על yfinance עם קריאה נוספת בשעות המסחר הרגילות ──
+        if _extended_hours_window():
+            try:
+                info = stock.info
+                state = info.get("marketState")
+                ah_price = ah_pct = None
+                if state == "PRE":
+                    ah_price = clean(info.get("preMarketPrice"))
+                    ah_pct = clean(info.get("preMarketChangePercent"))
+                elif state in ("POST", "POSTPOST"):
+                    ah_price = clean(info.get("postMarketPrice"))
+                    ah_pct = clean(info.get("postMarketChangePercent"))
+                if ah_price is not None:
+                    result["afterHours"] = {
+                        "state": state,
+                        "price": ah_price,
+                        "changePct": round(ah_pct * 100, 2) if ah_pct is not None else None,
+                    }
+            except Exception:
+                pass
+
         return cache_set(key, result)
     except Exception as e:
         return {"error": str(e)}
