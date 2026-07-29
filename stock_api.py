@@ -93,7 +93,10 @@ def get_stock(ticker: str):
             "market_cap": clean(info.get("marketCap")),
             "pe_ratio": clean(info.get("trailingPE")),
             "eps": clean(info.get("trailingEps")),
-            "earnings_growth": clean(info.get("earningsGrowth")) or clean(info.get("revenueGrowth")),
+            "earnings_growth": clean(info.get("earningsGrowth")),
+            "revenue_growth": clean(info.get("revenueGrowth")),
+            "growth_source": ("earnings" if clean(info.get("earningsGrowth"))
+                              else ("revenue" if clean(info.get("revenueGrowth")) else None)),
             "week_high": clean(info.get("fiftyTwoWeekHigh")),
             "week_low": clean(info.get("fiftyTwoWeekLow")),
             "dividend_pct": dividend_pct,
@@ -227,15 +230,25 @@ def _scan_one(ticker, hist):
     ma9 = sum(closes[-9:]) / 9
     ma20 = sum(closes[-20:]) / 20
 
-    # ── RSI ──
-    gains, losses = 0, 0
-    for i in range(-14, 0):
+    # ── RSI בהחלקת Wilder — התקן המקובל בפלטפורמות מסחר (TradingView וכו').
+    # ממוצע פשוט על 14 ימים נותן מספר שונה מהותית ולעיתים חוצה את סף ה-70. ──
+    period = 14
+    if len(closes) < period + 1:
+        return None
+    gain_sum = loss_sum = 0.0
+    for i in range(1, period + 1):
         d = closes[i] - closes[i - 1]
         if d > 0:
-            gains += d
+            gain_sum += d
         else:
-            losses -= d
-    rsi = 100 - 100 / (1 + gains / (losses or 0.0001))
+            loss_sum -= d
+    avg_gain = gain_sum / period
+    avg_loss = loss_sum / period
+    for i in range(period + 1, len(closes)):
+        d = closes[i] - closes[i - 1]
+        avg_gain = (avg_gain * (period - 1) + (d if d > 0 else 0.0)) / period
+        avg_loss = (avg_loss * (period - 1) + (-d if d < 0 else 0.0)) / period
+    rsi = 100 - 100 / (1 + avg_gain / (avg_loss or 0.0001))
 
     # ── זיהוי אזורי תמיכה/התנגדות לפי נגיעות (clustering) ──
     lookback = 5
@@ -338,9 +351,6 @@ def scan():
         bulk = None
 
     results = []
-    _dbg_hist_ok = 0
-    _dbg_row_ok = 0
-    _dbg_first_err = None
     for ticker in universe:
         try:
             hist = None
@@ -368,19 +378,15 @@ def scan():
             if hist is None or hist.empty or len(hist) < 20:
                 continue
 
-            _dbg_hist_ok += 1
             row = _scan_one(ticker, hist)
             if row:
-                _dbg_row_ok += 1
                 results.append(row)
-        except Exception as _e:
-            if _dbg_first_err is None:
-                _dbg_first_err = ticker + ":" + str(_e)
+        except Exception:
             continue
 
     # ── מיון לפי חוזק ההזדמנות (הגבוה ביותר קודם) ──
     results.sort(key=lambda r: r["score"], reverse=True)
-    return cache_set("scan", {"results": results, "debug_bulk_ok": bulk is not None, "debug_universe": len(universe), "debug_hist_ok": _dbg_hist_ok, "debug_row_ok": _dbg_row_ok, "debug_first_err": _dbg_first_err})
+    return cache_set("scan", {"results": results})
 
 # ── סנטימנט אנליסטים (מטמון שעה) ──
 @app.get("/sentiment/{ticker}")
