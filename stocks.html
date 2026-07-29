@@ -44,6 +44,9 @@
   .tag{font-size:11px;font-weight:500;padding:3px 10px;border-radius:999px;background:rgba(63,169,224,0.15);color:#a9e8ff;border:1px solid rgba(63,169,224,0.2)}
   .company-price-value{font-size:28px;font-weight:700;text-align:left}
   .company-price-change{font-size:14px;font-weight:500;margin-top:4px;text-align:left}
+  .ah-badge{font-size:12px;margin-top:4px;padding:3px 10px;border-radius:999px;display:inline-block}
+  .ah-badge.up{background:rgba(74,222,128,0.12);color:#4ade80}
+  .ah-badge.down{background:rgba(248,113,113,0.12);color:#f87171}
   .up{color:#4ade80}.down{color:#f87171}
   .fundamentals{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:1.5rem}
   .fund-card{padding:1rem;border-radius:12px}
@@ -476,6 +479,12 @@ async function getSentiment(ticker){
   }catch(e){document.getElementById('sentCard').style.display='none';return null;}
 }
 
+function ahHtml(ah){
+  if(!ah||ah.price==null)return'';
+  const pct=ah.changePct||0,up=pct>=0;
+  const label=ah.state==='PRE'?'טרום-מסחר':'לאחר המסחר';
+  return '<div class="ah-badge '+(up?'up':'down')+'">'+label+': $'+ah.price.toFixed(2)+' ('+(up?'▲':'▼')+' '+Math.abs(pct).toFixed(2)+'%)</div>';
+}
 // ── AUTO PRICE UPDATE ──
 async function updatePrice(){
   if(!currentTicker)return;
@@ -487,6 +496,7 @@ async function updatePrice(){
     const pe=document.querySelector('.company-price-value');const ce=document.querySelector('.company-price-change');
     if(pe)pe.textContent='$'+p.toFixed(2);
     if(ce){ce.textContent=(up?'▲':'▼')+' '+Math.abs(ch)+'% היום';ce.className='company-price-change '+(up?'up':'down');}
+    const ahEl=document.getElementById('ahBadge');if(ahEl)ahEl.innerHTML=ahHtml(d.afterHours);
   }catch(e){}
 }
 
@@ -531,7 +541,7 @@ async function analyze(){
       '<div class="company-header">'+
       '<div><div class="company-name">'+(json.name||t)+'</div><div class="company-ticker">'+t+(json.country?' · '+json.country:'')+'</div>'+
       '<div class="company-tags">'+(json.sector?'<span class="tag">'+json.sector+'</span>':'')+(json.employees?'<span class="tag">'+Number(json.employees).toLocaleString()+' עובדים</span>':'')+'</div></div>'+
-      '<div><div class="company-price-value">$'+price.toFixed(2)+'</div><div class="company-price-change '+(isUp?'up':'down')+'">'+(isUp?'▲':'▼')+' '+Math.abs(ch)+'% היום</div></div>'+
+      '<div><div class="company-price-value">$'+price.toFixed(2)+'</div><div class="company-price-change '+(isUp?'up':'down')+'">'+(isUp?'▲':'▼')+' '+Math.abs(ch)+'% היום</div><div id="ahBadge">'+ahHtml(live&&live.afterHours)+'</div></div>'+
       '</div>'+
       '<div class="fundamentals">'+
       '<div class="glass fund-card"><div class="fund-label">שווי שוק</div><div class="fund-value">'+fmt(json.market_cap)+'</div></div>'+
