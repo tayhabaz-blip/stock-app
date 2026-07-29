@@ -334,7 +334,7 @@ def scan():
 
     # ── מיון לפי חוזק ההזדמנות (הגבוה ביותר קודם) ──
     results.sort(key=lambda r: r["score"], reverse=True)
-    return cache_set("scan", {"results": results})
+    return cache_set("scan", {"results": results, "debug_bulk_ok": bulk is not None, "debug_universe": len(STOCK_UNIVERSE)})
 
 # ── סנטימנט אנליסטים (מטמון שעה) ──
 @app.get("/sentiment/{ticker}")
