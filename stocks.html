@@ -280,7 +280,23 @@ function loadScan(t){showAnalyze();document.getElementById('ticker').value=t;ana
 
 // ── MATH ──
 function ma(d,p){return d.map((_,i)=>{if(i<p-1)return null;const s=d.slice(i-p+1,i+1).filter(v=>v!==null);if(s.length<p)return null;return parseFloat((s.reduce((a,b)=>a+b,0)/s.length).toFixed(2));});}
-function rsi(d,p=14){const r=d.map(()=>null);for(let i=p;i<d.length;i++){let g=0,l=0;for(let j=i-p+1;j<=i;j++){const x=d[j]-d[j-1];if(x>0)g+=x;else l-=x;}r[i]=parseFloat((100-100/(1+g/(l||0.0001))).toFixed(1));}return r;}
+function rsi(d,p=14){
+  // RSI בהחלקת Wilder — התקן המקובל. גם מדלג על ימים חסרים בלי לשבור את החישוב.
+  const r=d.map(()=>null),idx=[],v=[];
+  for(let i=0;i<d.length;i++){const x=d[i];if(x!==null&&x!==undefined&&!isNaN(x)){idx.push(i);v.push(x);}}
+  if(v.length<=p)return r;
+  let ag=0,al=0;
+  for(let i=1;i<=p;i++){const x=v[i]-v[i-1];if(x>0)ag+=x;else al-=x;}
+  ag/=p;al/=p;
+  r[idx[p]]=parseFloat((100-100/(1+ag/(al||0.0001))).toFixed(1));
+  for(let i=p+1;i<v.length;i++){
+    const x=v[i]-v[i-1];
+    ag=(ag*(p-1)+(x>0?x:0))/p;
+    al=(al*(p-1)+(x<0?-x:0))/p;
+    r[idx[i]]=parseFloat((100-100/(1+ag/(al||0.0001))).toFixed(1));
+  }
+  return r;
+}
 
 // ── ZONES — זיהוי תמיכה/התנגדות לפי כמות נגיעות (clustering) ──
 function zones(closes,highs,lows){
@@ -329,7 +345,7 @@ function signal(price,m9,m20,m150,m200,rv,zs){
   if(sc<=-1)return{c:'red',l:'זהירות — חולשה',rs};
   return{c:'yellow',l:'תמונה מעורבת',rs};
 }
-function calcFV(eps,pe,price,growth){
+function calcFV(eps,pe,price,growth,growthSource){
   if(!eps||eps<=0)return null;
   let fairPE;
   if(growth&&growth>0){
@@ -345,7 +361,9 @@ function calcFV(eps,pe,price,growth){
   else if(diff<-20){label='זולה מאוד';color='#4ade80';}
   else if(diff<-5){label='זולה קצת';color='#4ade80';}
   else{label='שווי הוגן';color='#7fd8ff';}
-  return{fv,diff,label,color};
+  // מציינים במפורש על מה החישוב נשען — צמיחת רווחים וצמיחת הכנסות הן מדדים שונים
+  const basis=(growth&&growth>0)?(growthSource==='revenue'?'לפי צמיחת הכנסות':'לפי צמיחת רווחים'):'לפי מכפיל נוכחי';
+  return{fv,diff,label,color,basis};
 }
 function calcGrade(price,m9,m20,m150,m200,rv,pe){
   let s=0;
@@ -527,7 +545,8 @@ async function analyze(){
     const zs=zones(d,highs,lows);
     const sg=signal(price,lm9,lm20,lm150,lm200,rv_,zs);
     const gradeData=calcGrade(price,lm9,lm20,lm150,lm200,rv_,json.pe_ratio);
-    const fvData=calcFV(json.eps,json.pe_ratio,price,json.earnings_growth);
+    const growthVal=(json.earnings_growth!=null?json.earnings_growth:json.revenue_growth);
+    const fvData=calcFV(json.eps,json.pe_ratio,price,growthVal,json.growth_source);
     const gc='rgba(255,255,255,0.04)',tc='rgba(255,255,255,0.25)';
 
     // לתצוגה: 4 האזורים החזקים ביותר, ממוינים לפי מחיר
@@ -556,7 +575,7 @@ async function analyze(){
       '<div style="width:50px;height:50px;border-radius:10px;background:'+gradeData.color+'22;border:2px solid '+gradeData.color+';display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;color:'+gradeData.color+'">'+gradeData.grade+'</div>'+
       '<div><div style="font-size:11px;color:rgba(255,255,255,0.3)">ציון בריאות</div><div style="font-size:15px;font-weight:600;color:'+gradeData.color+'">'+gradeData.label+'</div></div>'+
       '</div>'+
-      (fvData?'<div style="padding:1.25rem;border-radius:14px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.09)"><div style="font-size:11px;color:rgba(255,255,255,0.3);margin-bottom:6px">FAIR VALUE</div><div style="font-size:18px;font-weight:700">$'+fvData.fv+'</div><div style="font-size:12px;font-weight:600;color:'+fvData.color+';margin-top:4px">'+fvData.label+' ('+Math.abs(fvData.diff)+'%)</div></div>':'')+
+      (fvData?'<div style="padding:1.25rem;border-radius:14px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.09)"><div style="font-size:11px;color:rgba(255,255,255,0.3);margin-bottom:6px">FAIR VALUE</div><div style="font-size:18px;font-weight:700">$'+fvData.fv+'</div><div style="font-size:12px;font-weight:600;color:'+fvData.color+';margin-top:4px">'+fvData.label+' ('+Math.abs(fvData.diff)+'%)</div><div style="font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px">'+fvData.basis+'</div></div>':'')+
       '</div>'+
       '<div class="ai-card"><div class="ai-card-header"><span class="ai-badge">AI</span><span class="ai-card-title">ניתוח חכם — '+t+'</span></div>'+
       '<div id="aiText" class="ai-loading"><div class="ai-spinner"></div>מנתח...</div></div>'+
