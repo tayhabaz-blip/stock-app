@@ -38,6 +38,9 @@
   .back-btn{font-size:13px;color:rgba(255,255,255,0.4);cursor:pointer;margin-bottom:1.5rem;display:inline-flex;align-items:center;gap:4px}
   .back-btn:hover{color:#7fd8ff}
   .company-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:1.5rem;padding-bottom:1.5rem;border-bottom:1px solid rgba(255,255,255,0.08)}
+  .company-header{position:relative;overflow:hidden}
+  .company-header>div{position:relative;z-index:1}
+  .trend-bg{position:absolute;inset:-15px 0;opacity:0.10;pointer-events:none;z-index:0}
   .company-name{font-size:22px;font-weight:700;margin-bottom:4px}
   .company-ticker{font-size:13px;color:rgba(255,255,255,0.4);margin-bottom:8px}
   .company-tags{display:flex;gap:8px;flex-wrap:wrap}
@@ -73,8 +76,12 @@
   .ai-card-title{font-size:13px;font-weight:600;color:rgba(255,255,255,0.7)}
   .ai-text{font-size:13px;line-height:1.8;color:rgba(255,255,255,0.7);white-space:pre-line}
   .ai-loading{display:flex;align-items:center;gap:10px;font-size:13px;color:rgba(255,255,255,0.4)}
-  .ai-spinner{width:14px;height:14px;border:2px solid rgba(255,255,255,0.1);border-top-color:#7fd8ff;border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0}
-  @keyframes spin{to{transform:rotate(360deg)}}
+  .ai-spinner{width:16px;height:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+  @keyframes drawLine{0%{stroke-dashoffset:100}50%{stroke-dashoffset:0}100%{stroke-dashoffset:-100}}
+  @keyframes priceFlashUp{0%{background:rgba(74,222,128,0.28)}100%{background:transparent}}
+  @keyframes priceFlashDown{0%{background:rgba(248,113,113,0.28)}100%{background:transparent}}
+  .price-flash-up{animation:priceFlashUp 1s ease-out}
+  .price-flash-down{animation:priceFlashDown 1s ease-out}
   .trade-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin:1rem 0 0.5rem}
   .trade-cell{padding:0.85rem;border-radius:10px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08)}
   .trade-cell-label{font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:5px}
@@ -253,6 +260,15 @@ function renderWL(){
 function loadWL(t){showAnalyze();document.getElementById('ticker').value=t;analyze();}
 
 // ── SCANNER ──
+function trendBgSvg(arr){
+  if(!arr)return'';
+  const v=arr.filter(function(x){return x!=null;}).slice(-60);
+  if(v.length<2)return'';
+  const min=Math.min.apply(null,v),max=Math.max.apply(null,v),range=(max-min)||1;
+  const w=600,h=140;
+  const pts=v.map(function(x,i){const px=i/(v.length-1)*w;const py=h-((x-min)/range)*h;return px+','+py;}).join(' ');
+  return '<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"><polyline points="'+pts+'" fill="none" stroke="#7fd8ff" stroke-width="3" vector-effect="non-scaling-stroke"/></svg>';
+}
 function sparkSvg(arr){
   if(!arr||arr.length<2)return'';
   const min=Math.min.apply(null,arr),max=Math.max.apply(null,arr),range=(max-min)||1;
@@ -512,7 +528,16 @@ async function updatePrice(){
     const p=d.price;const prev=d.prev||p;
     const ch=((p-prev)/prev*100).toFixed(2);const up=parseFloat(ch)>=0;
     const pe=document.querySelector('.company-price-value');const ce=document.querySelector('.company-price-change');
-    if(pe)pe.textContent='$'+p.toFixed(2);
+    if(pe){
+      const prevTick=window.__lastTick;
+      pe.textContent='$'+p.toFixed(2);
+      if(prevTick!=null&&prevTick!==p){
+        pe.classList.remove('price-flash-up','price-flash-down');
+        void pe.offsetWidth;
+        pe.classList.add(p>prevTick?'price-flash-up':'price-flash-down');
+      }
+      window.__lastTick=p;
+    }
     if(ce){ce.textContent=(up?'▲':'▼')+' '+Math.abs(ch)+'% היום';ce.className='company-price-change '+(up?'up':'down');}
     const ahEl=document.getElementById('ahBadge');if(ahEl)ahEl.innerHTML=ahHtml(d.afterHours);
   }catch(e){}
@@ -538,6 +563,7 @@ async function analyze(){
     const histLast=closes_clean[closes_clean.length-1],histPrev=closes_clean[closes_clean.length-2];
     const price=(live&&live.price!=null)?live.price:histLast;
     const prev=(live&&live.prev!=null)?live.prev:histPrev;
+    window.__lastTick=price;
     const ch=((price-prev)/prev*100).toFixed(2);const isUp=parseFloat(ch)>=0;
     const rv_=rv.filter(v=>v!==null).pop();
     const lm9=m9v.filter(v=>v!==null).pop(),lm20=m20v.filter(v=>v!==null).pop();
@@ -557,7 +583,7 @@ async function analyze(){
       '<span class="back-btn" onclick="showHome()">← בית</span>'+
       '<button onclick="addWL(\''+t+'\');this.textContent=\'✅ נוסף!\'" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid rgba(63,169,224,0.3);background:rgba(63,169,224,0.1);color:#7fd8ff;cursor:pointer;font-family:inherit">⭐ הוסף למעקב</button>'+
       '</div>'+
-      '<div class="company-header">'+
+      '<div class="company-header"><div class="trend-bg">'+trendBgSvg(d)+'</div>'+
       '<div><div class="company-name">'+(json.name||t)+'</div><div class="company-ticker">'+t+(json.country?' · '+json.country:'')+'</div>'+
       '<div class="company-tags">'+(json.sector?'<span class="tag">'+json.sector+'</span>':'')+(json.employees?'<span class="tag">'+Number(json.employees).toLocaleString()+' עובדים</span>':'')+'</div></div>'+
       '<div><div class="company-price-value">$'+price.toFixed(2)+'</div><div class="company-price-change '+(isUp?'up':'down')+'">'+(isUp?'▲':'▼')+' '+Math.abs(ch)+'% היום</div><div id="ahBadge">'+ahHtml(live&&live.afterHours)+'</div></div>'+
@@ -578,9 +604,9 @@ async function analyze(){
       (fvData?'<div style="padding:1.25rem;border-radius:14px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.09)"><div style="font-size:11px;color:rgba(255,255,255,0.3);margin-bottom:6px">FAIR VALUE</div><div style="font-size:18px;font-weight:700">$'+fvData.fv+'</div><div style="font-size:12px;font-weight:600;color:'+fvData.color+';margin-top:4px">'+fvData.label+' ('+Math.abs(fvData.diff)+'%)</div><div style="font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px">'+fvData.basis+'</div></div>':'')+
       '</div>'+
       '<div class="ai-card"><div class="ai-card-header"><span class="ai-badge">AI</span><span class="ai-card-title">ניתוח חכם — '+t+'</span></div>'+
-      '<div id="aiText" class="ai-loading"><div class="ai-spinner"></div>מנתח...</div></div>'+
+      '<div id="aiText" class="ai-loading"><div class="ai-spinner"><svg width="16" height="16" viewBox="0 0 100 100"><polyline points="10,80 35,55 55,65 90,15" fill="none" stroke="#7fd8ff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" pathLength="100" style="stroke-dasharray:100;stroke-dashoffset:100;animation:drawLine 1.2s ease-in-out infinite"/></svg></div>מנתח...</div></div>'+
       '<div class="signal-banner '+sg.c+'"><div class="signal-dot dot-'+sg.c+'"></div><div><div class="signal-title '+sg.c+'">ניתוח טכני — '+sg.l+'</div><div class="signal-reasons">'+sg.rs.join(' · ')+'</div></div></div>'+
-      '<div class="glass sentiment-card" id="sentCard"><div class="ai-loading"><div class="ai-spinner"></div>טוען נתוני אנליסטים...</div></div>'+
+      '<div class="glass sentiment-card" id="sentCard"><div class="ai-loading"><div class="ai-spinner"><svg width="16" height="16" viewBox="0 0 100 100"><polyline points="10,80 35,55 55,65 90,15" fill="none" stroke="#7fd8ff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" pathLength="100" style="stroke-dasharray:100;stroke-dashoffset:100;animation:drawLine 1.2s ease-in-out infinite"/></svg></div>טוען נתוני אנליסטים...</div></div>'+
       '<div class="metrics">'+
       '<div class="glass metric"><div class="metric-label">RSI (14)</div><div class="metric-value" style="color:'+(rv_>70?'#f87171':rv_<30?'#4ade80':'#fff')+'">'+rv_+'</div><div class="metric-sub">'+(rv_>70?'Overbought':rv_<30?'Oversold':'Neutral')+'</div></div>'+
       '<div class="glass metric"><div class="metric-label">MA9 / MA20</div><div class="metric-value" style="font-size:16px">$'+(lm9?.toFixed(2)||'—')+'</div><div class="metric-sub">/ $'+(lm20?.toFixed(2)||'—')+'</div></div>'+
