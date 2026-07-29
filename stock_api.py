@@ -172,7 +172,7 @@ def get_price(ticker: str):
         return {"error": str(e)}
 
 
-STOCK_UNIVERSE = [
+CORE_UNIVERSE = [
     "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "AMD", "NFLX",
     "SOFI", "PLTR", "COIN", "HOOD", "SQ", "PYPL", "AFRM", "NU", "UBER", "ABNB",
     "SHOP", "CRWD", "SNOW", "DDOG", "NET", "MDB", "PANW", "ZS", "ARM", "MU",
@@ -180,6 +180,38 @@ STOCK_UNIVERSE = [
     "DIS", "BA", "JPM", "BAC", "V", "MA", "WMT", "COST", "PEP", "KO",
     "XOM", "CVX", "LLY", "UNH", "RIVN"
 ]
+
+
+def _fetch_trending():
+    """מביא פעם ביום עד 25 מהמניות הכי נסחרות היום מיאהו, כדי שהסריקה
+    תשקף גם מה שקורה עכשיו בשוק, לא רק רשימה קבועה. אם זה נכשל מכל
+    סיבה — פשוט חוזרים לרשימה הקבועה בלבד, הסריקה לא נשברת."""
+    try:
+        res = yf.screen("most_actives", count=25)
+        quotes = res.get("quotes", []) if isinstance(res, dict) else []
+        tickers = []
+        for q in quotes:
+            sym = q.get("symbol")
+            if sym and sym.replace(".", "").replace("-", "").isalnum() and len(sym) <= 6:
+                tickers.append(sym.upper())
+        return tickers
+    except Exception:
+        return []
+
+
+def get_universe():
+    """הרשימה הקבועה + עד 25 מניות חמות של היום, ברנעון של פעם ב-24 שעות."""
+    cached = cache_get("trending_universe", 24 * 3600)
+    if cached is not None:
+        trending = cached.get("tickers", [])
+    else:
+        trending = _fetch_trending()
+        cache_set("trending_universe", {"tickers": trending})
+    merged = list(CORE_UNIVERSE)
+    for t in trending:
+        if t not in merged:
+            merged.append(t)
+    return merged
 
 # ── סורק מניות (מטמון 5 דקות) ──
 def _scan_one(ticker, hist):
@@ -285,11 +317,13 @@ def scan():
     if cached:
         return cached
 
+    universe = get_universe()
+
     # ── משיכה מרוכזת: בקשה אחת ליקום כולו במקום אחת לכל מניה ──
     bulk = None
     try:
         bulk = yf.download(
-            tickers=" ".join(STOCK_UNIVERSE),
+            tickers=" ".join(universe),
             period="6mo",
             interval="1d",
             group_by="ticker",
@@ -307,7 +341,7 @@ def scan():
     _dbg_hist_ok = 0
     _dbg_row_ok = 0
     _dbg_first_err = None
-    for ticker in STOCK_UNIVERSE:
+    for ticker in universe:
         try:
             hist = None
             if bulk is not None:
@@ -346,7 +380,7 @@ def scan():
 
     # ── מיון לפי חוזק ההזדמנות (הגבוה ביותר קודם) ──
     results.sort(key=lambda r: r["score"], reverse=True)
-    return cache_set("scan", {"results": results, "debug_bulk_ok": bulk is not None, "debug_universe": len(STOCK_UNIVERSE), "debug_hist_ok": _dbg_hist_ok, "debug_row_ok": _dbg_row_ok, "debug_first_err": _dbg_first_err})
+    return cache_set("scan", {"results": results, "debug_bulk_ok": bulk is not None, "debug_universe": len(universe), "debug_hist_ok": _dbg_hist_ok, "debug_row_ok": _dbg_row_ok, "debug_first_err": _dbg_first_err})
 
 # ── סנטימנט אנליסטים (מטמון שעה) ──
 @app.get("/sentiment/{ticker}")
