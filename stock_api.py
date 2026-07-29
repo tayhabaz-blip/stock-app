@@ -183,10 +183,15 @@ STOCK_UNIVERSE = [
 
 # ── סורק מניות (מטמון 5 דקות) ──
 def _scan_one(ticker, hist):
+    hist = hist.dropna(subset=["Close"])  # מונע שורה אחרונה ללא מחיר סגירה (שכיחה במשיכה מרוכזת) מקלקלת את החישובים
+    if len(hist) < 20:
+        return None
     closes = [float(v) for v in hist["Close"].tolist()]
     highs = [float(v) for v in hist["High"].tolist()]
     lows = [float(v) for v in hist["Low"].tolist()]
     price = closes[-1]
+    if price != price:  # NaN safety (NaN != NaN מחזיר True)
+        return None
     ma9 = sum(closes[-9:]) / 9
     ma20 = sum(closes[-20:]) / 20
 
