@@ -148,18 +148,21 @@ def get_price(ticker: str):
             try:
                 info = stock.info
                 state = info.get("marketState")
-                ah_price = ah_pct = None
+                ah_price = None
+                ref = None  # המחיר שמול עליו מחשבים את השינוי באחוזים
                 if state == "PRE":
                     ah_price = clean(info.get("preMarketPrice"))
-                    ah_pct = clean(info.get("preMarketChangePercent"))
+                    ref = prev  # מול מול הסגירה הקודמת
                 elif state in ("POST", "POSTPOST"):
                     ah_price = clean(info.get("postMarketPrice"))
-                    ah_pct = clean(info.get("postMarketChangePercent"))
-                if ah_price is not None:
+                    ref = price  # מול מול סגירת המסחר הרגיל היום
+                # אחוז השינוי מחושב עצמאית מהמחירים המוצגים —
+                # השדה של yahoo לא עקבי בפורמט (פעם אחוז, פעם שבר), וזו הדרך הבטוחה שמתאימה תמיד למחירים שמוצגים בפועל
+                if ah_price is not None and ref:
                     result["afterHours"] = {
                         "state": state,
                         "price": ah_price,
-                        "changePct": round(ah_pct * 100, 2) if ah_pct is not None else None,
+                        "changePct": round((ah_price - ref) / ref * 100, 2),
                     }
             except Exception:
                 pass
