@@ -305,11 +305,23 @@ def scan():
             if bulk is not None:
                 try:
                     hist = bulk[ticker].dropna(how="all")
+                    if hist is None or hist.empty or len(hist) < 20:
+                        hist = None  # המניות מבנה אבל ריקה — נפול לגיבוי למטה למטה
                 except Exception:
                     hist = None
+                if hist is None:
+                    # גיבוי למטה: המניה נכשלה/ריקה בשביל מניה ספציפית זו —
+                    # נושה משיכה בודדת למניה הזו, כמו שעושה /stock/{ticker}
+                    try:
+                        hist = yf.Ticker(ticker, session=session).history(period="6mo")
+                    except Exception:
+                        hist = None
             else:
                 # גיבוי: אם המשיכה המרוכזת נכשלה לגמרי, חוזרים לשיטה הישנה
-                hist = yf.Ticker(ticker, session=session).history(period="6mo")
+                try:
+                    hist = yf.Ticker(ticker, session=session).history(period="6mo")
+                except Exception:
+                    hist = None
 
             if hist is None or hist.empty or len(hist) < 20:
                 continue
