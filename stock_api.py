@@ -299,6 +299,9 @@ def scan():
         bulk = None
 
     results = []
+    _dbg_hist_ok = 0
+    _dbg_row_ok = 0
+    _dbg_first_err = None
     for ticker in STOCK_UNIVERSE:
         try:
             hist = None
@@ -326,15 +329,19 @@ def scan():
             if hist is None or hist.empty or len(hist) < 20:
                 continue
 
+            _dbg_hist_ok += 1
             row = _scan_one(ticker, hist)
             if row:
+                _dbg_row_ok += 1
                 results.append(row)
-        except Exception:
+        except Exception as _e:
+            if _dbg_first_err is None:
+                _dbg_first_err = ticker + ":" + str(_e)
             continue
 
     # ── מיון לפי חוזק ההזדמנות (הגבוה ביותר קודם) ──
     results.sort(key=lambda r: r["score"], reverse=True)
-    return cache_set("scan", {"results": results, "debug_bulk_ok": bulk is not None, "debug_universe": len(STOCK_UNIVERSE)})
+    return cache_set("scan", {"results": results, "debug_bulk_ok": bulk is not None, "debug_universe": len(STOCK_UNIVERSE), "debug_hist_ok": _dbg_hist_ok, "debug_row_ok": _dbg_row_ok, "debug_first_err": _dbg_first_err})
 
 # ── סנטימנט אנליסטים (מטמון שעה) ──
 @app.get("/sentiment/{ticker}")
