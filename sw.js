@@ -6,12 +6,15 @@
    when the network is down.
    ------------------------------------------------------------------ */
 
-const VERSION      = 'v1';
+/* גרסה מוגדלת בכל שינוי במעטפת. הקובץ הראשי עבר מ-stocks.html ל-index.html,
+   ובלי הגדלת הגרסה מתקינים קיימים היו נשארים עם המעטפת הישנה במטמון. */
+const VERSION      = 'v2';
 const SHELL_CACHE  = 'stockiq-shell-' + VERSION;
 const ASSET_CACHE  = 'stockiq-assets-' + VERSION;
 
 const SHELL_FILES = [
-  './stocks.html',
+  './',
+  './index.html',
   './manifest.json',
   './icon-192.png',
   './icon-512.png'
@@ -103,7 +106,9 @@ async function networkFirst(req) {
     if (fresh && fresh.ok) cache.put(req, fresh.clone());
     return fresh;
   } catch (err) {
-    const cached = await cache.match(req) || await cache.match('./stocks.html');
+    const cached = await cache.match(req)
+                || await cache.match('./index.html')
+                || await cache.match('./');
     if (cached) return cached;
     throw err;
   }

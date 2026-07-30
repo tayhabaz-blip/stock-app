@@ -4,7 +4,7 @@
   "description": "ניתוח מניות חכם בעברית — איתותים טכניים, נתוני אנליסטים וסריקת הזדמנויות",
   "lang": "he",
   "dir": "rtl",
-  "start_url": "./stocks.html",
+  "start_url": "./",
   "scope": "./",
   "id": "/stock-app/",
   "display": "standalone",
