@@ -1,18 +1,39 @@
 import os
+import re
 import time
+import logging
 from datetime import datetime, time as dtime
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from curl_cffi import requests as crequests
 import yfinance as yf
 
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("stockiq")
+
 app = FastAPI()
+
+# ── CORS: רק המקורות שלנו. פתיחה ל-"*" הופכת את /ai ל-פרוקסי ציבורי
+# שמחויב על חשבון מפתח ה-Groq שלנו, ואת /news לצינור ששורף את מכסת Finnhub.
+# אפשר להוסיף מקורות דרך משתנה סביבה ALLOWED_ORIGINS (מופרד בפסיקים). ──
+DEFAULT_ORIGINS = [
+    "https://tayhabaz-blip.github.io",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:5500",
+    "http://127.0.0.1:5500",
+]
+ALLOWED_ORIGINS = [
+    o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()
+] or DEFAULT_ORIGINS
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 session = crequests.Session(impersonate="chrome")
@@ -21,8 +42,12 @@ session = crequests.Session(impersonate="chrome")
 GROQ_KEY = os.environ.get("GROQ_KEY", "")
 FINNHUB_KEY = os.environ.get("FINNHUB_KEY", "")
 
-# ── מטמון פשוט בזיכרון כדי לא להעמיס על Yahoo ──
+# ── מטמון בזיכרון עם גבול עליון. בלי הגבול הוא רק גדל: כל רשומת /stock
+# מחזיקה ארבעה מערכים של ~250 ימי מסחר, ואחרי כמה מאות טיקרים המופע
+# החינמי של Render (512MB) נגמר וקורס. ──
 _cache = {}
+_CACHE_MAX = 300
+_MAX_TTL = 24 * 3600  # ה-TTL הארוך ביותר שבשימוש (יקום הסריקה)
 
 
 def cache_get(key, ttl):
@@ -33,8 +58,61 @@ def cache_get(key, ttl):
 
 
 def cache_set(key, val):
+    if key not in _cache and len(_cache) >= _CACHE_MAX:
+        now = time.time()
+        # קודם זורקים כל מה שממילא פג תוקפו לחלוטין
+        for k in [k for k, (ts, _) in _cache.items() if now - ts > _MAX_TTL]:
+            _cache.pop(k, None)
+        # אם זה לא הספיק — זורקים את הרבע הישן ביותר
+        if len(_cache) >= _CACHE_MAX:
+            oldest = sorted(_cache, key=lambda k: _cache[k][0])[: _CACHE_MAX // 4]
+            for k in oldest:
+                _cache.pop(k, None)
     _cache[key] = (time.time(), val)
     return val
+
+
+# ── הגבלת קצב פשוטה לפי IP. Render מריץ מופע יחיד, אז מונה בזיכרון מספיק.
+# בלי זה /ai הוא פרוקסי חינמי ל-Groq שכל אחד יכול להריץ בלולאה. ──
+_rate = {}
+_RATE_MAX_KEYS = 5000
+
+
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def rate_ok(request: Request, bucket: str, limit: int, window: int) -> bool:
+    now = time.time()
+    key = bucket + ":" + _client_ip(request)
+    hits = [t for t in _rate.get(key, []) if now - t < window]
+    if len(hits) >= limit:
+        _rate[key] = hits
+        return False
+    hits.append(now)
+    _rate[key] = hits
+    if len(_rate) > _RATE_MAX_KEYS:
+        for k in [k for k, v in list(_rate.items()) if not v or now - v[-1] > 3600]:
+            _rate.pop(k, None)
+    return True
+
+
+# ── ולידציית טיקר: חוסמת מחרוזות שרירותיות שרק גורמות לנו להפציץ את Yahoo ──
+TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.\-]{0,9}$")
+
+
+def norm_ticker(t: str):
+    t = (t or "").strip().upper()
+    return t if TICKER_RE.match(t) else None
+
+
+def err(status: int, msg: str):
+    """שגיאה עם קוד HTTP אמיתי. שומרים על שדה error בגוף התשובה כדי
+    שגרסאות קודמות של הפרונטאנד ימשיכו לעבוד."""
+    return JSONResponse(status_code=status, content={"error": msg})
 
 
 def clean(v):
@@ -52,8 +130,13 @@ def root():
 
 # ── נתוני מניה מלאים (מטמון 5 דקות) ──
 @app.get("/stock/{ticker}")
-def get_stock(ticker: str):
-    key = "stock:" + ticker.upper()
+def get_stock(ticker: str, request: Request):
+    ticker = norm_ticker(ticker)
+    if not ticker:
+        return err(400, "טיקר לא תקין")
+    if not rate_ok(request, "stock", 60, 60):
+        return err(429, "יותר מדי בקשות — נסה שוב בעוד רגע")
+    key = "stock:" + ticker
     cached = cache_get(key, 300)
     if cached:
         return cached
@@ -61,7 +144,7 @@ def get_stock(ticker: str):
         stock = yf.Ticker(ticker, session=session)
         hist = stock.history(period="1y")
         if hist.empty:
-            return {"error": "מניה לא נמצאה"}
+            return err(404, "מניה לא נמצאה")
         info = stock.info
         closes = [clean(v) for v in hist["Close"].tolist()]
         highs = [clean(v) for v in hist["High"].tolist()]
@@ -83,7 +166,7 @@ def get_stock(ticker: str):
                 dividend_pct = None
 
         result = {
-            "ticker": ticker.upper(),
+            "ticker": ticker,
             "closes": closes, "highs": highs, "lows": lows,
             "volumes": volumes, "labels": labels,
             "name": info.get("longName", ticker),
@@ -104,8 +187,9 @@ def get_stock(ticker: str):
             "country": info.get("country", ""),
         }
         return cache_set(key, result)
-    except Exception as e:
-        return {"error": str(e)}
+    except Exception:
+        log.exception("get_stock failed for %s", ticker)
+        return err(502, "שגיאה בשליפת נתוני המניה")
 
 
 # ── מחיר בלבד — קל משקל, לרענון כל 30 שניות (מטמון 30 שניות) ──
@@ -124,8 +208,13 @@ def _extended_hours_window():
 
 
 @app.get("/price/{ticker}")
-def get_price(ticker: str):
-    key = "price:" + ticker.upper()
+def get_price(ticker: str, request: Request):
+    ticker = norm_ticker(ticker)
+    if not ticker:
+        return err(400, "טיקר לא תקין")
+    if not rate_ok(request, "price", 120, 60):
+        return err(429, "יותר מדי בקשות — נסה שוב בעוד רגע")
+    key = "price:" + ticker
     cached = cache_get(key, 30)
     if cached:
         return cached
@@ -143,7 +232,9 @@ def get_price(ticker: str):
             cl = [clean(v) for v in hist["Close"].tolist() if clean(v) is not None]
             price = cl[-1] if cl else None
             prev = cl[-2] if len(cl) > 1 else price
-        result = {"ticker": ticker.upper(), "price": price, "prev": prev}
+        if price is None:
+            return err(404, "מניה לא נמצאה")
+        result = {"ticker": ticker, "price": price, "prev": prev}
 
         # ── מסחר מורחב (טרום-מסחר / לאחר סגירה) — רק בחלון הזמן הרלוונטי,
         # כדי לא להכביד על yfinance עם קריאה נוספת בשעות המסחר הרגילות ──
@@ -152,13 +243,13 @@ def get_price(ticker: str):
                 info = stock.info
                 state = info.get("marketState")
                 ah_price = None
-                ref = None  # המחיר שמול עליו מחשבים את השינוי באחוזים
+                ref = None  # המחיר שמולו מחשבים את השינוי באחוזים
                 if state == "PRE":
                     ah_price = clean(info.get("preMarketPrice"))
-                    ref = prev  # מול מול הסגירה הקודמת
+                    ref = prev  # מול הסגירה הקודמת
                 elif state in ("POST", "POSTPOST"):
                     ah_price = clean(info.get("postMarketPrice"))
-                    ref = price  # מול מול סגירת המסחר הרגיל היום
+                    ref = price  # מול סגירת המסחר הרגיל היום
                 # אחוז השינוי מחושב עצמאית מהמחירים המוצגים —
                 # השדה של yahoo לא עקבי בפורמט (פעם אחוז, פעם שבר), וזו הדרך הבטוחה שמתאימה תמיד למחירים שמוצגים בפועל
                 if ah_price is not None and ref:
@@ -171,8 +262,9 @@ def get_price(ticker: str):
                 pass
 
         return cache_set(key, result)
-    except Exception as e:
-        return {"error": str(e)}
+    except Exception:
+        log.exception("get_price failed for %s", ticker)
+        return err(502, "שגיאה בשליפת המחיר")
 
 
 CORE_UNIVERSE = [
@@ -203,7 +295,7 @@ def _fetch_trending():
 
 
 def get_universe():
-    """הרשימה הקבועה + עד 25 מניות חמות של היום, ברנעון של פעם ב-24 שעות."""
+    """הרשימה הקבועה + עד 25 מניות חמות של היום, ברענון של פעם ב-24 שעות."""
     cached = cache_get("trending_universe", 24 * 3600)
     if cached is not None:
         trending = cached.get("tickers", [])
@@ -324,13 +416,35 @@ def _scan_one(ticker, hist):
     }
 
 
+MAX_SCAN_TICKERS = 60
+# תקרה למספר המשיכות הבודדות כשהמשיכה המרוכזת נכשלת חלקית.
+# בלי תקרה, כשל מלא של bulk הופך את הסריקה ל-80 קריאות סדרתיות ל-Yahoo,
+# מה שגורר timeout ב-Render ומסתיים בלי שום תוצאה.
+MAX_INDIVIDUAL_FETCHES = 15
+
+
 @app.get("/scan")
-def scan():
-    cached = cache_get("scan", 300)
+def scan(request: Request, tickers: str = ""):
+    if not rate_ok(request, "scan", 10, 60):
+        return err(429, "יותר מדי סריקות — נסה שוב בעוד רגע")
+
+    # ── רשימה מותאמת (רשימת המעקב של המשתמש) או היקום המלא ──
+    custom = []
+    if tickers:
+        for raw in tickers.split(","):
+            t = norm_ticker(raw)
+            if t and t not in custom:
+                custom.append(t)
+        custom = custom[:MAX_SCAN_TICKERS]
+        if not custom:
+            return err(400, "לא נמצאו טיקרים תקינים")
+
+    cache_key = "scan:" + (",".join(sorted(custom)) if custom else "__universe__")
+    cached = cache_get(cache_key, 300)
     if cached:
         return cached
 
-    universe = get_universe()
+    universe = custom or get_universe()
 
     # ── משיכה מרוכזת: בקשה אחת ליקום כולו במקום אחת לכל מניה ──
     bulk = None
@@ -351,6 +465,7 @@ def scan():
         bulk = None
 
     results = []
+    individual_fetches = 0
     for ticker in universe:
         try:
             hist = None
@@ -358,18 +473,14 @@ def scan():
                 try:
                     hist = bulk[ticker].dropna(how="all")
                     if hist is None or hist.empty or len(hist) < 20:
-                        hist = None  # המניות מבנה אבל ריקה — נפול לגיבוי למטה למטה
+                        hist = None  # הטיקר קיים במבנה אבל ריק — ננסה משיכה בודדת
                 except Exception:
                     hist = None
-                if hist is None:
-                    # גיבוי למטה: המניה נכשלה/ריקה בשביל מניה ספציפית זו —
-                    # נושה משיכה בודדת למניה הזו, כמו שעושה /stock/{ticker}
-                    try:
-                        hist = yf.Ticker(ticker, session=session).history(period="6mo")
-                    except Exception:
-                        hist = None
-            else:
-                # גיבוי: אם המשיכה המרוכזת נכשלה לגמרי, חוזרים לשיטה הישנה
+
+            if hist is None and individual_fetches < MAX_INDIVIDUAL_FETCHES:
+                # גיבוי: משיכה בודדת לטיקר הזה בלבד, כמו ב-/stock/{ticker}.
+                # מוגבל בכמות כדי שכשל רחב לא יהפוך את הסריקה ל-timeout.
+                individual_fetches += 1
                 try:
                     hist = yf.Ticker(ticker, session=session).history(period="6mo")
                 except Exception:
@@ -382,16 +493,22 @@ def scan():
             if row:
                 results.append(row)
         except Exception:
+            log.warning("scan failed for %s", ticker, exc_info=True)
             continue
 
     # ── מיון לפי חוזק ההזדמנות (הגבוה ביותר קודם) ──
     results.sort(key=lambda r: r["score"], reverse=True)
-    return cache_set("scan", {"results": results})
+    return cache_set(cache_key, {"results": results})
 
 # ── סנטימנט אנליסטים (מטמון שעה) ──
 @app.get("/sentiment/{ticker}")
-def get_sentiment(ticker: str):
-    key = "sent:" + ticker.upper()
+def get_sentiment(ticker: str, request: Request):
+    ticker = norm_ticker(ticker)
+    if not ticker:
+        return err(400, "טיקר לא תקין")
+    if not rate_ok(request, "sent", 60, 60):
+        return err(429, "יותר מדי בקשות — נסה שוב בעוד רגע")
+    key = "sent:" + ticker
     cached = cache_get(key, 3600)
     if cached:
         return cached
@@ -411,7 +528,7 @@ def get_sentiment(ticker: str):
         total = strong_buy + buy + hold + sell + strong_sell
         short_pct = info.get("shortPercentOfFloat")
         result = {
-            "ticker": ticker.upper(),
+            "ticker": ticker,
             "bull_pct": round((strong_buy + buy) / total * 100, 1) if total else None,
             "bear_pct": round((sell + strong_sell) / total * 100, 1) if total else None,
             "neutral_pct": round(hold / total * 100, 1) if total else None,
@@ -421,13 +538,18 @@ def get_sentiment(ticker: str):
             "recommendation": info.get("recommendationKey", ""),
         }
         return cache_set(key, result)
-    except Exception as e:
-        return {"error": str(e)}
+    except Exception:
+        log.exception("get_sentiment failed for %s", ticker)
+        return err(502, "שגיאה בשליפת נתוני אנליסטים")
 
 
-# ── פרוקסי ל-Groq: המפתח נשאר בשרת, המודל כותב רק משפט מגמה ──
+# ── פרוקסי ל-Groq: המפתח נשאר בשרת, המודל כותב רק ניסוח מגמה ──
 @app.post("/ai")
 async def ai_analysis(req: Request):
+    # ── הגבלה הדוקה קודם כל: זו הנקודה היחידה שעולה לנו כסף אמיתי בכל
+    # קריאה, ולכן המונה חייב לרוץ עוד לפני כל בדיקה אחרת. ──
+    if not rate_ok(req, "ai", 12, 60):
+        return err(429, "יותר מדי בקשות ניתוח — נסה שוב בעוד רגע")
     if not GROQ_KEY:
         return {"text": ""}
     try:
@@ -457,6 +579,18 @@ async def ai_analysis(req: Request):
         facts.append("מרחק מההתנגדות הקרובה ביותר: " + str(dist_break) + "%.")
     facts.append("סנטימנט אנליסטים: " + str(bull) + "% שוריים, " + str(bear) + "% דוביים.")
 
+    # ── מטמון: אותה מניה עם אותה תמונה טכנית מחזירה את אותו ניתוח.
+    # בלי זה כל צפייה חוזרת היא קריאה נוספת בתשלום ל-Groq. ──
+    ai_key = "ai:" + "|".join(str(x) for x in [
+        ticker, trend, rsi_txt,
+        round(rsi_num) if isinstance(rsi_num, (int, float)) else rsi_num,
+        bull, bear, sector, pe, week_pos,
+        round(dist_break) if isinstance(dist_break, (int, float)) else dist_break,
+    ])
+    cached = cache_get(ai_key, 3600)
+    if cached:
+        return cached
+
     prompt = (
         "אתה אנליסט מניות מנוסה. הנה נתונים עובדתיים בלבד על מניה:\n"
         + "\n".join(facts) +
@@ -474,23 +608,55 @@ async def ai_analysis(req: Request):
                 "Content-Type": "application/json",
             },
             json={
+                # gpt-oss-120b הוא מודל reasoning ודורש max_completion_tokens.
+                # השם max_tokens נדחה על ידיו, ובלי reasoning_effort נמוך
+                # טוקני החשיבה בולעים את התקציב והתוכן חוזר ריק.
                 "model": "openai/gpt-oss-120b",
-                "max_tokens": 320,
+                "max_completion_tokens": 600,
+                "reasoning_effort": "low",
                 "messages": [{"role": "user", "content": prompt}],
             },
             impersonate="chrome",
             timeout=20,
         )
         d = r.json()
-        text = d["choices"][0]["message"]["content"].strip()
-        return {"text": text}
-    except Exception as e:
-        return {"text": "", "error": str(e)}
+        if "choices" not in d:
+            log.warning("groq returned no choices: %s", str(d)[:400])
+            return {"text": ""}
+        text = (d["choices"][0]["message"].get("content") or "").strip()
+        if not text:
+            return {"text": ""}
+        return cache_set(ai_key, {"text": text})
+    except Exception:
+        log.exception("ai_analysis failed for %s", ticker)
+        return {"text": ""}
 
 
-# ── פרוקסי לחדשות Finnhub: הטוקן נשאר בשרת (מטמון 5 דקות) ──
+def _translate(txt: str, budget_left: float):
+    """תרגום כותרת בודדת לעברית. נקודת הקצה של גוגל אינה רשמית, ולכן
+    הכישלון כאן חייב להיות רך — מחזירים None והלקוח יציג את המקור."""
+    if not txt or budget_left <= 0:
+        return None
+    try:
+        r = crequests.get(
+            "https://translate.googleapis.com/translate_a/single",
+            params={"client": "gtx", "sl": "en", "tl": "he", "dt": "t", "q": txt},
+            impersonate="chrome",
+            timeout=min(4, budget_left),
+        )
+        parts = r.json()[0]
+        return "".join(p[0] for p in parts if p and p[0]) or None
+    except Exception:
+        return None
+
+
+# ── פרוקסי לחדשות Finnhub: הטוקן נשאר בשרת (מטמון 5 דקות).
+# התרגום נעשה כאן ולא בדפדפן: כך זו קריאה אחת לכל 5 דקות עבור כל
+# המבקרים יחד, במקום שמונה קריאות אצל כל מבקר בנפרד. ──
 @app.get("/news")
-def get_news():
+def get_news(request: Request):
+    if not rate_ok(request, "news", 30, 60):
+        return err(429, "יותר מדי בקשות — נסה שוב בעוד רגע")
     cached = cache_get("news", 300)
     if cached:
         return cached
@@ -498,17 +664,29 @@ def get_news():
         return {"news": []}
     try:
         r = crequests.get(
-            "https://finnhub.io/api/v1/news?category=general&token=" + FINNHUB_KEY,
+            "https://finnhub.io/api/v1/news",
+            params={"category": "general", "token": FINNHUB_KEY},
             impersonate="chrome",
             timeout=15,
         )
-        data = r.json()[:8]
-        slim = [{
-            "headline": n.get("headline", ""),
-            "url": n.get("url", ""),
-            "source": n.get("source", ""),
-            "datetime": n.get("datetime", 0),
-        } for n in data]
+        data = r.json()
+        if not isinstance(data, list):
+            log.warning("finnhub returned unexpected payload: %s", str(data)[:200])
+            return {"news": []}
+        data = data[:8]
+
+        deadline = time.time() + 10  # תקציב זמן כולל לתרגום
+        slim = []
+        for n in data:
+            headline = n.get("headline", "")
+            slim.append({
+                "headline": headline,
+                "headline_he": _translate(headline, deadline - time.time()),
+                "url": n.get("url", ""),
+                "source": n.get("source", ""),
+                "datetime": n.get("datetime", 0),
+            })
         return cache_set("news", {"news": slim})
-    except Exception as e:
-        return {"news": [], "error": str(e)}
+    except Exception:
+        log.exception("get_news failed")
+        return {"news": []}

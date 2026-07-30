@@ -1,5 +1,8 @@
-fastapi
-uvicorn[standard]
-yfinance
-curl_cffi
-tzdata
+# גרסאות מקובעות בכוונה. yfinance משנה ממשקים לעתים קרובות, וללא קיבוע
+# דפלוי אקראי בעוד חודש — בלי שום שינוי קוד — עלול להפיל את הפרודקשן.
+# לעדכון: לשנות כאן, לפרוס לסביבת בדיקה, ורק אז למזג.
+fastapi==0.141.1
+uvicorn[standard]==0.46.0
+yfinance==1.5.2
+curl_cffi==0.15.0
+tzdata==2026.3
