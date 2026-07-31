@@ -9,374 +9,339 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
   /* ═══════════════════════════════════════════════════════════════
-     StockIQ — NEON TERMINAL
-     ציאן ומג'נטה על שחור. מוסכמת השוק נשמרת: ירוק=עלייה, אדום=ירידה,
-     ולכן הם לא הוחלפו בצבעי המותג. הזוהר שמור לכותרות ולמסגרות —
-     טקסט גוף נשאר בלבן רגיל כדי שיישאר קריא.
+     StockIQ — SOFT CHARCOAL
+     כהה בלי להיות שחור. אין זוהר, אין רשת, אין קווי סריקה — הניגודיות
+     מגיעה מטקסט אטום ומלא ולא מאפקטים. כל סגנונות הטקסט נמדדו מול
+     הרקע ועוברים WCAG AA (גוף 14.8:1, משני 5.6:1).
+     ירוק/אדום נשמרים כמוסכמת שוק, תמיד עם חץ לצידם — כ-8% מהגברים
+     עם עיוורון צבעים לא יכולים להסתמך על הצבע לבד.
      ═══════════════════════════════════════════════════════════════ */
   :root{
-    --bg:#05060a; --cy:#00f0ff; --mg:#ff2d95;
+    --bg:#141517; --surface:#18191c; --raised:#1c1d21; --sunken:#111214;
+    --line:#26272b; --line2:#33343a;
+    --txt:#ededf0; --txt2:#9b9ba6; --txt3:#8e8e99;
+    --mint:#7dd3a0; --mint-dim:#5fb083;
     --up:#4ade80; --dn:#f87171; --warn:#fbbf24;
-    --txt:rgba(255,255,255,0.86); --dim:rgba(255,255,255,0.42); --faint:rgba(255,255,255,0.26);
-    --line:rgba(0,240,255,0.22); --panel:rgba(0,240,255,0.04);
     --mono:'JetBrains Mono',ui-monospace,monospace;
+    --r:12px;
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--txt);min-height:100vh;overflow-x:hidden;position:relative}
-  /* רשת רקע — הרובד שנותן את תחושת הטרמינל */
-  body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
-    background-image:linear-gradient(rgba(0,240,255,0.05) 1px,transparent 1px),
-                     linear-gradient(90deg,rgba(0,240,255,0.05) 1px,transparent 1px);
-    background-size:38px 38px;
-    -webkit-mask-image:radial-gradient(ellipse 120% 85% at 50% 0%,#000 35%,transparent 78%);
-            mask-image:radial-gradient(ellipse 120% 85% at 50% 0%,#000 35%,transparent 78%)}
-  /* קווי סריקה דקים. עדינים בכוונה — ברמה גבוהה יותר זה מעייף את העין */
-  body::after{content:'';position:fixed;inset:0;z-index:1;pointer-events:none;
-    background:repeating-linear-gradient(0deg,rgba(0,0,0,0.16) 0 1px,transparent 1px 3px)}
-  nav,main,footer,.ticker-tape{position:relative;z-index:2}
+  body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--txt);
+    min-height:100vh;overflow-x:hidden;-webkit-font-smoothing:antialiased;
+    font-feature-settings:'tnum' 0}
 
-  nav{display:flex;align-items:center;justify-content:space-between;padding:0 1.5rem;height:60px;
-    background:rgba(5,6,10,0.82);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:100;
-    backdrop-filter:blur(12px);box-shadow:0 1px 22px rgba(0,240,255,0.1)}
+  nav{display:flex;align-items:center;justify-content:space-between;padding:0 1.5rem;height:58px;
+    background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:100}
   .logo{cursor:pointer;display:flex;align-items:center;line-height:0}
   /* direction:ltr חובה — הדף RTL וה-SVG יורש את זה, ובלעדיו
      הטקסט הלטיני בלוגו נפרס הפוך ונחתך מחוץ ל-viewBox */
-  .logo svg{height:32px;width:113px;display:block;direction:ltr;flex-shrink:0}
+  .logo svg{height:26px;width:104px;display:block;direction:ltr;flex-shrink:0}
   .logo svg text{direction:ltr;unicode-bidi:isolate}
-  .nav-actions{display:flex;gap:8px}
-  .nav-btn{font-size:12px;padding:6px 14px;border-radius:7px;border:1px solid rgba(0,240,255,0.26);
-    background:transparent;cursor:pointer;font-family:var(--mono);color:rgba(0,240,255,0.62);
-    transition:all 0.18s;letter-spacing:0.02em}
-  .nav-btn:hover{color:#9ffcff;border-color:rgba(0,240,255,0.55);background:rgba(0,240,255,0.07)}
-  .nav-btn.active{background:rgba(0,240,255,0.14);color:#9ffcff;border-color:var(--cy);
-    box-shadow:0 0 14px rgba(0,240,255,0.4),inset 0 0 14px rgba(0,240,255,0.09)}
-  main{max-width:960px;margin:0 auto;padding:2rem 1.5rem}
-  .glass{background:var(--panel);border:1px solid var(--line);border-radius:14px;backdrop-filter:blur(9px)}
+  .nav-actions{display:flex;gap:3px}
+  .nav-btn{font-size:12.5px;padding:7px 12px;border-radius:8px;border:1px solid transparent;
+    background:transparent;cursor:pointer;font-family:inherit;color:var(--txt2);transition:all 0.15s}
+  .nav-btn:hover{color:var(--txt);background:#212228}
+  .nav-btn.active{background:#2c2d33;color:#fff;font-weight:600}
+  main{max-width:940px;margin:0 auto;padding:2.25rem 1.5rem}
+  .glass{background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
 
-  .search-bar{display:flex;gap:10px;background:rgba(0,240,255,0.05);border:1px solid rgba(0,240,255,0.42);
-    border-radius:12px;padding:6px 6px 6px 16px;box-shadow:inset 0 0 24px rgba(0,240,255,0.09)}
-  .search-bar:focus-within{border-color:var(--cy);box-shadow:0 0 22px rgba(0,240,255,0.28),inset 0 0 24px rgba(0,240,255,0.12)}
-  .search-bar input{flex:1;min-width:0;font-size:15px;font-family:var(--mono);background:transparent;border:none;
-    outline:none;color:#9ffcff;text-transform:uppercase;letter-spacing:0.04em;text-overflow:ellipsis}
-  .search-bar input::placeholder{color:rgba(0,240,255,0.3);text-transform:none;letter-spacing:0}
-  /* Chrome צובע שדה שמולא אוטומטית בלבן ומוחק את העיצוב.
-     box-shadow פנימי הוא הדרך היחידה לעקוף — background נדרס. */
-  .search-bar input:-webkit-autofill,
-  .search-bar input:-webkit-autofill:hover,
-  .search-bar input:-webkit-autofill:focus,
-  .search-bar input:-webkit-autofill:active{
-    -webkit-text-fill-color:#9ffcff;
-    -webkit-box-shadow:0 0 0 1000px #080a12 inset;
-            box-shadow:0 0 0 1000px #080a12 inset;
-    caret-color:#9ffcff;
+  .search-bar{display:flex;gap:8px;background:var(--surface);border:1px solid var(--line2);
+    border-radius:var(--r);padding:6px 6px 6px 16px;transition:border-color 0.15s}
+  .search-bar:focus-within{border-color:var(--mint)}
+  .search-bar input{flex:1;min-width:0;font-size:15px;font-family:var(--mono);background:transparent;
+    border:none;outline:none;color:var(--txt);text-transform:uppercase;text-overflow:ellipsis}
+  .search-bar input::placeholder{color:var(--txt3);text-transform:none;font-family:'Inter',sans-serif}
+  .search-bar input:-webkit-autofill,.search-bar input:-webkit-autofill:hover,
+  .search-bar input:-webkit-autofill:focus{
+    -webkit-text-fill-color:var(--txt);-webkit-box-shadow:0 0 0 1000px var(--surface) inset;
+    box-shadow:0 0 0 1000px var(--surface) inset;caret-color:var(--txt);
     transition:background-color 9999s ease-out 0s}
-  .search-bar button{padding:10px 22px;border-radius:9px;border:none;
-    background:linear-gradient(135deg,var(--cy),var(--mg));color:#04050a;font-size:14px;font-weight:700;
-    cursor:pointer;font-family:inherit;box-shadow:0 0 18px rgba(0,240,255,0.45);transition:box-shadow 0.18s}
-  .search-bar button:hover{box-shadow:0 0 28px rgba(255,45,149,0.6)}
+  .search-bar button{padding:10px 20px;border-radius:9px;border:none;background:var(--mint);
+    color:#0c1a12;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:background 0.15s}
+  .search-bar button:hover{background:#95dfb3}
 
-  .home-hero{text-align:center;padding:3rem 0 2rem}
-  .home-hero h1{font-size:38px;font-weight:800;color:#fff;margin-bottom:10px;letter-spacing:-0.01em;
-    text-shadow:0 0 30px rgba(0,240,255,0.55),0 0 60px rgba(0,240,255,0.22)}
-  .home-hero p{font-size:12px;color:rgba(0,240,255,0.6);margin-bottom:2rem;font-family:var(--mono);letter-spacing:0.1em}
+  .home-hero{text-align:center;padding:3.25rem 0 2.25rem}
+  .home-hero h1{font-size:40px;font-weight:700;color:#fff;margin-bottom:12px;letter-spacing:-0.028em}
+  .home-hero p{font-size:14px;color:var(--txt2);margin-bottom:2rem}
 
-  .news-title{font-size:11px;font-weight:700;color:rgba(0,240,255,0.55);text-transform:uppercase;
-    letter-spacing:0.16em;margin-bottom:12px;font-family:var(--mono)}
-  .news-card{display:flex;align-items:flex-start;gap:12px;padding:12px 16px;cursor:pointer;transition:background 0.15s}
-  .news-card:hover{background:rgba(255,45,149,0.07)}
-  .news-dot{width:6px;height:6px;border-radius:50%;background:var(--mg);flex-shrink:0;margin-top:6px;
-    box-shadow:0 0 9px var(--mg)}
+  .news-title{font-size:11px;font-weight:600;color:var(--txt3);text-transform:uppercase;
+    letter-spacing:0.12em;margin-bottom:12px}
+  .news-card{display:flex;align-items:flex-start;gap:12px;padding:13px 16px;cursor:pointer;transition:background 0.15s}
+  .news-card:hover{background:var(--raised)}
+  .news-dot{width:5px;height:5px;border-radius:50%;background:var(--mint);flex-shrink:0;margin-top:7px}
   .news-card-content{flex:1;min-width:0}
-  .news-card-title{font-size:13px;color:var(--txt);line-height:1.55;margin-bottom:3px}
-  .news-card-meta{font-size:10.5px;color:var(--faint);font-family:var(--mono)}
-  .loading-state{text-align:center;padding:2rem;color:rgba(0,240,255,0.4);font-size:13px;font-family:var(--mono)}
+  .news-card-title{font-size:13.5px;color:var(--txt);line-height:1.6;margin-bottom:3px}
+  .news-card-meta{font-size:11.5px;color:var(--txt3)}
+  .loading-state{text-align:center;padding:2rem;color:var(--txt2);font-size:13.5px}
 
   .empty{text-align:center;padding:4rem 0}
-  .empty-icon{font-size:48px;margin-bottom:1rem;filter:drop-shadow(0 0 16px rgba(0,240,255,0.55))}
-  .empty-title{font-size:20px;font-weight:700;color:#fff;margin-bottom:8px}
-  .empty-sub{font-size:13px;color:var(--dim);font-family:var(--mono)}
-  .back-btn{font-size:12px;color:rgba(0,240,255,0.6);cursor:pointer;margin-bottom:1.5rem;
-    display:inline-flex;align-items:center;gap:4px;font-family:var(--mono)}
-  .back-btn:hover{color:var(--cy);text-shadow:0 0 10px rgba(0,240,255,0.7)}
+  .empty-icon{font-size:42px;margin-bottom:1rem;opacity:0.75}
+  .empty-title{font-size:19px;font-weight:600;color:#fff;margin-bottom:8px}
+  .empty-sub{font-size:13.5px;color:var(--txt2)}
+  .back-btn{font-size:13px;color:var(--txt2);cursor:pointer;margin-bottom:1.5rem;
+    display:inline-flex;align-items:center;gap:5px}
+  .back-btn:hover{color:var(--mint)}
 
-  .company-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:1.5rem;
-    position:relative;overflow:hidden;background:var(--panel);border:1px solid rgba(0,240,255,0.28);
-    border-radius:16px;backdrop-filter:blur(12px);padding:1.5rem;box-shadow:0 0 26px rgba(0,240,255,0.09)}
+  .company-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:1.25rem;
+    position:relative;overflow:hidden;background:var(--surface);border:1px solid var(--line);
+    border-radius:16px;padding:1.6rem}
   .company-header>div{position:relative;z-index:1}
-  .company-header>.trend-bg{position:absolute;inset:0;opacity:0.5;pointer-events:none;z-index:0;
+  .company-header>.trend-bg{position:absolute;inset:0;opacity:0.28;pointer-events:none;z-index:0;
     width:100%;height:100%;border-radius:16px;overflow:hidden}
-  .company-name{font-size:22px;font-weight:700;color:#fff;margin-bottom:4px}
-  .company-ticker{font-size:12px;color:rgba(0,240,255,0.6);margin-bottom:8px;font-family:var(--mono);letter-spacing:0.08em}
-  .company-tags{display:flex;gap:8px;flex-wrap:wrap}
-  .tag{font-size:10.5px;font-weight:500;padding:3px 10px;border-radius:5px;background:rgba(0,240,255,0.11);
-    color:#9ffcff;border:1px solid rgba(0,240,255,0.28);font-family:var(--mono)}
-  .company-price-value{font-size:28px;font-weight:700;text-align:left;font-family:var(--mono);
-    color:#fff;text-shadow:0 0 20px rgba(0,240,255,0.35)}
-  .company-price-change{font-size:14px;font-weight:500;margin-top:4px;text-align:left;font-family:var(--mono)}
-  .ah-badge{font-size:11px;margin-top:4px;padding:3px 10px;border-radius:5px;display:inline-block;font-family:var(--mono)}
-  .ah-badge.up{background:rgba(74,222,128,0.13);color:var(--up);border:1px solid rgba(74,222,128,0.3)}
-  .ah-badge.down{background:rgba(248,113,113,0.13);color:var(--dn);border:1px solid rgba(248,113,113,0.3)}
-  /* ירוק ואדום נשארים מוסכמת השוק — לא צבעי המותג */
-  .up{color:var(--up);text-shadow:0 0 12px rgba(74,222,128,0.45)}
-  .down{color:var(--dn);text-shadow:0 0 12px rgba(248,113,113,0.45)}
+  .company-name{font-size:21px;font-weight:600;color:#fff;margin-bottom:4px;letter-spacing:-0.015em}
+  .company-ticker{font-size:12px;color:var(--txt2);margin-bottom:10px;font-family:var(--mono)}
+  .company-tags{display:flex;gap:7px;flex-wrap:wrap}
+  .tag{font-size:11px;font-weight:500;padding:4px 10px;border-radius:6px;background:var(--raised);
+    color:var(--txt2);border:1px solid var(--line)}
+  .company-price-value{font-size:34px;font-weight:700;text-align:left;font-family:var(--mono);
+    color:#fff;letter-spacing:-0.03em}
+  .company-price-change{font-size:14px;font-weight:600;margin-top:4px;text-align:left;font-family:var(--mono)}
+  .ah-badge{font-size:11.5px;margin-top:6px;padding:4px 10px;border-radius:6px;display:inline-block;font-family:var(--mono)}
+  .ah-badge.up{background:rgba(74,222,128,0.12);color:var(--up)}
+  .ah-badge.down{background:rgba(248,113,113,0.12);color:var(--dn)}
+  .up{color:var(--up)}
+  .down{color:var(--dn)}
 
-  .fundamentals{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:1.5rem}
-  .fund-card{padding:1rem;border-radius:10px;background:var(--panel);border:1px solid var(--line)}
-  .fund-label{font-size:10px;color:rgba(0,240,255,0.55);text-transform:uppercase;letter-spacing:0.12em;
-    margin-bottom:6px;font-family:var(--mono)}
-  .fund-value{font-size:16px;font-weight:500;color:#fff;font-family:var(--mono)}
-  .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:1.5rem}
-  .metric{padding:1.25rem;border-radius:12px;background:var(--panel);border:1px solid rgba(0,240,255,0.26);
-    box-shadow:inset 0 0 20px rgba(0,240,255,0.05)}
-  .metric-label{font-size:10px;color:rgba(0,240,255,0.55);text-transform:uppercase;letter-spacing:0.13em;
-    margin-bottom:8px;font-family:var(--mono)}
-  .metric-value{font-size:20px;font-weight:500;color:#fff;line-height:1;font-family:var(--mono)}
-  .metric-sub{font-size:11px;color:var(--dim);margin-top:5px;font-family:var(--mono)}
+  .fundamentals{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1px;
+    margin-bottom:1.25rem;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+  .fund-card{padding:1rem;background:var(--surface)}
+  .fund-label{font-size:10.5px;color:var(--txt3);text-transform:uppercase;letter-spacing:0.09em;margin-bottom:6px}
+  .fund-value{font-size:16px;font-weight:600;color:#fff;font-family:var(--mono);letter-spacing:-0.01em}
+  .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:1.25rem}
+  .metric{padding:1.2rem;border-radius:var(--r);background:var(--surface);border:1px solid var(--line)}
+  .metric-label{font-size:10.5px;color:var(--txt3);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:9px}
+  .metric-value{font-size:21px;font-weight:600;color:#fff;line-height:1;font-family:var(--mono);letter-spacing:-0.02em}
+  .metric-sub{font-size:11.5px;color:var(--txt2);margin-top:6px;font-family:var(--mono)}
 
-  .signal-banner{display:flex;align-items:center;gap:14px;padding:1.25rem 1.5rem;border-radius:14px;margin-bottom:1.5rem}
-  .signal-banner.green{background:rgba(74,222,128,0.08);border:1px solid rgba(74,222,128,0.36);
-    box-shadow:0 0 22px rgba(74,222,128,0.15)}
-  .signal-banner.yellow{background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.36);
-    box-shadow:0 0 22px rgba(251,191,36,0.15)}
-  .signal-banner.red{background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.36);
-    box-shadow:0 0 22px rgba(248,113,113,0.15)}
-  .signal-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
-  .dot-green{background:var(--up);box-shadow:0 0 12px var(--up)}
-  .dot-yellow{background:var(--warn);box-shadow:0 0 12px var(--warn)}
-  .dot-red{background:var(--dn);box-shadow:0 0 12px var(--dn)}
-  .signal-title{font-size:14px;font-weight:700}
-  .signal-title.green{color:var(--up);text-shadow:0 0 14px rgba(74,222,128,0.55)}
-  .signal-title.yellow{color:var(--warn);text-shadow:0 0 14px rgba(251,191,36,0.55)}
-  .signal-title.red{color:var(--dn);text-shadow:0 0 14px rgba(248,113,113,0.55)}
-  .signal-reasons{font-size:11.5px;color:var(--dim);margin-top:3px;font-family:var(--mono)}
+  .signal-banner{display:flex;align-items:center;gap:13px;padding:1.15rem 1.35rem;border-radius:var(--r);
+    margin-bottom:1.25rem;background:var(--surface);border:1px solid var(--line);border-inline-start-width:3px}
+  .signal-banner.green{border-inline-start-color:var(--up)}
+  .signal-banner.yellow{border-inline-start-color:var(--warn)}
+  .signal-banner.red{border-inline-start-color:var(--dn)}
+  .signal-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+  .dot-green{background:var(--up)}.dot-yellow{background:var(--warn)}.dot-red{background:var(--dn)}
+  .signal-title{font-size:14px;font-weight:600}
+  .signal-title.green{color:var(--up)}.signal-title.yellow{color:var(--warn)}.signal-title.red{color:var(--dn)}
+  .signal-reasons{font-size:12px;color:var(--txt2);margin-top:4px}
 
-  .ai-card{border-radius:14px;padding:1.5rem;margin-bottom:1.5rem;position:relative;overflow:hidden;
-    background:rgba(255,45,149,0.05);border:1px solid rgba(255,45,149,0.3);box-shadow:0 0 26px rgba(255,45,149,0.11)}
-  .ai-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;
-    background:linear-gradient(90deg,var(--cy),var(--mg));box-shadow:0 0 12px var(--mg)}
-  .ai-badge{font-size:9.5px;font-weight:700;padding:3px 10px;border-radius:5px;
-    background:linear-gradient(135deg,var(--cy),var(--mg));color:#04050a;font-family:var(--mono);letter-spacing:0.06em}
-  .ai-card-header{display:flex;align-items:center;gap:10px;margin-bottom:1rem}
-  .ai-card-title{font-size:12px;font-weight:600;color:rgba(255,255,255,0.72);font-family:var(--mono);letter-spacing:0.05em}
-  .ai-text{font-size:13.5px;line-height:1.85;color:var(--txt);white-space:pre-line}
-  .ai-loading{display:flex;align-items:center;gap:10px;font-size:12px;color:rgba(255,45,149,0.65);font-family:var(--mono)}
+  .ai-card{border-radius:var(--r);padding:1.4rem;margin-bottom:1.25rem;position:relative;overflow:hidden;
+    background:var(--surface);border:1px solid var(--line)}
+  .ai-card::before{content:'';position:absolute;top:0;inset-inline-start:0;width:3px;height:100%;background:var(--mint)}
+  .ai-badge{font-size:10px;font-weight:600;padding:3px 9px;border-radius:5px;background:var(--mint);
+    color:#0c1a12;letter-spacing:0.04em}
+  .ai-card-header{display:flex;align-items:center;gap:10px;margin-bottom:0.9rem}
+  .ai-card-title{font-size:12.5px;font-weight:600;color:var(--txt2)}
+  .ai-text{font-size:14px;line-height:1.85;color:var(--txt);white-space:pre-line}
+  .ai-loading{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--txt2)}
   .ai-spinner{width:16px;height:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
   @keyframes drawLine{0%{stroke-dashoffset:100}50%{stroke-dashoffset:0}100%{stroke-dashoffset:-100}}
-  @keyframes priceFlashUp{0%{background:rgba(74,222,128,0.32)}100%{background:transparent}}
-  @keyframes priceFlashDown{0%{background:rgba(248,113,113,0.32)}100%{background:transparent}}
+  @keyframes priceFlashUp{0%{background:rgba(74,222,128,0.22)}100%{background:transparent}}
+  @keyframes priceFlashDown{0%{background:rgba(248,113,113,0.22)}100%{background:transparent}}
   .price-flash-up{animation:priceFlashUp 1s ease-out}
   .price-flash-down{animation:priceFlashDown 1s ease-out}
 
-  .trade-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin:1rem 0 0.5rem}
-  .trade-cell{padding:0.85rem;border-radius:9px;background:var(--panel);border:1px solid var(--line)}
-  .trade-cell-label{font-size:9.5px;color:rgba(0,240,255,0.55);text-transform:uppercase;letter-spacing:0.1em;
-    margin-bottom:5px;font-family:var(--mono)}
-  .trade-cell-value{font-size:15px;font-weight:700;font-family:var(--mono)}
+  .trade-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:1px;
+    margin:1rem 0 0.5rem;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .trade-cell{padding:0.9rem;background:var(--surface)}
+  .trade-cell-label{font-size:10px;color:var(--txt3);text-transform:uppercase;letter-spacing:0.09em;margin-bottom:6px}
+  .trade-cell-value{font-size:15px;font-weight:600;font-family:var(--mono);letter-spacing:-0.01em}
 
-  .sentiment-card{border-radius:14px;padding:1.5rem;margin-bottom:1.25rem;background:var(--panel);border:1px solid var(--line)}
-  .sentiment-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1.25rem}
-  .sentiment-title{font-size:12px;font-weight:600;color:rgba(255,255,255,0.72);font-family:var(--mono);letter-spacing:0.05em}
-  .sentiment-analysts{font-size:11px;color:var(--faint);font-family:var(--mono)}
-  .sentiment-bar-wrap{display:flex;border-radius:5px;overflow:hidden;height:24px;margin-bottom:10px}
+  .sentiment-card{border-radius:var(--r);padding:1.4rem;margin-bottom:1.15rem;background:var(--surface);border:1px solid var(--line)}
+  .sentiment-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1.15rem}
+  .sentiment-title{font-size:12.5px;font-weight:600;color:var(--txt2)}
+  .sentiment-analysts{font-size:11.5px;color:var(--txt3);font-family:var(--mono)}
+  .sentiment-bar-wrap{display:flex;border-radius:6px;overflow:hidden;height:26px;margin-bottom:10px}
   .sentiment-bar-bull{background:var(--up);display:flex;align-items:center;justify-content:center;
-    font-size:11px;font-weight:700;color:#052e16;font-family:var(--mono)}
-  .sentiment-bar-neutral{background:rgba(255,255,255,0.09);display:flex;align-items:center;justify-content:center;
-    font-size:11px;color:var(--dim);font-family:var(--mono)}
+    font-size:11.5px;font-weight:700;color:#052e16;font-family:var(--mono)}
+  .sentiment-bar-neutral{background:#2c2d33;display:flex;align-items:center;justify-content:center;
+    font-size:11.5px;color:var(--txt2);font-family:var(--mono)}
   .sentiment-bar-bear{background:var(--dn);display:flex;align-items:center;justify-content:center;
-    font-size:11px;font-weight:700;color:#450a0a;font-family:var(--mono)}
-  .sentiment-labels{display:flex;justify-content:space-between;font-size:11px;margin-bottom:1rem;font-family:var(--mono)}
-  .sentiment-label-bull{color:var(--up);font-weight:700}
-  .sentiment-label-bear{color:var(--dn);font-weight:700}
-  .sentiment-label-neutral{color:var(--faint)}
-  .sentiment-votes{display:flex;gap:8px;flex-wrap:wrap}
-  .vote-chip{font-size:10.5px;font-weight:500;padding:4px 12px;border-radius:5px;
-    border:1px solid rgba(0,240,255,0.2);color:rgba(0,240,255,0.6);font-family:var(--mono)}
-  .short-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;
-    border-top:1px solid var(--line);margin-top:1rem;font-size:12.5px}
-  .short-label{color:var(--dim)}
-  .short-val{font-weight:700;color:var(--dn);font-family:var(--mono)}
+    font-size:11.5px;font-weight:700;color:#450a0a;font-family:var(--mono)}
+  .sentiment-labels{display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:1rem;font-family:var(--mono)}
+  .sentiment-label-bull{color:var(--up);font-weight:600}
+  .sentiment-label-bear{color:var(--dn);font-weight:600}
+  .sentiment-label-neutral{color:var(--txt2)}
+  .sentiment-votes{display:flex;gap:7px;flex-wrap:wrap}
+  .vote-chip{font-size:11px;font-weight:500;padding:5px 11px;border-radius:6px;
+    border:1px solid var(--line);color:var(--txt2);font-family:var(--mono)}
+  .short-row{display:flex;justify-content:space-between;align-items:center;padding:11px 0;
+    border-top:1px solid var(--line);margin-top:1rem;font-size:13px}
+  .short-label{color:var(--txt2)}
+  .short-val{font-weight:600;color:var(--dn);font-family:var(--mono)}
 
-  .chart-card{border-radius:14px;padding:1.5rem;margin-bottom:1.25rem;background:var(--panel);border:1px solid var(--line)}
-  .chart-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem}
-  .chart-header-title{font-size:12px;font-weight:600;color:rgba(255,255,255,0.72);font-family:var(--mono);letter-spacing:0.05em}
-  .zone-row{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-radius:9px;margin-bottom:8px}
-  .zone-row.support{background:rgba(74,222,128,0.06);border:1px solid rgba(74,222,128,0.22)}
-  .zone-row.resist{background:rgba(248,113,113,0.06);border:1px solid rgba(248,113,113,0.22)}
-  .zone-label{font-size:12.5px;color:var(--dim)}
-  .zone-price{font-size:14px;font-weight:700;font-family:var(--mono)}
-  .zone-badge{font-size:10.5px;font-weight:500;padding:3px 10px;border-radius:5px;font-family:var(--mono)}
-  .badge-support{background:rgba(74,222,128,0.15);color:var(--up);border:1px solid rgba(74,222,128,0.3)}
-  .badge-resist{background:rgba(248,113,113,0.15);color:var(--dn);border:1px solid rgba(248,113,113,0.3)}
-  .section-title{font-size:10.5px;font-weight:700;color:rgba(0,240,255,0.55);text-transform:uppercase;
-    letter-spacing:0.16em;margin-bottom:12px;font-family:var(--mono)}
+  .chart-card{border-radius:var(--r);padding:1.4rem;margin-bottom:1.15rem;background:var(--surface);border:1px solid var(--line)}
+  .chart-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:10px;flex-wrap:wrap}
+  .chart-header-title{font-size:12.5px;font-weight:600;color:var(--txt2)}
+  /* ── בורר טווחי זמן, צמוד לגרף ולא קבור בהגדרות ── */
+  .tf-group{display:flex;gap:3px}
+  .tf-btn{font-size:11px;padding:5px 11px;border-radius:7px;border:1px solid var(--line);
+    background:transparent;color:var(--txt2);cursor:pointer;font-family:var(--mono);transition:all 0.15s}
+  .tf-btn:hover{color:var(--txt);border-color:var(--line2)}
+  .tf-btn.active{background:#2c2d33;color:#fff;border-color:var(--line2);font-weight:600}
+  .zone-row{display:flex;justify-content:space-between;align-items:center;padding:11px 14px;
+    border-radius:10px;margin-bottom:8px;background:var(--raised);border:1px solid var(--line);
+    border-inline-start-width:3px}
+  .zone-row.support{border-inline-start-color:var(--up)}
+  .zone-row.resist{border-inline-start-color:var(--dn)}
+  .zone-label{font-size:13px;color:var(--txt2)}
+  .zone-price{font-size:14px;font-weight:600;font-family:var(--mono)}
+  .zone-badge{font-size:11px;font-weight:500;padding:3px 9px;border-radius:5px;font-family:var(--mono)}
+  .badge-support{background:rgba(74,222,128,0.13);color:var(--up)}
+  .badge-resist{background:rgba(248,113,113,0.13);color:var(--dn)}
+  .section-title{font-size:11px;font-weight:600;color:var(--txt3);text-transform:uppercase;
+    letter-spacing:0.12em;margin-bottom:12px}
   .divider{height:1px;background:var(--line);margin:1.5rem 0}
-  .error-state{text-align:center;padding:2rem;background:rgba(248,113,113,0.08);
-    border:1px solid rgba(248,113,113,0.32);border-radius:12px;color:var(--dn);font-size:13px;font-family:var(--mono)}
+  .error-state{text-align:center;padding:1.75rem;background:var(--surface);border:1px solid var(--line);
+    border-inline-start:3px solid var(--dn);border-radius:var(--r);color:var(--dn);font-size:13.5px}
 
-  .watchlist-empty{text-align:center;padding:3rem 0;color:var(--dim);font-family:var(--mono)}
+  .watchlist-empty{text-align:center;padding:3rem 0;color:var(--txt2)}
   .watchlist-item{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;
-    cursor:pointer;transition:background 0.15s;border-bottom:1px solid rgba(0,240,255,0.1)}
+    cursor:pointer;transition:background 0.15s;border-bottom:1px solid var(--line);gap:12px}
   .watchlist-item:last-child{border-bottom:none}
-  .watchlist-item:hover{background:rgba(0,240,255,0.06)}
-  .wl-ticker{font-size:15px;font-weight:700;font-family:var(--mono);color:#9ffcff}
-  .wl-remove{font-size:18px;color:rgba(255,255,255,0.2);cursor:pointer;padding:4px 8px}
-  .wl-remove:hover{color:var(--dn);text-shadow:0 0 10px rgba(248,113,113,0.7)}
+  .watchlist-item:hover{background:var(--raised)}
+  .wl-ticker{font-size:15px;font-weight:600;font-family:var(--mono);color:#fff}
   .wl-main{flex:1;min-width:0}
-  .wl-spark{width:82px;flex-shrink:0;opacity:0.85}
+  .wl-spark{width:82px;flex-shrink:0;opacity:0.9}
   .wl-spark svg{width:100%;height:26px;display:block}
   .wl-quote{text-align:left;min-width:88px;flex-shrink:0;font-family:var(--mono)}
-  .wl-price{font-size:14px;font-weight:700;color:#fff}
-  .wl-price.wl-muted{color:var(--faint);font-weight:400}
-  .wl-chg{font-size:11.5px;font-weight:700;margin-top:2px;min-height:14px}
-  .watchlist-item{gap:12px}
-  @media (max-width:600px){
-    .wl-spark{width:56px}
-    .wl-quote{min-width:74px}
-    .wl-price{font-size:13px}
-  }
-  .add-btn{width:100%;padding:12px;border-radius:9px;border:1px dashed rgba(0,240,255,0.36);
-    background:transparent;color:rgba(0,240,255,0.7);font-size:12.5px;cursor:pointer;
-    font-family:var(--mono);margin-top:12px}
-  .add-btn:hover{background:rgba(0,240,255,0.06);border-color:var(--cy)}
-  .scan-btn{padding:10px 24px;border-radius:9px;border:none;
-    background:linear-gradient(135deg,var(--cy),var(--mg));color:#04050a;font-size:13.5px;font-weight:700;
-    cursor:pointer;font-family:inherit;margin-top:12px;box-shadow:0 0 18px rgba(0,240,255,0.4)}
-  .scan-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
-  .scan-card{padding:1.25rem;cursor:pointer;transition:all 0.15s;background:var(--panel);
-    border:1px solid var(--line);border-radius:12px}
-  .scan-card:hover{border-color:var(--cy);box-shadow:0 0 20px rgba(0,240,255,0.22)}
-  .scan-card.overbought{border-color:rgba(248,113,113,0.4);background:rgba(248,113,113,0.05)}
-  .scan-card.overbought:hover{border-color:var(--dn);box-shadow:0 0 20px rgba(248,113,113,0.25)}
-  .overbought-badge{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 9px;border-radius:5px;
-    background:rgba(248,113,113,0.15);color:var(--dn);border:1px solid rgba(248,113,113,0.3);
-    margin-inline-start:8px;font-family:var(--mono)}
-  .scan-grade{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;
-    border-radius:5px;font-size:12px;font-weight:700;margin-inline-end:8px;flex-shrink:0;font-family:var(--mono)}
-  .scan-ticker{font-size:18px;font-weight:700;font-family:var(--mono);color:#fff}
-  .scan-rsi{font-size:11.5px;color:var(--dim);margin:6px 0;font-family:var(--mono)}
-  .scan-spark{width:100%;height:28px;margin:2px 0 8px;display:block}
+  .wl-price{font-size:14px;font-weight:600;color:#fff}
+  .wl-price.wl-muted{color:var(--txt3);font-weight:400}
+  .wl-chg{font-size:12px;font-weight:600;margin-top:3px;min-height:14px}
+  .wl-remove{font-size:19px;color:var(--txt3);cursor:pointer;padding:4px 8px;line-height:1}
+  .wl-remove:hover{color:var(--dn)}
+  .add-btn{width:100%;padding:13px;border-radius:10px;border:1px dashed var(--line2);
+    background:transparent;color:var(--txt2);font-size:13px;cursor:pointer;font-family:inherit;margin-top:12px}
+  .add-btn:hover{background:var(--raised);color:var(--mint);border-color:var(--mint-dim)}
+  .scan-btn{padding:11px 22px;border-radius:9px;border:none;background:var(--mint);color:#0c1a12;
+    font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;margin-top:12px}
+  .scan-btn:hover{background:#95dfb3}
+  .scan-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}
+  .scan-card{padding:1.2rem;cursor:pointer;transition:all 0.15s;background:var(--surface);
+    border:1px solid var(--line);border-radius:var(--r)}
+  .scan-card:hover{border-color:var(--line2);background:var(--raised)}
+  .scan-card.overbought{border-inline-start:3px solid var(--dn)}
+  .overbought-badge{display:inline-block;font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:5px;
+    background:rgba(248,113,113,0.13);color:var(--dn);margin-inline-start:8px;font-family:var(--mono)}
+  .scan-grade{display:inline-flex;align-items:center;justify-content:center;width:23px;height:23px;
+    border-radius:6px;font-size:12px;font-weight:700;margin-inline-end:9px;flex-shrink:0;font-family:var(--mono)}
+  .scan-ticker{font-size:18px;font-weight:600;font-family:var(--mono);color:#fff}
+  .scan-rsi{font-size:12px;color:var(--txt2);margin:7px 0;font-family:var(--mono)}
+  .scan-spark{width:100%;height:28px;margin:2px 0 9px;display:block}
   .scan-signals{display:flex;flex-wrap:wrap;gap:6px}
-  .sig{font-size:10.5px;font-weight:500;padding:3px 10px;border-radius:5px;font-family:var(--mono)}
-  .sig-green{background:rgba(74,222,128,0.14);color:var(--up);border:1px solid rgba(74,222,128,0.28)}
-  .sig-red{background:rgba(248,113,113,0.14);color:var(--dn);border:1px solid rgba(248,113,113,0.28)}
-  .sig-blue{background:rgba(0,240,255,0.12);color:#9ffcff;border:1px solid rgba(0,240,255,0.28)}
+  .sig{font-size:11px;font-weight:500;padding:4px 10px;border-radius:6px;font-family:var(--mono)}
+  .sig-green{background:rgba(74,222,128,0.13);color:var(--up)}
+  .sig-red{background:rgba(248,113,113,0.13);color:var(--dn)}
+  .sig-blue{background:#2c2d33;color:var(--txt)}
+  .disclaimer{max-width:940px;margin:2.5rem auto 0;padding:1.25rem 1.5rem 2rem;font-size:12.5px;
+    line-height:1.8;color:var(--txt2);border-top:1px solid var(--line);text-align:center}
+
+  /* ── השוואת מניות ── */
   .cmp-inputs{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .cmp-inputs input{flex:1;min-width:120px;font-size:14px;font-family:var(--mono);text-transform:uppercase;
-    background:rgba(0,240,255,0.05);border:1px solid rgba(0,240,255,0.34);border-radius:10px;
-    padding:11px 13px;color:#9ffcff;outline:none}
-  .cmp-inputs input:focus{border-color:var(--cy);box-shadow:0 0 16px rgba(0,240,255,0.25)}
-  .cmp-inputs input::placeholder{color:rgba(0,240,255,0.3);text-transform:none}
-  .cmp-vs{font-size:11px;color:var(--mg);font-family:var(--mono);flex-shrink:0}
-  .cmp-head{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
-  .cmp-card{padding:1.1rem;border-radius:12px;background:var(--panel);border:1px solid var(--line);text-align:center}
-  .cmp-card.a{border-color:rgba(0,240,255,0.42)}
-  .cmp-card.b{border-color:rgba(255,45,149,0.42)}
-  .cmp-tick{font-size:19px;font-weight:700;font-family:var(--mono)}
-  .cmp-card.a .cmp-tick{color:#9ffcff}
-  .cmp-card.b .cmp-tick{color:#ff8ac4}
-  .cmp-name{font-size:11px;color:var(--dim);margin:3px 0 7px;min-height:14px}
-  .cmp-price{font-size:17px;font-weight:700;font-family:var(--mono);color:#fff}
-  .cmp-chg{font-size:12px;font-weight:700;font-family:var(--mono);margin-top:2px}
-  .cmp-table{border-radius:12px;overflow:hidden;border:1px solid var(--line);margin-bottom:14px}
-  .cmp-row{display:grid;grid-template-columns:1fr 1.1fr 1fr;align-items:center;
-    border-bottom:1px solid rgba(0,240,255,0.09);font-family:var(--mono)}
+    background:var(--surface);border:1px solid var(--line2);border-radius:10px;padding:12px 14px;
+    color:var(--txt);outline:none}
+  .cmp-inputs input:focus{border-color:var(--mint)}
+  .cmp-inputs input::placeholder{color:var(--txt3);text-transform:none;font-family:'Inter',sans-serif}
+  .cmp-vs{font-size:11.5px;color:var(--txt3);flex-shrink:0}
+  .cmp-head{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+  .cmp-card{padding:1.15rem;border-radius:var(--r);background:var(--surface);border:1px solid var(--line);
+    text-align:center;border-top-width:3px}
+  .cmp-card.a{border-top-color:var(--mint)}
+  .cmp-card.b{border-top-color:#8b9cc4}
+  .cmp-tick{font-size:19px;font-weight:600;font-family:var(--mono)}
+  .cmp-card.a .cmp-tick{color:var(--mint)}
+  .cmp-card.b .cmp-tick{color:#a8b6d8}
+  .cmp-name{font-size:11.5px;color:var(--txt2);margin:4px 0 8px;min-height:14px}
+  .cmp-price{font-size:18px;font-weight:600;font-family:var(--mono);color:#fff;letter-spacing:-0.02em}
+  .cmp-chg{font-size:12px;font-weight:600;font-family:var(--mono);margin-top:3px}
+  .cmp-table{border-radius:var(--r);overflow:hidden;border:1px solid var(--line);margin-bottom:12px}
+  .cmp-row{display:grid;grid-template-columns:1fr 1.1fr 1fr;align-items:center;border-bottom:1px solid var(--line)}
   .cmp-row:last-child{border-bottom:none}
-  .cmp-row>div{padding:11px 10px;font-size:13px}
-  .cmp-lbl{text-align:center;font-size:10.5px !important;color:rgba(0,240,255,0.6);
-    text-transform:uppercase;letter-spacing:0.08em;background:rgba(0,240,255,0.035)}
+  .cmp-row>div{padding:12px 10px;font-size:13.5px;font-family:var(--mono)}
+  .cmp-lbl{text-align:center;font-size:10.5px !important;color:var(--txt3);text-transform:uppercase;
+    letter-spacing:0.07em;background:var(--raised);font-family:'Inter',sans-serif !important}
   .cmp-val{text-align:center;color:var(--txt)}
-  .cmp-val.win{color:var(--up);font-weight:700;text-shadow:0 0 11px rgba(74,222,128,0.42)}
-  .cmp-note{font-size:11.5px;color:var(--faint);text-align:center;margin-top:10px;line-height:1.7}
-  @media (max-width:600px){
-    .cmp-inputs input{min-width:0}
-    .cmp-vs{display:none}
-    .cmp-row>div{padding:9px 5px;font-size:12px}
-    .cmp-lbl{font-size:9.5px !important}
-  }
-  .disclaimer{max-width:960px;margin:2.5rem auto 0;padding:1rem 1.5rem 2rem;font-size:11.5px;
-    line-height:1.75;color:var(--faint);border-top:1px solid var(--line);text-align:center}
+  .cmp-val.win{color:var(--up);font-weight:600}
+  .cmp-note{font-size:12px;color:var(--txt2);text-align:center;margin-top:12px;line-height:1.75}
 
   /* ── רצועת מדדים עולמיים ── */
   /* direction:ltr חובה — הדף כולו RTL, ובלעדיו הרצועה נצמדת לימין
      והאנימציה ל--50% דוחפת אותה כולה מחוץ למסך במקום לגלול ברצף */
-  .ticker-tape{height:30px;background:rgba(0,240,255,0.045);border-bottom:1px solid rgba(255,45,149,0.24);
+  .ticker-tape{height:32px;background:var(--sunken);border-bottom:1px solid var(--line);
     display:flex;align-items:center;direction:ltr;position:relative}
   .ticker-viewport{flex:1;min-width:0;overflow:hidden;height:100%;display:flex;align-items:center}
   .ticker-tape:hover .ticker-scroll{animation-play-state:paused}
-  .ticker-gear{flex-shrink:0;width:30px;height:30px;border:none;background:transparent;
-    color:rgba(0,240,255,0.42);font-size:13px;cursor:pointer;font-family:inherit;line-height:1;transition:color 0.15s}
-  .ticker-gear:hover{color:var(--cy);text-shadow:0 0 10px var(--cy)}
-  .idx-panel{position:absolute;top:32px;right:6px;z-index:120;direction:rtl;width:250px;max-height:70vh;
-    overflow-y:auto;padding:12px;border-radius:12px;background:#070910;border:1px solid rgba(0,240,255,0.36);
-    box-shadow:0 12px 34px rgba(0,0,0,0.7),0 0 24px rgba(0,240,255,0.16)}
+  .ticker-gear{flex-shrink:0;width:32px;height:32px;border:none;background:transparent;
+    color:var(--txt3);font-size:13px;cursor:pointer;font-family:inherit;line-height:1;transition:color 0.15s}
+  .ticker-gear:hover{color:var(--mint)}
+  .idx-panel{position:absolute;top:34px;right:6px;z-index:120;direction:rtl;width:252px;max-height:70vh;
+    overflow-y:auto;padding:12px;border-radius:var(--r);background:var(--raised);border:1px solid var(--line2);
+    box-shadow:0 14px 40px rgba(0,0,0,0.6)}
   .idx-panel[hidden]{display:none}
-  .idx-region{font-size:9.5px;font-weight:700;color:rgba(0,240,255,0.55);text-transform:uppercase;
-    letter-spacing:0.14em;margin:10px 0 5px;font-family:var(--mono)}
+  .idx-region{font-size:10px;font-weight:600;color:var(--txt3);text-transform:uppercase;
+    letter-spacing:0.11em;margin:11px 0 5px}
   .idx-region:first-child{margin-top:0}
-  .idx-opt{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:5px;font-size:12.5px;
+  .idx-opt{display:flex;align-items:center;gap:9px;padding:6px 7px;border-radius:7px;font-size:13px;
     color:var(--txt);cursor:pointer}
-  .idx-opt:hover{background:rgba(0,240,255,0.08)}
-  .idx-opt input{accent-color:#00f0ff;cursor:pointer;margin:0}
-  .idx-msg{font-size:11px;color:var(--dn);min-height:14px;margin-top:6px;font-family:var(--mono)}
-  .idx-foot{display:flex;gap:8px;margin-top:8px;padding-top:10px;border-top:1px solid var(--line)}
-  .idx-save{flex:1;padding:7px;border-radius:7px;border:none;
-    background:linear-gradient(135deg,var(--cy),var(--mg));color:#04050a;font-size:12px;font-weight:700;
-    cursor:pointer;font-family:inherit}
-  .idx-reset{padding:7px 10px;border-radius:7px;border:1px solid rgba(0,240,255,0.24);background:transparent;
-    color:rgba(0,240,255,0.6);font-size:12px;cursor:pointer;font-family:var(--mono)}
-  .idx-reset:hover{color:var(--cy);border-color:var(--cy)}
+  .idx-opt:hover{background:#2c2d33}
+  .idx-opt input{accent-color:#7dd3a0;cursor:pointer;margin:0}
+  .idx-msg{font-size:11.5px;color:var(--dn);min-height:14px;margin-top:7px}
+  .idx-foot{display:flex;gap:8px;margin-top:9px;padding-top:11px;border-top:1px solid var(--line)}
+  .idx-save{flex:1;padding:8px;border-radius:8px;border:none;background:var(--mint);color:#0c1a12;
+    font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit}
+  .idx-reset{padding:8px 11px;border-radius:8px;border:1px solid var(--line2);background:transparent;
+    color:var(--txt2);font-size:12.5px;cursor:pointer;font-family:inherit}
+  .idx-reset:hover{color:var(--txt)}
   .ticker-scroll{display:flex;white-space:nowrap;direction:ltr;animation:tickerMove 90s linear infinite}
   @keyframes tickerMove{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
-  .ticker-item{display:inline-flex;align-items:center;gap:7px;padding:0 18px;font-size:11px;
-    border-right:1px solid rgba(0,240,255,0.13);color:var(--dim);font-family:var(--mono)}
-  .ticker-name{font-weight:500;color:rgba(0,240,255,0.72)}
-  .ticker-val{font-variant-numeric:tabular-nums;letter-spacing:0.01em;color:rgba(255,255,255,0.62)}
-  .ticker-pct{font-size:10.5px;font-weight:700}
-  .ticker-pct.up{color:var(--up);text-shadow:0 0 8px rgba(74,222,128,0.5)}
-  .ticker-pct.down{color:var(--dn);text-shadow:0 0 8px rgba(248,113,113,0.5)}
-  .ticker-loading{font-size:11px;color:rgba(0,240,255,0.28);padding:0 1.5rem;font-family:var(--mono)}
+  .ticker-item{display:inline-flex;align-items:center;gap:7px;padding:0 17px;font-size:11.5px;
+    border-right:1px solid var(--line);color:var(--txt3);font-family:var(--mono)}
+  .ticker-name{font-weight:500;color:var(--txt2)}
+  .ticker-val{font-variant-numeric:tabular-nums;color:var(--txt2)}
+  .ticker-pct{font-size:11px;font-weight:600}
+  .ticker-pct.up{color:var(--up)}
+  .ticker-pct.down{color:var(--dn)}
+  .ticker-loading{font-size:11.5px;color:var(--txt3);padding:0 1.5rem}
 
-  /* מי שביקש פחות תנועה מקבל דף סטטי — הסריקות והגלילה נעצרות */
-  @media (prefers-reduced-motion:reduce){
-    body::after{display:none}
-    .ticker-scroll{animation:none}
-    *{animation-duration:0.01ms !important;transition-duration:0.01ms !important}
-  }
-
-  /* ══ מובייל ══
-     ב-390px הלוגו והניווט לא נכנסים יחד: הכפתורים נשברו לשתי שורות
-     והתנגשו בלוגו. הפתרון — לוגו קטן יותר, כפתורים בלי שבירת שורה,
-     ורצועת ניווט שנגללת לרוחב אם עדיין צר מדי. */
+  /* ══ מובייל ══ */
   @media (max-width:600px){
     nav{padding:0 0.7rem;gap:8px}
-    .logo svg{height:23px;width:76px}
-    /* ארבעת הכפתורים + הלוגו חורגים ב-12px ב-390px, מה שחתך את "בית".
-       ריווח ופדינג צרים יותר פותרים; הגלילה נשארת כרשת ביטחון למסכים צרים עוד. */
-    .nav-actions{gap:4px;flex:1;min-width:0;justify-content:flex-end;overflow-x:auto;
+    .logo svg{height:22px;width:88px}
+    .nav-actions{gap:2px;flex:1;min-width:0;justify-content:flex-end;overflow-x:auto;
       scrollbar-width:none;-webkit-overflow-scrolling:touch}
     .nav-actions::-webkit-scrollbar{display:none}
-    .nav-btn{font-size:11px;padding:9px 7px;white-space:nowrap;flex-shrink:0}
+    .nav-btn{font-size:11.5px;padding:9px 7px;white-space:nowrap;flex-shrink:0}
     main{padding:1.5rem 1rem}
     .home-hero{padding:2rem 0 1.5rem}
-    .home-hero h1{font-size:27px}
-    .home-hero p{font-size:10.5px;letter-spacing:0.06em}
-    .search-bar{padding:5px 5px 5px 12px}
-    .search-bar input{font-size:13px}
-    .search-bar button{padding:9px 15px;font-size:13px;flex-shrink:0}
-    /* יעד מגע רחב יותר לגלגל השיניים — 30px היה קטן מדי לאצבע */
+    .home-hero h1{font-size:28px}
+    .home-hero p{font-size:12.5px}
+    .search-bar{padding:5px 5px 5px 13px}
+    .search-bar input{font-size:13.5px}
+    .search-bar button{padding:10px 15px;font-size:13px;flex-shrink:0}
     .ticker-gear{width:44px}
-    .idx-panel{width:min(250px,calc(100vw - 24px))}
-    .company-header{flex-direction:column;gap:14px}
+    .idx-panel{width:min(252px,calc(100vw - 24px))}
+    .company-header{flex-direction:column;gap:14px;padding:1.25rem}
     .company-price-value,.company-price-change{text-align:right}
-    .disclaimer{padding:1rem 1rem 2rem}
+    .company-price-value{font-size:30px}
+    .wl-spark{width:56px}
+    .wl-quote{min-width:76px}
+    .cmp-inputs input{min-width:0}
+    .cmp-vs{display:none}
+    .cmp-row>div{padding:10px 5px;font-size:12.5px}
+    .cmp-lbl{font-size:9.5px !important}
+    .disclaimer{padding:1.25rem 1rem 2rem}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .ticker-scroll{animation:none}
+    *{animation-duration:0.01ms !important;transition-duration:0.01ms !important}
   }
 </style>
 <!-- ===== PWA ===== -->
 <link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#05060a">
+<meta name="theme-color" content="#141517">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -397,22 +362,13 @@ if ('serviceWorker' in navigator) {
 <body>
 <nav>
   <div class="logo" onclick="showHome()" role="button" aria-label="StockIQ — דף הבית">
-    <svg viewBox="0 0 190 54" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <linearGradient id="lgGrad" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0" stop-color="#00f0ff"/><stop offset="1" stop-color="#ff2d95"/>
-        </linearGradient>
-        <filter id="lgGlow" x="-25%" y="-60%" width="150%" height="220%">
-          <feGaussianBlur stdDeviation="2.4" result="b"/>
-          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-        </filter>
-      </defs>
-      <text x="4" y="28" font-family="JetBrains Mono,monospace" font-size="23" font-weight="700"
-            fill="#fff" filter="url(#lgGlow)">STOCK</text>
-      <text x="92" y="28" font-family="JetBrains Mono,monospace" font-size="23" font-weight="700"
-            fill="url(#lgGrad)" filter="url(#lgGlow)">IQ</text>
-      <polyline points="4,44 46,44 56,34 68,52 78,44 144,44" fill="none" stroke="url(#lgGrad)"
-            stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" filter="url(#lgGlow)"/>
+    <svg viewBox="0 0 200 52" xmlns="http://www.w3.org/2000/svg">
+      <text x="2" y="27" font-family="Inter,sans-serif" font-size="25" font-weight="700"
+            fill="#ffffff" letter-spacing="-0.6">Stock</text>
+      <text x="72" y="27" font-family="Inter,sans-serif" font-size="25" font-weight="700"
+            fill="#7dd3a0" letter-spacing="-0.6">IQ</text>
+      <polyline points="3,42 40,42 48,33 58,49 66,42 112,42" fill="none" stroke="#7dd3a0"
+            stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
     </svg>
   </div>
   <div class="nav-actions">
@@ -469,7 +425,7 @@ if ('serviceWorker' in navigator) {
     <div style="font-size:20px;font-weight:600;margin-bottom:8px">סריקת מניות 🔍</div>
     <div style="font-size:13px;color:rgba(255,255,255,0.4);margin-bottom:12px">זיהוי אוטומטי של מניות עם איתותים טכניים</div>
     <button class="scan-btn" onclick="runScan()">סרוק את השוק</button>
-    <button class="scan-btn" style="background:transparent;border:1px solid rgba(63,169,224,0.4);color:#7fd8ff" onclick="runScan('wl')">סרוק את רשימת המעקב ⭐</button>
+    <button class="scan-btn" style="background:transparent;border:1px solid var(--line2);color:var(--txt2)" onclick="runScan('wl')">סרוק את רשימת המעקב ⭐</button>
     <div id="scanResults" style="margin-top:1.5rem">
       <div class="empty"><div class="empty-icon">🔍</div><div class="empty-title">לחץ הרץ סריקה</div></div>
     </div>
@@ -774,7 +730,7 @@ async function loadWLQuotes(list){
       price.textContent='$'+Number(d.price).toFixed(2);
       chg.textContent=(up?'▲ +':'▼ ')+d.pct+'%';
       chg.className='wl-chg '+(up?'up':'down');
-      if(spark)spark.innerHTML=sparkSvg(d.spark,'#4bb8d4');
+      if(spark)spark.innerHTML=sparkSvg(d.spark,'#8b9cc4');
     });
     _wlQuotesAt=Date.now();
   }catch(e){
@@ -904,15 +860,15 @@ function renderCompare(a,b){
   if(window.cmpChart){window.cmpChart.destroy();window.cmpChart=null;}
   if(typeof Chart==='undefined')return;
   window.cmpChart=new Chart(cv,{type:'line',data:{labels,datasets:[
-    {label:a.ticker,data:na.slice(-len),borderColor:'#00f0ff',backgroundColor:'rgba(0,240,255,0.08)',
+    {label:a.ticker,data:na.slice(-len),borderColor:'#7dd3a0',backgroundColor:'rgba(125,211,160,0.10)',
      borderWidth:2,pointRadius:0,tension:0.25,fill:true},
-    {label:b.ticker,data:nb.slice(-len),borderColor:'#ff2d95',backgroundColor:'rgba(255,45,149,0.08)',
+    {label:b.ticker,data:nb.slice(-len),borderColor:'#8b9cc4',backgroundColor:'rgba(139,156,196,0.10)',
      borderWidth:2,pointRadius:0,tension:0.25,fill:true}]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
       interaction:{mode:'index',intersect:false},
-      plugins:{legend:{labels:{color:'rgba(255,255,255,0.7)',font:{family:'JetBrains Mono'}}}},
-      scales:{x:{display:false},y:{ticks:{color:'rgba(255,255,255,0.35)',font:{family:'JetBrains Mono',size:10}},
-        grid:{color:'rgba(0,240,255,0.07)'}}}}});
+      plugins:{legend:{labels:{color:'#9b9ba6',font:{family:'Inter'}}}},
+      scales:{x:{display:false},y:{ticks:{color:'#8e8e99',font:{family:'JetBrains Mono',size:10}},
+        grid:{color:'#26272b'}}}}});
 }
 
 // ── SCANNER ──
@@ -929,13 +885,13 @@ function trendBgSvg(arr){
   return '<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">'+
     '<defs>'+
     '<linearGradient id="trendLineGrad" x1="0" y1="0" x2="1" y2="0">'+
-    '<stop offset="0%" stop-color="#0ea5e9"/>'+
-    '<stop offset="55%" stop-color="#7fd8ff"/>'+
-    '<stop offset="100%" stop-color="#a9e8ff"/>'+
+    '<stop offset="0%" stop-color="#7dd3a0"/>'+
+    '<stop offset="55%" stop-color="#6fc0d0"/>'+
+    '<stop offset="100%" stop-color="#8b9cc4"/>'+
     '</linearGradient>'+
     '<linearGradient id="trendFillGrad" x1="0" y1="0" x2="0" y2="1">'+
-    '<stop offset="0%" stop-color="#7fd8ff" stop-opacity="0.55"/>'+
-    '<stop offset="100%" stop-color="#7fd8ff" stop-opacity="0"/>'+
+    '<stop offset="0%" stop-color="#6fc0d0" stop-opacity="0.55"/>'+
+    '<stop offset="100%" stop-color="#6fc0d0" stop-opacity="0"/>'+
     '</linearGradient>'+
     '</defs>'+
     '<polygon points="'+area+'" fill="url(#trendFillGrad)"/>'+
@@ -1117,7 +1073,7 @@ function calcFV(eps,pe,price,growth,growthSource){
   else if(diff>5){label='יקרה קצת';color='#fbbf24';}
   else if(diff<-20){label='זולה מאוד';color='#4ade80';}
   else if(diff<-5){label='זולה קצת';color='#4ade80';}
-  else{label='שווי הוגן';color='#7fd8ff';}
+  else{label='שווי הוגן';color='#8b9cc4';}
   // מציינים במפורש על מה החישוב נשען — צמיחת רווחים וצמיחת הכנסות הן מדדים שונים
   const basis=(growth&&growth>0)?(growthSource==='revenue'?'לפי צמיחת הכנסות':'לפי צמיחת רווחים'):'לפי מכפיל נוכחי';
   return{fv,diff,label,color,basis};
@@ -1335,7 +1291,7 @@ async function analyze(){
     const gradeData=sg;  // אותו ניקוד בדיוק — הבאנר והאות לא יכולים לסתור
     const growthVal=(json.earnings_growth!=null?json.earnings_growth:json.revenue_growth);
     const fvData=calcFV(json.eps,json.pe_ratio,price,growthVal,json.growth_source);
-    const gc='rgba(255,255,255,0.04)',tc='rgba(255,255,255,0.25)';
+    const gc='#26272b',tc='#8e8e99';
 
     // לתצוגה: 4 האזורים החזקים ביותר, ממוינים לפי מחיר
     const topZones=[...zs].sort((a,b)=>b.touches-a.touches).slice(0,4).sort((a,b)=>b.p-a.p);
@@ -1343,7 +1299,7 @@ async function analyze(){
     document.getElementById('results').innerHTML=
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">'+
       '<span class="back-btn" onclick="showHome()">← בית</span>'+
-      '<button id="wlAddBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid rgba(63,169,224,0.3);background:rgba(63,169,224,0.1);color:#7fd8ff;cursor:pointer;font-family:inherit">⭐ הוסף למעקב</button>'+
+      '<button id="wlAddBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(125,211,160,0.12);color:#7dd3a0;cursor:pointer;font-family:inherit">⭐ הוסף למעקב</button>'+
       '</div>'+
       '<div class="company-header"><div class="trend-bg">'+trendBgSvg(d)+'</div>'+
       '<div><div class="company-name">'+esc(json.name||t)+'</div><div class="company-ticker">'+esc(t)+(json.country?' · '+esc(json.country):'')+'</div>'+
@@ -1366,15 +1322,15 @@ async function analyze(){
       (fvData?'<div style="padding:1.25rem;border-radius:14px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.09)"><div style="font-size:11px;color:rgba(255,255,255,0.3);margin-bottom:6px">FAIR VALUE</div><div style="font-size:18px;font-weight:700">$'+fvData.fv+'</div><div style="font-size:12px;font-weight:600;color:'+fvData.color+';margin-top:4px">'+fvData.label+' ('+Math.abs(fvData.diff)+'%)</div><div style="font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px">'+fvData.basis+'</div></div>':'')+
       '</div>'+
       '<div class="ai-card"><div class="ai-card-header"><span class="ai-badge">AI</span><span class="ai-card-title">ניתוח חכם — '+esc(t)+'</span></div>'+
-      '<div id="aiText" class="ai-loading"><div class="ai-spinner"><svg width="16" height="16" viewBox="0 0 100 100"><polyline points="10,80 35,55 55,65 90,15" fill="none" stroke="#7fd8ff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" pathLength="100" style="stroke-dasharray:100;stroke-dashoffset:100;animation:drawLine 1.2s ease-in-out infinite"/></svg></div>מנתח...</div></div>'+
+      '<div id="aiText" class="ai-loading"><div class="ai-spinner"><svg width="16" height="16" viewBox="0 0 100 100"><polyline points="10,80 35,55 55,65 90,15" fill="none" stroke="#7dd3a0" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" pathLength="100" style="stroke-dasharray:100;stroke-dashoffset:100;animation:drawLine 1.2s ease-in-out infinite"/></svg></div>מנתח...</div></div>'+
       '<div class="signal-banner '+sg.c+'"><div class="signal-dot dot-'+sg.c+'"></div><div><div class="signal-title '+sg.c+'">ניתוח טכני — '+esc(sg.l)+'</div><div class="signal-reasons">'+esc(sg.rs.join(' · '))+'</div></div></div>'+
-      '<div class="glass sentiment-card" id="sentCard"><div class="ai-loading"><div class="ai-spinner"><svg width="16" height="16" viewBox="0 0 100 100"><polyline points="10,80 35,55 55,65 90,15" fill="none" stroke="#7fd8ff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" pathLength="100" style="stroke-dasharray:100;stroke-dashoffset:100;animation:drawLine 1.2s ease-in-out infinite"/></svg></div>טוען נתוני אנליסטים...</div></div>'+
+      '<div class="glass sentiment-card" id="sentCard"><div class="ai-loading"><div class="ai-spinner"><svg width="16" height="16" viewBox="0 0 100 100"><polyline points="10,80 35,55 55,65 90,15" fill="none" stroke="#7dd3a0" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" pathLength="100" style="stroke-dasharray:100;stroke-dashoffset:100;animation:drawLine 1.2s ease-in-out infinite"/></svg></div>טוען נתוני אנליסטים...</div></div>'+
       '<div class="metrics">'+
       '<div class="glass metric"><div class="metric-label">RSI (14)</div><div class="metric-value" style="color:'+(rv_>70?'#f87171':rv_<30?'#4ade80':'#fff')+'">'+(rv_!=null&&!isNaN(rv_)?esc(rv_):'—')+'</div><div class="metric-sub">'+(rv_==null||isNaN(rv_)?'אין מספיק נתונים':rv_>70?'Overbought':rv_<30?'Oversold':'Neutral')+'</div></div>'+
       '<div class="glass metric"><div class="metric-label">MA9 / MA20</div><div class="metric-value" style="font-size:16px">$'+(lm9?.toFixed(2)||'—')+'</div><div class="metric-sub">/ $'+(lm20?.toFixed(2)||'—')+'</div></div>'+
       '<div class="glass metric"><div class="metric-label">MA200</div><div class="metric-value" style="font-size:16px">'+(lm200?'$'+lm200.toFixed(2):'—')+'</div></div>'+
       '</div>'+
-      '<div class="glass chart-card"><div class="chart-header"><div class="chart-header-title">גרף מחיר — 12 חודשים</div></div><div style="position:relative;height:240px"><canvas id="pc"></canvas></div></div>'+
+      '<div class="glass chart-card"><div class="chart-header"><div class="chart-header-title">גרף מחיר</div><div class="tf-group" id="tfGroup"><button class="tf-btn" data-d="21">1M</button><button class="tf-btn" data-d="63">3M</button><button class="tf-btn" data-d="126">6M</button><button class="tf-btn active" data-d="0">1Y</button></div></div><div style="position:relative;height:240px"><canvas id="pc"></canvas></div></div>'+
       '<div class="glass chart-card"><div class="chart-header"><div class="chart-header-title">RSI (14)</div></div><div style="position:relative;height:130px"><canvas id="rc"></canvas></div></div>'+
       '<div class="glass chart-card"><div class="section-title">אזורי תמיכה והתנגדות (לפי נגיעות)</div>'+
       (topZones.length?topZones.map(z=>'<div class="zone-row '+(z.t==='תמיכה'?'support':'resist')+'"><div class="zone-label">'+z.t+' '+z.str+' · '+z.touches+' נגיעות</div><div style="display:flex;align-items:center;gap:10px"><span class="zone-badge '+(z.t==='תמיכה'?'badge-support':'badge-resist')+'">'+z.t+'</span><span class="zone-price">$'+z.p+'</span></div></div>').join(''):'<div style="color:rgba(255,255,255,0.3);font-size:13px">אין מספיק נתונים לזיהוי אזורים</div>')+
@@ -1384,14 +1340,37 @@ async function analyze(){
       {label:'מחיר',data:d,borderColor:'rgba(255,255,255,0.9)',borderWidth:2,pointRadius:0,tension:0.3,spanGaps:true},
       {label:'MA9',data:m9v,borderColor:'#3b82f6',borderWidth:1.2,pointRadius:0,tension:0.3,spanGaps:true},
       {label:'MA20',data:m20v,borderColor:'#fbbf24',borderWidth:1.2,pointRadius:0,tension:0.3,spanGaps:true},
-      {label:'MA200',data:m200v,borderColor:'#7fd8ff',borderWidth:1.2,pointRadius:0,tension:0.3,spanGaps:true},
+      {label:'MA200',data:m200v,borderColor:'#8b9cc4',borderWidth:1.2,pointRadius:0,tension:0.3,spanGaps:true},
     ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
-      plugins:{legend:{display:false},tooltip:{backgroundColor:'rgba(13,5,32,0.9)',titleColor:'#fff',bodyColor:'rgba(255,255,255,0.6)',borderColor:'rgba(63,169,224,0.3)',borderWidth:1,padding:10,cornerRadius:10}},
+      plugins:{legend:{display:false},tooltip:{backgroundColor:'#1c1d21',titleColor:'#fff',bodyColor:'#9b9ba6',borderColor:'#33343a',borderWidth:1,padding:10,cornerRadius:10}},
       scales:{x:{ticks:{color:tc,maxTicksLimit:7,font:{size:11}},grid:{color:gc}},y:{ticks:{color:tc,font:{size:11},callback:v=>'$'+v.toFixed(0)},grid:{color:gc}}}}});
 
-    rc=new Chart(document.getElementById('rc'),{type:'line',data:{labels:lb,datasets:[{label:'RSI',data:rv,borderColor:'#7fd8ff',borderWidth:1.5,pointRadius:0,tension:0.4,spanGaps:true}]},
+    rc=new Chart(document.getElementById('rc'),{type:'line',data:{labels:lb,datasets:[{label:'RSI',data:rv,borderColor:'#7dd3a0',borderWidth:1.5,pointRadius:0,tension:0.4,spanGaps:true}]},
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
         scales:{x:{ticks:{color:tc,maxTicksLimit:7,font:{size:11}},grid:{color:gc}},y:{min:0,max:100,ticks:{color:tc,font:{size:11},stepSize:30},grid:{color:gc}}}}});
+
+    // ── בורר טווחים. הנתונים כבר בזיכרון (שנה של סגירות יומיות),
+    // ולכן החיתוך מקומי ולא עולה עוד בקשה. אין כאן 1D בכוונה —
+    // הנתונים יומיים, וכפתור כזה היה מבטיח משהו שאין לו כיסוי. ──
+    const tfg=document.getElementById('tfGroup');
+    if(tfg){
+      const full={lb:lb,d:d,m9:m9v,m20:m20v,m200:m200v};
+      tfg.addEventListener('click',ev=>{
+        const btn=ev.target.closest('.tf-btn');
+        if(!btn||!pc)return;
+        const n=parseInt(btn.dataset.d,10)||0;
+        tfg.querySelectorAll('.tf-btn').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+        const cut=a=>n>0?a.slice(-n):a;
+        pc.data.labels=cut(full.lb);
+        pc.data.datasets[0].data=cut(full.d);
+        pc.data.datasets[1].data=cut(full.m9);
+        pc.data.datasets[2].data=cut(full.m20);
+        // MA200 חסר משמעות בטווח קצר מ-200 ימים — מסתירים במקום להציג קו ריק
+        pc.data.datasets[3].data=(n>0&&n<200)?[]:cut(full.m200);
+        pc.update('none');
+      });
+    }
 
     const addBtn=document.getElementById('wlAddBtn');
     if(addBtn)addBtn.addEventListener('click',function(){addWL(t);this.textContent='✅ נוסף!';});
