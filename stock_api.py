@@ -100,6 +100,27 @@ def rate_ok(request: Request, bucket: str, limit: int, window: int) -> bool:
     return True
 
 
+# ── תקרה יומית גלובלית לקריאות בתשלום ל-Groq.
+# ההגבלה לפי IP חוסמת משתמש בודד, אבל היא לכל כתובת בנפרד — 12 לדקה
+# הם מעל 17,000 ליום מכתובת אחת, ומי שמגוון את גוף הבקשה עוקף גם את
+# המטמון. זו התקרה שמגבילה את החשיפה הכספית בפועל, ללא תלות במקור.
+# שים לב: המונה יושב בזיכרון ומתאפס בכל דפלוי או הערה מרדמה של Render,
+# ולכן הוא רשת ביטחון ולא תחליף לתקרת הוצאה בצד הספק.
+AI_DAILY_MAX = int(os.environ.get("AI_DAILY_MAX", "1000"))
+_ai_day = {"day": None, "count": 0}
+
+
+def ai_budget_ok() -> bool:
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    if _ai_day["day"] != today:
+        _ai_day["day"] = today
+        _ai_day["count"] = 0
+    if _ai_day["count"] >= AI_DAILY_MAX:
+        return False
+    _ai_day["count"] += 1
+    return True
+
+
 # ── ולידציית טיקר: חוסמת מחרוזות שרירותיות שרק גורמות לנו להפציץ את Yahoo ──
 TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.\-]{0,9}$")
 
@@ -590,6 +611,13 @@ async def ai_analysis(req: Request):
     cached = cache_get(ai_key, 3600)
     if cached:
         return cached
+
+    # התקרה נבדקת רק אחרי המטמון — תשובה שכבר שילמנו עליה לא נספרת שוב.
+    # בחריגה מחזירים טקסט ריק: הכרטיס נופל לניתוח המחושב מקומית והאפליקציה
+    # ממשיכה לעבוד, במקום להציג שגיאה או להמשיך לחייב.
+    if not ai_budget_ok():
+        log.warning("AI daily budget of %s reached; serving empty text", AI_DAILY_MAX)
+        return {"text": ""}
 
     prompt = (
         "אתה אנליסט מניות מנוסה. הנה נתונים עובדתיים בלבד על מניה:\n"
