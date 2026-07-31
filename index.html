@@ -140,6 +140,18 @@
   .sig-red{background:rgba(248,113,113,0.15);color:#f87171;border:1px solid rgba(248,113,113,0.2)}
   .sig-blue{background:rgba(63,169,224,0.15);color:#7fd8ff;border:1px solid rgba(63,169,224,0.2)}
   .disclaimer{max-width:960px;margin:2.5rem auto 0;padding:1rem 1.5rem 2rem;font-size:11.5px;line-height:1.7;color:rgba(255,255,255,0.32);border-top:1px solid rgba(255,255,255,0.06);text-align:center}
+
+  /* ── טיקר מדדים עולמיים ── */
+  .ticker-tape{overflow:hidden;height:30px;background:rgba(255,255,255,0.018);border-bottom:1px solid rgba(255,255,255,0.045);display:flex;align-items:center}
+  .ticker-tape:hover .ticker-scroll{animation-play-state:paused}
+  .ticker-scroll{display:flex;white-space:nowrap;direction:ltr;animation:tickerMove 90s linear infinite}
+  @keyframes tickerMove{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+  .ticker-item{display:inline-flex;align-items:center;gap:7px;padding:0 18px;font-size:11.5px;border-right:1px solid rgba(255,255,255,0.04);color:rgba(255,255,255,0.4)}
+  .ticker-name{font-weight:500;color:rgba(255,255,255,0.6)}
+  .ticker-val{font-variant-numeric:tabular-nums;letter-spacing:0.01em}
+  .ticker-pct{font-size:11px;font-weight:600}
+  .ticker-pct.up{color:#4ade80}.ticker-pct.down{color:#f87171}
+  .ticker-loading{font-size:11px;color:rgba(255,255,255,0.2);padding:0 1.5rem}
 </style>
 <!-- ===== PWA ===== -->
 <link rel="manifest" href="manifest.json">
@@ -171,6 +183,14 @@ if ('serviceWorker' in navigator) {
     <button class="nav-btn" id="btnScan" onclick="showScanner()">סריקת מניות 🔍</button>
   </div>
 </nav>
+
+<!-- ── טיקר מדדים עולמיים ── -->
+<div class="ticker-tape" id="tickerTape">
+  <div class="ticker-scroll" id="tickerScroll">
+    <span class="ticker-loading">טוען מדדים...</span>
+  </div>
+</div>
+
 <main id="main">
   <div id="homePage">
     <div class="home-hero">
@@ -221,6 +241,31 @@ if ('serviceWorker' in navigator) {
 const API='https://stock-app-1-dbrs.onrender.com';
 let pc=null,rc=null,currentTicker=null;
 
+// ── טיקר מדדים עולמיים ──
+let _indicesLoaded=false;
+async function loadIndices(){
+  if(_indicesLoaded)return;
+  try{
+    const data=await fetch(API+'/indices').then(r=>r.json());
+    if(!Array.isArray(data)||data.length===0)return;
+    const items=data.map(d=>{
+      const up=d.pct>=0;
+      const sign=up?'+':'';
+      return`<span class="ticker-item"><span class="ticker-name">${esc(d.name)}</span><span class="ticker-val">${Number(d.price).toLocaleString('en-US',{maximumFractionDigits:2})}</span><span class="ticker-pct ${up?'up':'down'}">${sign}${d.pct}%</span></span>`;
+    }).join('');
+    const scroll=document.getElementById('tickerScroll');
+    // כפול — כדי שהלולאה תהיה חלקה (מחצית נעלמת, מחצית ממשיכה)
+    scroll.innerHTML=items+items;
+    // קצב: ~70px לשנייה — מהיר מספיק שיהיה מוחש, איטי מספיק לקריאה
+    const itemWidth=scroll.scrollWidth/2;
+    const dur=Math.round(itemWidth/70);
+    scroll.style.animationDuration=dur+'s';
+    _indicesLoaded=true;
+    // מרענן כל 5 דקות בשקט
+    setTimeout(()=>{_indicesLoaded=false;loadIndices();},5*60*1000);
+  }catch(e){/* שקט — הטיקר הוא דקורטיבי */}
+}
+
 // ── בריחת תווים לכל טקסט שמגיע מבחוץ (Yahoo / Finnhub) ולפני שרשור ל-HTML.
 // שם חברה או כותרת עם גרש או תו < שוברים אחרת את המבנה ומאפשרים הזרקה. ──
 function esc(s){
@@ -246,7 +291,7 @@ function setPage(id){
   document.getElementById(id).style.display='block';
   ['btnHome','btnAnalyze','btnWatchlist','btnScan'].forEach(b=>document.getElementById(b).classList.remove('active'));
 }
-function showHome(){setPage('homePage');document.getElementById('btnHome').classList.add('active');loadNews();timers.news=setInterval(loadNews,5*60*1000);}
+function showHome(){setPage('homePage');document.getElementById('btnHome').classList.add('active');loadNews();timers.news=setInterval(loadNews,5*60*1000);loadIndices();}
 function showAnalyze(){
   setPage('analyzePage');
   document.getElementById('btnAnalyze').classList.add('active');
@@ -261,7 +306,10 @@ function loadHome(){const t=document.getElementById('homeInput').value.trim().to
 
 // ── כשהטאב ברקע אין טעם להמשיך לדגום; חוזרים לדגום כשחוזרים אליו ──
 document.addEventListener('visibilitychange',()=>{
-  if(document.hidden){stopAllTimers();return;}
+  if(document.hidden){stopAllTimers();
+    const s=document.getElementById('tickerScroll');if(s)s.style.animationPlayState='paused';
+    return;}
+  const s=document.getElementById('tickerScroll');if(s)s.style.animationPlayState='running';
   if(document.getElementById('analyzePage').style.display!=='none'&&currentTicker){
     stopTimer('price');updatePrice();timers.price=setInterval(updatePrice,30000);
   }else if(document.getElementById('homePage').style.display!=='none'){
@@ -826,6 +874,7 @@ async function analyze(){
 
 // Init
 showHome();
+loadIndices(); // הטיקר טוען מיד — מוצג בכל דף
 </script>
 </body>
 </html>
