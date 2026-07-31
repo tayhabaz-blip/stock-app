@@ -359,6 +359,89 @@ def get_indices(request: Request, ids: str = ""):
     return results
 
 
+# ── ציטוטים מרוכזים לרשימת המעקב.
+# בקשה אחת לכל הרשימה במקום אחת לכל מניה: עשרה טיקרים היו עשר
+# משיכות מיאהו ופגיעה ישירה בזמן הטעינה ובמכסה. ──
+MAX_QUOTES = 30
+
+
+def _frame_for(bulk, sym):
+    """שולף את הטבלה של טיקר בודד מתוך המשיכה המרוכזת.
+    כשמושכים טיקר יחיד yfinance מחזיר עמודות שטוחות ולא MultiIndex,
+    ולכן צריך לטפל בשני המקרים."""
+    try:
+        cols = bulk.columns
+        if hasattr(cols, "levels"):
+            if sym not in cols.levels[0]:
+                return None
+            df = bulk[sym]
+        else:
+            df = bulk
+        df = df.dropna(subset=["Close"])
+        return df if len(df) >= 2 else None
+    except Exception:
+        return None
+
+
+@app.get("/quotes")
+def get_quotes(request: Request, tickers: str = ""):
+    if not rate_ok(request, "quotes", 30, 60):
+        return err(429, "יותר מדי בקשות — נסה שוב בעוד רגע")
+    syms = []
+    for raw in tickers.split(","):
+        t = norm_ticker(raw)
+        if t and t not in syms:
+            syms.append(t)
+        if len(syms) >= MAX_QUOTES:
+            break
+    if not syms:
+        return []
+    key = "quotes:" + ",".join(sorted(syms))
+    cached = cache_get(key, 60)
+    if cached is not None:
+        return cached
+    try:
+        bulk = yf.download(
+            tickers=" ".join(syms),
+            period="3mo",
+            interval="1d",
+            group_by="ticker",
+            auto_adjust=True,
+            threads=True,
+            progress=False,
+            session=session,
+        )
+    except Exception:
+        log.exception("quotes bulk download failed")
+        return err(502, "שגיאה בשליפת המחירים")
+    if bulk is None or len(bulk) == 0:
+        return []
+    out = []
+    for sym in syms:
+        df = _frame_for(bulk, sym)
+        if df is None:
+            continue
+        try:
+            closes = [clean(v) for v in df["Close"].tolist()]
+            closes = [c for c in closes if c is not None]
+            if len(closes) < 2:
+                continue
+            price, prev = closes[-1], closes[-2]
+            out.append({
+                "ticker": sym,
+                "price": price,
+                "prev": prev,
+                "pct": round((price - prev) / prev * 100, 2) if prev else 0.0,
+                # 30 נקודות אחרונות — מספיק לגרף מיני, וזול להעביר
+                "spark": [round(c, 2) for c in closes[-30:]],
+            })
+        except Exception:
+            log.debug("quotes: skip %s", sym)
+    if out:
+        cache_set(key, out)
+    return out
+
+
 CORE_UNIVERSE = [
     "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "AMD", "NFLX",
     "SOFI", "PLTR", "COIN", "HOOD", "SQ", "PYPL", "AFRM", "NU", "UBER", "ABNB",
