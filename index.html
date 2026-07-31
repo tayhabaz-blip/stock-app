@@ -56,8 +56,8 @@
   .search-bar{display:flex;gap:10px;background:rgba(0,240,255,0.05);border:1px solid rgba(0,240,255,0.42);
     border-radius:12px;padding:6px 6px 6px 16px;box-shadow:inset 0 0 24px rgba(0,240,255,0.09)}
   .search-bar:focus-within{border-color:var(--cy);box-shadow:0 0 22px rgba(0,240,255,0.28),inset 0 0 24px rgba(0,240,255,0.12)}
-  .search-bar input{flex:1;font-size:15px;font-family:var(--mono);background:transparent;border:none;
-    outline:none;color:#9ffcff;text-transform:uppercase;letter-spacing:0.04em}
+  .search-bar input{flex:1;min-width:0;font-size:15px;font-family:var(--mono);background:transparent;border:none;
+    outline:none;color:#9ffcff;text-transform:uppercase;letter-spacing:0.04em;text-overflow:ellipsis}
   .search-bar input::placeholder{color:rgba(0,240,255,0.3);text-transform:none;letter-spacing:0}
   /* Chrome צובע שדה שמולא אוטומטית בלבן ומוחק את העיצוב.
      box-shadow פנימי הוא הדרך היחידה לעקוף — background נדרס. */
@@ -295,6 +295,34 @@
     body::after{display:none}
     .ticker-scroll{animation:none}
     *{animation-duration:0.01ms !important;transition-duration:0.01ms !important}
+  }
+
+  /* ══ מובייל ══
+     ב-390px הלוגו והניווט לא נכנסים יחד: הכפתורים נשברו לשתי שורות
+     והתנגשו בלוגו. הפתרון — לוגו קטן יותר, כפתורים בלי שבירת שורה,
+     ורצועת ניווט שנגללת לרוחב אם עדיין צר מדי. */
+  @media (max-width:600px){
+    nav{padding:0 0.7rem;gap:8px}
+    .logo svg{height:23px;width:76px}
+    /* ארבעת הכפתורים + הלוגו חורגים ב-12px ב-390px, מה שחתך את "בית".
+       ריווח ופדינג צרים יותר פותרים; הגלילה נשארת כרשת ביטחון למסכים צרים עוד. */
+    .nav-actions{gap:4px;flex:1;min-width:0;justify-content:flex-end;overflow-x:auto;
+      scrollbar-width:none;-webkit-overflow-scrolling:touch}
+    .nav-actions::-webkit-scrollbar{display:none}
+    .nav-btn{font-size:11px;padding:9px 7px;white-space:nowrap;flex-shrink:0}
+    main{padding:1.5rem 1rem}
+    .home-hero{padding:2rem 0 1.5rem}
+    .home-hero h1{font-size:27px}
+    .home-hero p{font-size:10.5px;letter-spacing:0.06em}
+    .search-bar{padding:5px 5px 5px 12px}
+    .search-bar input{font-size:13px}
+    .search-bar button{padding:9px 15px;font-size:13px;flex-shrink:0}
+    /* יעד מגע רחב יותר לגלגל השיניים — 30px היה קטן מדי לאצבע */
+    .ticker-gear{width:44px}
+    .idx-panel{width:min(250px,calc(100vw - 24px))}
+    .company-header{flex-direction:column;gap:14px}
+    .company-price-value,.company-price-change{text-align:right}
+    .disclaimer{padding:1rem 1rem 2rem}
   }
 </style>
 <!-- ===== PWA ===== -->
