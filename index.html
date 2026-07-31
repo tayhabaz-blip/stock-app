@@ -4,7 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>StockIQ — אנליזר מניות</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<link rel="preconnect" href="https://stock-app-1-dbrs.onrender.com" crossorigin>
+<link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
 
@@ -527,7 +530,10 @@ function toggleIdxPanel(){
   else panel.hidden=true;
 }
 
-let _indicesLoaded=false,_indicesHTML='';
+// _indicesInFlight נחוץ בנוסף ל-_indicesLoaded: showHome() ושורת ה-Init
+// שתיהן קוראות ל-loadIndices, ודגל שנקבע רק אחרי ה-fetch לא חוסם
+// שתי קריאות מקבילות — מה שגרם לשתי בקשות /indices בכל טעינה.
+let _indicesLoaded=false,_indicesHTML='',_indicesInFlight=false;
 function renderIndices(){
   const scroll=document.getElementById('tickerScroll');
   if(!scroll||!_indicesHTML)return;
@@ -544,7 +550,8 @@ function renderIndices(){
   scroll.style.animationDuration=dur+'s';
 }
 async function loadIndices(){
-  if(_indicesLoaded)return;
+  if(_indicesLoaded||_indicesInFlight)return;
+  _indicesInFlight=true;
   try{
     const prefs=loadIdxPrefs();
     const data=await fetch(API+'/indices?ids='+encodeURIComponent(prefs.join(','))).then(r=>r.json());
@@ -562,6 +569,7 @@ async function loadIndices(){
     // מרענן כל 5 דקות בשקט
     setTimeout(()=>{_indicesLoaded=false;loadIndices();},5*60*1000);
   }catch(e){/* שקט — הטיקר הוא דקורטיבי */}
+  finally{_indicesInFlight=false;}
 }
 // שינוי רוחב חלון משנה כמה עותקים צריך — מחשבים מחדש בהשהיה קלה
 let _idxResize=null;
@@ -627,8 +635,15 @@ document.addEventListener('visibilitychange',()=>{
 async function loadNews(){
   const box=document.getElementById('newsBox');
   box.innerHTML='<div class="loading-state">טוען חדשות...</div>';
+  // אותו סיפור כמו בניתוח: אחרי שינה של Render הטעינה הראשונה איטית,
+  // ובלי חיווי זה נראה כאילו האתר תקוע.
+  const slowNews=setTimeout(()=>{
+    if(box.querySelector('.loading-state'))
+      box.innerHTML='<div class="loading-state">מעיר את השרת, זה עשוי לקחת עד דקה...</div>';
+  },6000);
   try{
     const res=await fetch(API+'/news');
+    clearTimeout(slowNews);
     const data=await res.json();
     const items=(data.news||[]).slice(0,8);
     if(!items.length){box.innerHTML='<div class="loading-state">אין חדשות כרגע</div>';return;}
@@ -649,7 +664,7 @@ async function loadNews(){
       else card.style.cursor='default';
       box.append(card);
     });
-  }catch(e){box.innerHTML='<div class="loading-state">לא ניתן לטעון חדשות</div>';}
+  }catch(e){clearTimeout(slowNews);box.innerHTML='<div class="loading-state">לא ניתן לטעון חדשות</div>';}
 }
 
 // ── WATCHLIST ──
@@ -1220,6 +1235,10 @@ async function analyze(){
       '<div class="error-state">לא ניתן לטעון את '+esc(t)+'. ודא שהטיקר נכון ונסה שוב.</div>';
   }
 }
+
+// ── חימום השרת: בקשה זולה לשורש כבר בטעינה, כדי שההתעוררות של
+// Render תתחיל לפני שהמשתמש מבקש משהו. נכשלת בשקט — היא לא קריטית. ──
+fetch(API+'/',{cache:'no-store'}).catch(()=>{});
 
 // Init
 showHome();
