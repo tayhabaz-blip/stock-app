@@ -288,43 +288,73 @@ def get_price(ticker: str, request: Request):
         return err(502, "שגיאה בשליפת המחיר")
 
 
-# ── מדדים עולמיים — מוצגים בטיקר ברקע הפרונטאנד ──
-WORLD_INDICES = [
-    {"sym": "^GSPC",     "name": "S&P 500"},
-    {"sym": "^IXIC",     "name": "NASDAQ"},
-    {"sym": "^DJI",      "name": "Dow Jones"},
-    {"sym": "^GDAXI",    "name": "DAX"},
-    {"sym": "^FTSE",     "name": "FTSE 100"},
-    {"sym": "^N225",     "name": "Nikkei"},
-    {"sym": "^HSI",      "name": "Hang Seng"},
-    {"sym": "^FCHI",     "name": "CAC 40"},
-    {"sym": "^STOXX50E", "name": "Euro Stoxx"},
-    {"sym": "^RUT",      "name": "Russell 2000"},
-]
+# ── מדדים עולמיים. הלקוח שולח ?ids= ומקבל רק את מה שהוא באמת מציג,
+# כך שהעלות נגזרת מהבחירה של המשתמש ולא מגודל הרשימה כאן. שמות התצוגה
+# יושבים בפרונטאנד (הם בעברית ועניין של הצגה) — כאן רק המיפוי לסימבול. ──
+WORLD_INDICES = {
+    # ארה"ב
+    "sp500": "^GSPC",
+    "nasdaq": "^IXIC",
+    "dow": "^DJI",
+    "russell": "^RUT",
+    "vix": "^VIX",
+    # אירופה
+    "dax": "^GDAXI",
+    "ftse": "^FTSE",
+    "cac": "^FCHI",
+    "stoxx": "^STOXX50E",
+    "ibex": "^IBEX",
+    "smi": "^SSMI",
+    # אסיה ופסיפיק
+    "nikkei": "^N225",
+    "hangseng": "^HSI",
+    "shanghai": "000001.SS",
+    "kospi": "^KS11",
+    "sensex": "^BSESN",
+    "asx": "^AXJO",
+    # ישראל
+    "ta35": "^TA35.TA",
+    "ta125": "^TA125.TA",
+}
+DEFAULT_INDICES = ["sp500", "nasdaq", "dow", "russell", "vix"]
+MAX_INDICES = 12
 
 
 @app.get("/indices")
-def get_indices(request: Request):
-    if not rate_ok(request, "indices", 10, 60):
+def get_indices(request: Request, ids: str = ""):
+    if not rate_ok(request, "indices", 20, 60):
         return err(429, "יותר מדי בקשות")
-    cached = cache_get("__indices__", 60)  # 60 שניות
-    if cached:
+    # מסננים מול הרשימה המוכרת — כך ש-?ids= לא יכול להפוך את השרת
+    # למשיכת סימבולים שרירותיים מיאהו מטעם מי שקורא לנו.
+    wanted = []
+    for raw in ids.split(","):
+        iid = raw.strip().lower()
+        if iid in WORLD_INDICES and iid not in wanted:
+            wanted.append(iid)
+        if len(wanted) >= MAX_INDICES:
+            break
+    if not wanted:
+        wanted = list(DEFAULT_INDICES)
+    # מפתח מטמון לפי הקבוצה המבוקשת, אחרת בחירות שונות דורסות זו את זו
+    key = "indices:" + ",".join(sorted(wanted))
+    cached = cache_get(key, 60)
+    if cached is not None:
         return cached
     results = []
-    for idx in WORLD_INDICES:
+    for iid in wanted:
         try:
-            t = yf.Ticker(idx["sym"], session=session)
+            t = yf.Ticker(WORLD_INDICES[iid], session=session)
             fi = t.fast_info
             price = clean(fi["last_price"])
             prev = clean(fi["previous_close"])
             if price is None:
                 continue
             pct = round((price - prev) / prev * 100, 2) if prev else 0.0
-            results.append({"name": idx["name"], "price": price, "pct": pct})
+            results.append({"id": iid, "price": price, "pct": pct})
         except Exception:
-            log.debug("indices: skip %s", idx["sym"])
+            log.debug("indices: skip %s", iid)
     if results:
-        cache_set("__indices__", results)
+        cache_set(key, results)
     return results
 
 
