@@ -288,6 +288,46 @@ def get_price(ticker: str, request: Request):
         return err(502, "שגיאה בשליפת המחיר")
 
 
+# ── מדדים עולמיים — מוצגים בטיקר ברקע הפרונטאנד ──
+WORLD_INDICES = [
+    {"sym": "^GSPC",     "name": "S&P 500"},
+    {"sym": "^IXIC",     "name": "NASDAQ"},
+    {"sym": "^DJI",      "name": "Dow Jones"},
+    {"sym": "^GDAXI",    "name": "DAX"},
+    {"sym": "^FTSE",     "name": "FTSE 100"},
+    {"sym": "^N225",     "name": "Nikkei"},
+    {"sym": "^HSI",      "name": "Hang Seng"},
+    {"sym": "^FCHI",     "name": "CAC 40"},
+    {"sym": "^STOXX50E", "name": "Euro Stoxx"},
+    {"sym": "^RUT",      "name": "Russell 2000"},
+]
+
+
+@app.get("/indices")
+def get_indices(request: Request):
+    if not rate_ok(request, "indices", 10, 60):
+        return err(429, "יותר מדי בקשות")
+    cached = cache_get("__indices__", 60)  # 60 שניות
+    if cached:
+        return cached
+    results = []
+    for idx in WORLD_INDICES:
+        try:
+            t = yf.Ticker(idx["sym"], session=session)
+            fi = t.fast_info
+            price = clean(fi["last_price"])
+            prev = clean(fi["previous_close"])
+            if price is None:
+                continue
+            pct = round((price - prev) / prev * 100, 2) if prev else 0.0
+            results.append({"name": idx["name"], "price": price, "pct": pct})
+        except Exception:
+            log.debug("indices: skip %s", idx["sym"])
+    if results:
+        cache_set("__indices__", results)
+    return results
+
+
 CORE_UNIVERSE = [
     "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "AMD", "NFLX",
     "SOFI", "PLTR", "COIN", "HOOD", "SQ", "PYPL", "AFRM", "NU", "UBER", "ABNB",
