@@ -22,11 +22,28 @@
   :root{
     --bg:#141517; --surface:#18191c; --raised:#1c1d21; --sunken:#111214;
     --line:#26272b; --line2:#33343a;
-    --txt:#ededf0; --txt2:#9b9ba6; --txt3:#8e8e99;
-    --mint:#7dd3a0; --mint-dim:#5fb083;
+    --txt:#ffffff; --strong:#ffffff; --txt2:#b4b4be; --txt3:#9b9ba6;
+    --accent:#7dd3a0; --accent-hover:#95dfb3; --accent-fg:#0c1a12; --accent-soft:rgba(125,211,160,0.12);
     --up:#4ade80; --dn:#f87171; --warn:#fbbf24;
+    --on-up:#052e16; --on-dn:#450a0a; --neutral-bar:#2c2d33;
+    --alt:#8b9cc4; --lime:#a3e635; --ma9:#60a5fa; --ma20:#fbbf24; --trend-op:0.28;
+    --up-soft:rgba(74,222,128,0.13); --dn-soft:rgba(248,113,113,0.13);
     --mono:'JetBrains Mono',ui-monospace,monospace;
     --r:12px;
+    color-scheme:dark;
+  }
+  /* ── ערכת יום. הצבעים נבחרו כך שגם הטקסט המשני עובר WCAG AA על רקע בהיר:
+     ירוק #4ade80 נותן 1.9:1 על לבן ולכן הוחלף ב-#15803d, ואדום ב-#b91c1c. ── */
+  [data-theme="light"]{
+    --bg:#fbfbfd; --surface:#ffffff; --raised:#f4f4f7; --sunken:#f1f1f5;
+    --line:#e8e8ed; --line2:#d5d5de;
+    --txt:#0a0a0b; --strong:#0a0a0b; --txt2:#6b6b76; --txt3:#6b6b76;
+    --accent:#4f46e5; --accent-hover:#4338ca; --accent-fg:#ffffff; --accent-soft:rgba(79,70,229,0.1);
+    --up:#15803d; --dn:#b91c1c; --warn:#b45309;
+    --on-up:#ffffff; --on-dn:#ffffff; --neutral-bar:#e2e2e9;
+    --alt:#5b6b96; --lime:#4d7c0f; --ma9:#2563eb; --ma20:#b45309; --trend-op:0.16;
+    --up-soft:rgba(21,128,61,0.1); --dn-soft:rgba(185,28,28,0.1);
+    color-scheme:light;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--txt);
@@ -38,19 +55,23 @@
   .logo{cursor:pointer;display:flex;align-items:center;line-height:0}
   /* direction:ltr חובה — הדף RTL וה-SVG יורש את זה, ובלעדיו
      הטקסט הלטיני בלוגו נפרס הפוך ונחתך מחוץ ל-viewBox */
-  .logo svg{height:26px;width:104px;display:block;direction:ltr;flex-shrink:0}
+  .logo svg{height:26px;width:104px;display:block;direction:ltr;flex-shrink:0;color:var(--strong)}
   .logo svg text{direction:ltr;unicode-bidi:isolate}
-  .nav-actions{display:flex;gap:3px}
+  .nav-actions{display:flex;gap:3px;align-items:center}
+  .theme-btn{width:32px;height:32px;flex-shrink:0;border-radius:8px;border:1px solid var(--line);
+    background:transparent;color:var(--txt2);cursor:pointer;font-size:14px;line-height:1;
+    display:flex;align-items:center;justify-content:center;transition:all 0.15s;margin-inline-start:4px}
+  .theme-btn:hover{color:var(--txt);background:var(--raised);border-color:var(--line2)}
   .nav-btn{font-size:12.5px;padding:7px 12px;border-radius:8px;border:1px solid transparent;
     background:transparent;cursor:pointer;font-family:inherit;color:var(--txt2);transition:all 0.15s}
   .nav-btn:hover{color:var(--txt);background:#212228}
-  .nav-btn.active{background:#2c2d33;color:#fff;font-weight:600}
+  .nav-btn.active{background:var(--neutral-bar);color:var(--strong);font-weight:600}
   main{max-width:940px;margin:0 auto;padding:2.25rem 1.5rem}
   .glass{background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
 
   .search-bar{display:flex;gap:8px;background:var(--surface);border:1px solid var(--line2);
     border-radius:var(--r);padding:6px 6px 6px 16px;transition:border-color 0.15s}
-  .search-bar:focus-within{border-color:var(--mint)}
+  .search-bar:focus-within{border-color:var(--accent)}
   .search-bar input{flex:1;min-width:0;font-size:15px;font-family:var(--mono);background:transparent;
     border:none;outline:none;color:var(--txt);text-transform:uppercase;text-overflow:ellipsis}
   .search-bar input::placeholder{color:var(--txt3);text-transform:none;font-family:'Inter',sans-serif}
@@ -59,19 +80,19 @@
     -webkit-text-fill-color:var(--txt);-webkit-box-shadow:0 0 0 1000px var(--surface) inset;
     box-shadow:0 0 0 1000px var(--surface) inset;caret-color:var(--txt);
     transition:background-color 9999s ease-out 0s}
-  .search-bar button{padding:10px 20px;border-radius:9px;border:none;background:var(--mint);
-    color:#0c1a12;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:background 0.15s}
-  .search-bar button:hover{background:#95dfb3}
+  .search-bar button{padding:10px 20px;border-radius:9px;border:none;background:var(--accent);
+    color:var(--accent-fg);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:background 0.15s}
+  .search-bar button:hover{background:var(--accent-hover)}
 
   .home-hero{text-align:center;padding:3.25rem 0 2.25rem}
-  .home-hero h1{font-size:40px;font-weight:700;color:#fff;margin-bottom:12px;letter-spacing:-0.028em}
+  .home-hero h1{font-size:40px;font-weight:700;color:var(--strong);margin-bottom:12px;letter-spacing:-0.028em}
   .home-hero p{font-size:14px;color:var(--txt2);margin-bottom:2rem}
 
   .news-title{font-size:11px;font-weight:600;color:var(--txt3);text-transform:uppercase;
     letter-spacing:0.12em;margin-bottom:12px}
   .news-card{display:flex;align-items:flex-start;gap:12px;padding:13px 16px;cursor:pointer;transition:background 0.15s}
   .news-card:hover{background:var(--raised)}
-  .news-dot{width:5px;height:5px;border-radius:50%;background:var(--mint);flex-shrink:0;margin-top:7px}
+  .news-dot{width:5px;height:5px;border-radius:50%;background:var(--accent);flex-shrink:0;margin-top:7px}
   .news-card-content{flex:1;min-width:0}
   .news-card-title{font-size:13.5px;color:var(--txt);line-height:1.6;margin-bottom:3px}
   .news-card-meta{font-size:11.5px;color:var(--txt3)}
@@ -79,29 +100,29 @@
 
   .empty{text-align:center;padding:4rem 0}
   .empty-icon{font-size:42px;margin-bottom:1rem;opacity:0.75}
-  .empty-title{font-size:19px;font-weight:600;color:#fff;margin-bottom:8px}
+  .empty-title{font-size:19px;font-weight:600;color:var(--strong);margin-bottom:8px}
   .empty-sub{font-size:13.5px;color:var(--txt2)}
   .back-btn{font-size:13px;color:var(--txt2);cursor:pointer;margin-bottom:1.5rem;
     display:inline-flex;align-items:center;gap:5px}
-  .back-btn:hover{color:var(--mint)}
+  .back-btn:hover{color:var(--accent)}
 
   .company-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:1.25rem;
     position:relative;overflow:hidden;background:var(--surface);border:1px solid var(--line);
     border-radius:16px;padding:1.6rem}
   .company-header>div{position:relative;z-index:1}
-  .company-header>.trend-bg{position:absolute;inset:0;opacity:0.28;pointer-events:none;z-index:0;
+  .company-header>.trend-bg{position:absolute;inset:0;opacity:var(--trend-op);pointer-events:none;z-index:0;
     width:100%;height:100%;border-radius:16px;overflow:hidden}
-  .company-name{font-size:21px;font-weight:600;color:#fff;margin-bottom:4px;letter-spacing:-0.015em}
+  .company-name{font-size:21px;font-weight:600;color:var(--strong);margin-bottom:4px;letter-spacing:-0.015em}
   .company-ticker{font-size:12px;color:var(--txt2);margin-bottom:10px;font-family:var(--mono)}
   .company-tags{display:flex;gap:7px;flex-wrap:wrap}
   .tag{font-size:11px;font-weight:500;padding:4px 10px;border-radius:6px;background:var(--raised);
     color:var(--txt2);border:1px solid var(--line)}
   .company-price-value{font-size:34px;font-weight:700;text-align:left;font-family:var(--mono);
-    color:#fff;letter-spacing:-0.03em}
+    color:var(--strong);letter-spacing:-0.03em}
   .company-price-change{font-size:14px;font-weight:600;margin-top:4px;text-align:left;font-family:var(--mono)}
   .ah-badge{font-size:11.5px;margin-top:6px;padding:4px 10px;border-radius:6px;display:inline-block;font-family:var(--mono)}
-  .ah-badge.up{background:rgba(74,222,128,0.12);color:var(--up)}
-  .ah-badge.down{background:rgba(248,113,113,0.12);color:var(--dn)}
+  .ah-badge.up{background:var(--up-soft);color:var(--up)}
+  .ah-badge.down{background:var(--dn-soft);color:var(--dn)}
   .up{color:var(--up)}
   .down{color:var(--dn)}
 
@@ -109,11 +130,11 @@
     margin-bottom:1.25rem;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
   .fund-card{padding:1rem;background:var(--surface)}
   .fund-label{font-size:10.5px;color:var(--txt3);text-transform:uppercase;letter-spacing:0.09em;margin-bottom:6px}
-  .fund-value{font-size:16px;font-weight:600;color:#fff;font-family:var(--mono);letter-spacing:-0.01em}
+  .fund-value{font-size:16px;font-weight:600;color:var(--strong);font-family:var(--mono);letter-spacing:-0.01em}
   .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:1.25rem}
   .metric{padding:1.2rem;border-radius:var(--r);background:var(--surface);border:1px solid var(--line)}
   .metric-label{font-size:10.5px;color:var(--txt3);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:9px}
-  .metric-value{font-size:21px;font-weight:600;color:#fff;line-height:1;font-family:var(--mono);letter-spacing:-0.02em}
+  .metric-value{font-size:21px;font-weight:600;color:var(--strong);line-height:1;font-family:var(--mono);letter-spacing:-0.02em}
   .metric-sub{font-size:11.5px;color:var(--txt2);margin-top:6px;font-family:var(--mono)}
 
   .signal-banner{display:flex;align-items:center;gap:13px;padding:1.15rem 1.35rem;border-radius:var(--r);
@@ -129,9 +150,9 @@
 
   .ai-card{border-radius:var(--r);padding:1.4rem;margin-bottom:1.25rem;position:relative;overflow:hidden;
     background:var(--surface);border:1px solid var(--line)}
-  .ai-card::before{content:'';position:absolute;top:0;inset-inline-start:0;width:3px;height:100%;background:var(--mint)}
-  .ai-badge{font-size:10px;font-weight:600;padding:3px 9px;border-radius:5px;background:var(--mint);
-    color:#0c1a12;letter-spacing:0.04em}
+  .ai-card::before{content:'';position:absolute;top:0;inset-inline-start:0;width:3px;height:100%;background:var(--accent)}
+  .ai-badge{font-size:10px;font-weight:600;padding:3px 9px;border-radius:5px;background:var(--accent);
+    color:var(--accent-fg);letter-spacing:0.04em}
   .ai-card-header{display:flex;align-items:center;gap:10px;margin-bottom:0.9rem}
   .ai-card-title{font-size:12.5px;font-weight:600;color:var(--txt2)}
   .ai-text{font-size:14px;line-height:1.85;color:var(--txt);white-space:pre-line}
@@ -155,11 +176,11 @@
   .sentiment-analysts{font-size:11.5px;color:var(--txt3);font-family:var(--mono)}
   .sentiment-bar-wrap{display:flex;border-radius:6px;overflow:hidden;height:26px;margin-bottom:10px}
   .sentiment-bar-bull{background:var(--up);display:flex;align-items:center;justify-content:center;
-    font-size:11.5px;font-weight:700;color:#052e16;font-family:var(--mono)}
-  .sentiment-bar-neutral{background:#2c2d33;display:flex;align-items:center;justify-content:center;
+    font-size:11.5px;font-weight:700;color:var(--on-up);font-family:var(--mono)}
+  .sentiment-bar-neutral{background:var(--neutral-bar);display:flex;align-items:center;justify-content:center;
     font-size:11.5px;color:var(--txt2);font-family:var(--mono)}
   .sentiment-bar-bear{background:var(--dn);display:flex;align-items:center;justify-content:center;
-    font-size:11.5px;font-weight:700;color:#450a0a;font-family:var(--mono)}
+    font-size:11.5px;font-weight:700;color:var(--on-dn);font-family:var(--mono)}
   .sentiment-labels{display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:1rem;font-family:var(--mono)}
   .sentiment-label-bull{color:var(--up);font-weight:600}
   .sentiment-label-bear{color:var(--dn);font-weight:600}
@@ -180,7 +201,7 @@
   .tf-btn{font-size:11px;padding:5px 11px;border-radius:7px;border:1px solid var(--line);
     background:transparent;color:var(--txt2);cursor:pointer;font-family:var(--mono);transition:all 0.15s}
   .tf-btn:hover{color:var(--txt);border-color:var(--line2)}
-  .tf-btn.active{background:#2c2d33;color:#fff;border-color:var(--line2);font-weight:600}
+  .tf-btn.active{background:var(--neutral-bar);color:var(--strong);border-color:var(--line2);font-weight:600}
   .zone-row{display:flex;justify-content:space-between;align-items:center;padding:11px 14px;
     border-radius:10px;margin-bottom:8px;background:var(--raised);border:1px solid var(--line);
     border-inline-start-width:3px}
@@ -189,8 +210,8 @@
   .zone-label{font-size:13px;color:var(--txt2)}
   .zone-price{font-size:14px;font-weight:600;font-family:var(--mono)}
   .zone-badge{font-size:11px;font-weight:500;padding:3px 9px;border-radius:5px;font-family:var(--mono)}
-  .badge-support{background:rgba(74,222,128,0.13);color:var(--up)}
-  .badge-resist{background:rgba(248,113,113,0.13);color:var(--dn)}
+  .badge-support{background:var(--up-soft);color:var(--up)}
+  .badge-resist{background:var(--dn-soft);color:var(--dn)}
   .section-title{font-size:11px;font-weight:600;color:var(--txt3);text-transform:uppercase;
     letter-spacing:0.12em;margin-bottom:12px}
   .divider{height:1px;background:var(--line);margin:1.5rem 0}
@@ -202,39 +223,39 @@
     cursor:pointer;transition:background 0.15s;border-bottom:1px solid var(--line);gap:12px}
   .watchlist-item:last-child{border-bottom:none}
   .watchlist-item:hover{background:var(--raised)}
-  .wl-ticker{font-size:15px;font-weight:600;font-family:var(--mono);color:#fff}
+  .wl-ticker{font-size:15px;font-weight:600;font-family:var(--mono);color:var(--strong)}
   .wl-main{flex:1;min-width:0}
   .wl-spark{width:82px;flex-shrink:0;opacity:0.9}
   .wl-spark svg{width:100%;height:26px;display:block}
   .wl-quote{text-align:left;min-width:88px;flex-shrink:0;font-family:var(--mono)}
-  .wl-price{font-size:14px;font-weight:600;color:#fff}
+  .wl-price{font-size:14px;font-weight:600;color:var(--strong)}
   .wl-price.wl-muted{color:var(--txt3);font-weight:400}
   .wl-chg{font-size:12px;font-weight:600;margin-top:3px;min-height:14px}
   .wl-remove{font-size:19px;color:var(--txt3);cursor:pointer;padding:4px 8px;line-height:1}
   .wl-remove:hover{color:var(--dn)}
   .add-btn{width:100%;padding:13px;border-radius:10px;border:1px dashed var(--line2);
     background:transparent;color:var(--txt2);font-size:13px;cursor:pointer;font-family:inherit;margin-top:12px}
-  .add-btn:hover{background:var(--raised);color:var(--mint);border-color:var(--mint-dim)}
-  .scan-btn{padding:11px 22px;border-radius:9px;border:none;background:var(--mint);color:#0c1a12;
+  .add-btn:hover{background:var(--raised);color:var(--accent);border-color:var(--accent)}
+  .scan-btn{padding:11px 22px;border-radius:9px;border:none;background:var(--accent);color:var(--accent-fg);
     font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;margin-top:12px}
-  .scan-btn:hover{background:#95dfb3}
+  .scan-btn:hover{background:var(--accent-hover)}
   .scan-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}
   .scan-card{padding:1.2rem;cursor:pointer;transition:all 0.15s;background:var(--surface);
     border:1px solid var(--line);border-radius:var(--r)}
   .scan-card:hover{border-color:var(--line2);background:var(--raised)}
   .scan-card.overbought{border-inline-start:3px solid var(--dn)}
   .overbought-badge{display:inline-block;font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:5px;
-    background:rgba(248,113,113,0.13);color:var(--dn);margin-inline-start:8px;font-family:var(--mono)}
+    background:var(--dn-soft);color:var(--dn);margin-inline-start:8px;font-family:var(--mono)}
   .scan-grade{display:inline-flex;align-items:center;justify-content:center;width:23px;height:23px;
     border-radius:6px;font-size:12px;font-weight:700;margin-inline-end:9px;flex-shrink:0;font-family:var(--mono)}
-  .scan-ticker{font-size:18px;font-weight:600;font-family:var(--mono);color:#fff}
+  .scan-ticker{font-size:18px;font-weight:600;font-family:var(--mono);color:var(--strong)}
   .scan-rsi{font-size:12px;color:var(--txt2);margin:7px 0;font-family:var(--mono)}
   .scan-spark{width:100%;height:28px;margin:2px 0 9px;display:block}
   .scan-signals{display:flex;flex-wrap:wrap;gap:6px}
   .sig{font-size:11px;font-weight:500;padding:4px 10px;border-radius:6px;font-family:var(--mono)}
-  .sig-green{background:rgba(74,222,128,0.13);color:var(--up)}
-  .sig-red{background:rgba(248,113,113,0.13);color:var(--dn)}
-  .sig-blue{background:#2c2d33;color:var(--txt)}
+  .sig-green{background:var(--up-soft);color:var(--up)}
+  .sig-red{background:var(--dn-soft);color:var(--dn)}
+  .sig-blue{background:var(--neutral-bar);color:var(--txt)}
   .disclaimer{max-width:940px;margin:2.5rem auto 0;padding:1.25rem 1.5rem 2rem;font-size:12.5px;
     line-height:1.8;color:var(--txt2);border-top:1px solid var(--line);text-align:center}
 
@@ -243,19 +264,19 @@
   .cmp-inputs input{flex:1;min-width:120px;font-size:14px;font-family:var(--mono);text-transform:uppercase;
     background:var(--surface);border:1px solid var(--line2);border-radius:10px;padding:12px 14px;
     color:var(--txt);outline:none}
-  .cmp-inputs input:focus{border-color:var(--mint)}
+  .cmp-inputs input:focus{border-color:var(--accent)}
   .cmp-inputs input::placeholder{color:var(--txt3);text-transform:none;font-family:'Inter',sans-serif}
   .cmp-vs{font-size:11.5px;color:var(--txt3);flex-shrink:0}
   .cmp-head{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
   .cmp-card{padding:1.15rem;border-radius:var(--r);background:var(--surface);border:1px solid var(--line);
     text-align:center;border-top-width:3px}
-  .cmp-card.a{border-top-color:var(--mint)}
-  .cmp-card.b{border-top-color:#8b9cc4}
+  .cmp-card.a{border-top-color:var(--accent)}
+  .cmp-card.b{border-top-color:var(--alt)}
   .cmp-tick{font-size:19px;font-weight:600;font-family:var(--mono)}
-  .cmp-card.a .cmp-tick{color:var(--mint)}
-  .cmp-card.b .cmp-tick{color:#a8b6d8}
+  .cmp-card.a .cmp-tick{color:var(--accent)}
+  .cmp-card.b .cmp-tick{color:var(--alt)}
   .cmp-name{font-size:11.5px;color:var(--txt2);margin:4px 0 8px;min-height:14px}
-  .cmp-price{font-size:18px;font-weight:600;font-family:var(--mono);color:#fff;letter-spacing:-0.02em}
+  .cmp-price{font-size:18px;font-weight:600;font-family:var(--mono);color:var(--strong);letter-spacing:-0.02em}
   .cmp-chg{font-size:12px;font-weight:600;font-family:var(--mono);margin-top:3px}
   .cmp-table{border-radius:var(--r);overflow:hidden;border:1px solid var(--line);margin-bottom:12px}
   .cmp-row{display:grid;grid-template-columns:1fr 1.1fr 1fr;align-items:center;border-bottom:1px solid var(--line)}
@@ -276,7 +297,7 @@
   .ticker-tape:hover .ticker-scroll{animation-play-state:paused}
   .ticker-gear{flex-shrink:0;width:32px;height:32px;border:none;background:transparent;
     color:var(--txt3);font-size:13px;cursor:pointer;font-family:inherit;line-height:1;transition:color 0.15s}
-  .ticker-gear:hover{color:var(--mint)}
+  .ticker-gear:hover{color:var(--accent)}
   .idx-panel{position:absolute;top:34px;right:6px;z-index:120;direction:rtl;width:252px;max-height:70vh;
     overflow-y:auto;padding:12px;border-radius:var(--r);background:var(--raised);border:1px solid var(--line2);
     box-shadow:0 14px 40px rgba(0,0,0,0.6)}
@@ -286,11 +307,11 @@
   .idx-region:first-child{margin-top:0}
   .idx-opt{display:flex;align-items:center;gap:9px;padding:6px 7px;border-radius:7px;font-size:13px;
     color:var(--txt);cursor:pointer}
-  .idx-opt:hover{background:#2c2d33}
+  .idx-opt:hover{background:var(--neutral-bar)}
   .idx-opt input{accent-color:#7dd3a0;cursor:pointer;margin:0}
   .idx-msg{font-size:11.5px;color:var(--dn);min-height:14px;margin-top:7px}
   .idx-foot{display:flex;gap:8px;margin-top:9px;padding-top:11px;border-top:1px solid var(--line)}
-  .idx-save{flex:1;padding:8px;border-radius:8px;border:none;background:var(--mint);color:#0c1a12;
+  .idx-save{flex:1;padding:8px;border-radius:8px;border:none;background:var(--accent);color:var(--accent-fg);
     font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit}
   .idx-reset{padding:8px 11px;border-radius:8px;border:1px solid var(--line2);background:transparent;
     color:var(--txt2);font-size:12.5px;cursor:pointer;font-family:inherit}
@@ -342,6 +363,18 @@
 <!-- ===== PWA ===== -->
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#141517">
+<script>
+/* נקבע לפני שהדפדפן מצייר, אחרת יש הבזק כהה לפני מעבר לבהיר */
+(function(){try{
+  var t=localStorage.getItem('theme');
+  if(t!=='light'&&t!=='dark'){
+    t=(window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark';
+  }
+  document.documentElement.setAttribute('data-theme',t);
+  var m=document.querySelector('meta[name=theme-color]');
+  if(m)m.setAttribute('content',t==='light'?'#fbfbfd':'#141517');
+}catch(e){}})();
+</script>
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -364,10 +397,10 @@ if ('serviceWorker' in navigator) {
   <div class="logo" onclick="showHome()" role="button" aria-label="StockIQ — דף הבית">
     <svg viewBox="0 0 200 52" xmlns="http://www.w3.org/2000/svg">
       <text x="2" y="27" font-family="Inter,sans-serif" font-size="25" font-weight="700"
-            fill="#ffffff" letter-spacing="-0.6">Stock</text>
+            fill="currentColor" letter-spacing="-0.6">Stock</text>
       <text x="72" y="27" font-family="Inter,sans-serif" font-size="25" font-weight="700"
-            fill="#7dd3a0" letter-spacing="-0.6">IQ</text>
-      <polyline points="3,42 40,42 48,33 58,49 66,42 112,42" fill="none" stroke="#7dd3a0"
+            fill="var(--accent)" letter-spacing="-0.6">IQ</text>
+      <polyline points="3,42 40,42 48,33 58,49 66,42 112,42" fill="none" stroke="var(--accent)"
             stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
     </svg>
   </div>
@@ -377,6 +410,7 @@ if ('serviceWorker' in navigator) {
     <button class="nav-btn" id="btnWatchlist" onclick="showWatchlist()">מעקב ⭐</button>
     <button class="nav-btn" id="btnScan" onclick="showScanner()">סריקת מניות 🔍</button>
     <button class="nav-btn" id="btnCompare" onclick="showCompare()">השוואה ⚖</button>
+    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()" title="החלף בין מצב כהה לבהיר" aria-label="החלף ערכת צבעים">🌙</button>
   </div>
 </nav>
 
@@ -452,6 +486,68 @@ if ('serviceWorker' in navigator) {
 <script>
 // ── כתובת הבקאנד — שנה כאן בלבד אם עוברים ל-ngrok ──
 const API='https://stock-app-1-dbrs.onrender.com';
+
+// ── ערכת צבעים. ברירת המחדל נגזרת מהגדרת המערכת, ובחירה מפורשת
+// נשמרת ומנצחת אותה. אותו מנגנון אחסון של רשימת המעקב. ──
+function readTheme(){
+  try{const t=localStorage.getItem('theme');if(t==='light'||t==='dark')return t;}catch(e){}
+  try{if(window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches)return 'light';}catch(e){}
+  return 'dark';
+}
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme',t==='light'?'light':'dark');
+  const btn=document.getElementById('themeBtn');
+  if(btn){btn.textContent=(t==='light'?'☀️':'🌙');
+    btn.title=(t==='light'?'עבור למצב כהה':'עבור למצב בהיר');}
+  const meta=document.querySelector('meta[name=theme-color]');
+  if(meta)meta.setAttribute('content',t==='light'?'#fbfbfd':'#141517');
+  retintCharts();
+}
+function toggleTheme(){
+  const next=document.documentElement.getAttribute('data-theme')==='light'?'dark':'light';
+  try{localStorage.setItem('theme',next);}catch(e){}
+  applyTheme(next);
+}
+// קורא ערך מטוקני ה-CSS, כך שצבעי הגרפים נגזרים מאותו מקור אמת כמו העיצוב
+function cssVar(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
+// Chart.js מקבל צבעים כערכים ולא כמשתני CSS, ולכן החלפת ערכה
+// מחייבת לצבוע מחדש את הגרפים הקיימים במקום לסמוך על ה-CSS
+function retintCharts(){
+  const grid=cssVar('--line'),tick=cssVar('--txt3'),strong=cssVar('--strong');
+  const list=[];
+  try{list.push(pc,rc);}catch(e){}
+  list.push(window.cmpChart);
+  list.forEach(ch=>{
+    if(!ch||!ch.options)return;
+    try{
+      const sc=ch.options.scales||{};
+      ['x','y'].forEach(k=>{if(sc[k]){if(sc[k].ticks)sc[k].ticks.color=tick;if(sc[k].grid)sc[k].grid.color=grid;}});
+      const tt=ch.options.plugins&&ch.options.plugins.tooltip;
+      if(tt){tt.backgroundColor=cssVar('--raised');tt.titleColor=strong;
+             tt.bodyColor=cssVar('--txt2');tt.borderColor=cssVar('--line2');}
+      const lg=ch.options.plugins&&ch.options.plugins.legend;
+      if(lg&&lg.labels)lg.labels.color=cssVar('--txt2');
+      if(ch===pc&&ch.data.datasets[0])ch.data.datasets[0].borderColor=strong;
+      if(ch===rc&&ch.data.datasets[0])ch.data.datasets[0].borderColor=cssVar('--accent');
+      if(ch===window.cmpChart&&ch.data.datasets.length>1){
+        ch.data.datasets[0].borderColor=cssVar('--accent');
+        ch.data.datasets[1].borderColor=cssVar('--alt');
+      }
+      ch.update('none');
+    }catch(e){}
+  });
+  // רשימת המעקב מציירת ספארקליין בצבע קבוע — מרעננים אותה אם היא מוצגת
+  try{
+    const wl=document.getElementById('watchlistPage');
+    if(wl&&wl.style.display!=='none'){_indicesTint=cssVar('--alt');loadWLQuotes(getWL());}
+  }catch(e){}
+}
+let _indicesTint='';
+// שינוי בהגדרת המערכת משפיע רק כשהמשתמש לא בחר במפורש
+try{matchMedia('(prefers-color-scheme: light)').addEventListener('change',ev=>{
+  let saved=null;try{saved=localStorage.getItem('theme');}catch(e){}
+  if(!saved)applyTheme(ev.matches?'light':'dark');
+});}catch(e){}
 let pc=null,rc=null,currentTicker=null;
 
 // ── טיקר מדדים עולמיים ──
@@ -730,7 +826,7 @@ async function loadWLQuotes(list){
       price.textContent='$'+Number(d.price).toFixed(2);
       chg.textContent=(up?'▲ +':'▼ ')+d.pct+'%';
       chg.className='wl-chg '+(up?'up':'down');
-      if(spark)spark.innerHTML=sparkSvg(d.spark,'#8b9cc4');
+      if(spark)spark.innerHTML=sparkSvg(d.spark,_indicesTint||cssVar('--alt'));
     });
     _wlQuotesAt=Date.now();
   }catch(e){
@@ -860,15 +956,15 @@ function renderCompare(a,b){
   if(window.cmpChart){window.cmpChart.destroy();window.cmpChart=null;}
   if(typeof Chart==='undefined')return;
   window.cmpChart=new Chart(cv,{type:'line',data:{labels,datasets:[
-    {label:a.ticker,data:na.slice(-len),borderColor:'#7dd3a0',backgroundColor:'rgba(125,211,160,0.10)',
+    {label:a.ticker,data:na.slice(-len),borderColor:cssVar('--accent'),backgroundColor:cssVar('--accent-soft'),
      borderWidth:2,pointRadius:0,tension:0.25,fill:true},
-    {label:b.ticker,data:nb.slice(-len),borderColor:'#8b9cc4',backgroundColor:'rgba(139,156,196,0.10)',
+    {label:b.ticker,data:nb.slice(-len),borderColor:cssVar('--alt'),backgroundColor:'rgba(139,156,196,0.12)',
      borderWidth:2,pointRadius:0,tension:0.25,fill:true}]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
       interaction:{mode:'index',intersect:false},
-      plugins:{legend:{labels:{color:'#9b9ba6',font:{family:'Inter'}}}},
-      scales:{x:{display:false},y:{ticks:{color:'#8e8e99',font:{family:'JetBrains Mono',size:10}},
-        grid:{color:'#26272b'}}}}});
+      plugins:{legend:{labels:{color:cssVar('--txt2'),font:{family:'Inter'}}}},
+      scales:{x:{display:false},y:{ticks:{color:cssVar('--txt3'),font:{family:'JetBrains Mono',size:10}},
+        grid:{color:cssVar('--line')}}}}});
 }
 
 // ── SCANNER ──
@@ -915,8 +1011,8 @@ function scanGrade(r){
   // "מתוחה" מקבל אות נפרדת מ"חלש" — שתי משמעויות שונות לא צריכות לחלוק ציון
   if(r.overbought)return{g:'!',c:'#f87171',l:'מתוחה'};
   if(r.score>=10)return{g:'A',c:'#4ade80',l:'חזק מאוד'};
-  if(r.score>=5)return{g:'B',c:'#a3e635',l:'חיובי'};
-  if(r.score>=1)return{g:'C',c:'#fbbf24',l:'ניטרלי'};
+  if(r.score>=5)return{g:'B',c:'var(--lime)',l:'חיובי'};
+  if(r.score>=1)return{g:'C',c:'var(--warn)',l:'ניטרלי'};
   return{g:'D',c:'#f87171',l:'חלש'};
 }
 async function runScan(scope){
@@ -1049,10 +1145,10 @@ function assess(price,m9,m20,m150,m200,rv,pe,sector){
     else{s-=2;rs.push('מכפיל גבוה משמעותית מהסקטור');}
   }
   let grade,color,label;
-  if(s>=8){grade='A';color='#4ade80';label='חזק מאוד';}
-  else if(s>=5){grade='B';color='#a3e635';label='חיובי';}
-  else if(s>=2){grade='C';color='#fbbf24';label='ניטרלי';}
-  else{grade='D';color='#f87171';label='חלש';}
+  if(s>=8){grade='A';color='var(--up)';label='חזק מאוד';}
+  else if(s>=5){grade='B';color='var(--lime)';label='חיובי';}
+  else if(s>=2){grade='C';color='var(--warn)';label='ניטרלי';}
+  else{grade='D';color='var(--dn)';label='חלש';}
   // הבאנר נגזר מאותו ציון בדיוק, ולכן לא יכול לסתור את האות
   const c=s>=5?'green':s>=2?'yellow':'red';
   const l=s>=5?'פוטנציאל קנייה':s>=2?'תמונה מעורבת':'זהירות — חולשה';
@@ -1069,11 +1165,11 @@ function calcFV(eps,pe,price,growth,growthSource){
   const fv=parseFloat((eps*fairPE).toFixed(2));
   const diff=parseFloat(((price-fv)/fv*100).toFixed(1));
   let label,color;
-  if(diff>20){label='יקרה מאוד';color='#f87171';}
-  else if(diff>5){label='יקרה קצת';color='#fbbf24';}
-  else if(diff<-20){label='זולה מאוד';color='#4ade80';}
-  else if(diff<-5){label='זולה קצת';color='#4ade80';}
-  else{label='שווי הוגן';color='#8b9cc4';}
+  if(diff>20){label='יקרה מאוד';color='var(--dn)';}
+  else if(diff>5){label='יקרה קצת';color='var(--warn)';}
+  else if(diff<-20){label='זולה מאוד';color='var(--up)';}
+  else if(diff<-5){label='זולה קצת';color='var(--up)';}
+  else{label='שווי הוגן';color='var(--alt)';}
   // מציינים במפורש על מה החישוב נשען — צמיחת רווחים וצמיחת הכנסות הן מדדים שונים
   const basis=(growth&&growth>0)?(growthSource==='revenue'?'לפי צמיחת הכנסות':'לפי צמיחת רווחים'):'לפי מכפיל נוכחי';
   return{fv,diff,label,color,basis};
@@ -1291,7 +1387,7 @@ async function analyze(){
     const gradeData=sg;  // אותו ניקוד בדיוק — הבאנר והאות לא יכולים לסתור
     const growthVal=(json.earnings_growth!=null?json.earnings_growth:json.revenue_growth);
     const fvData=calcFV(json.eps,json.pe_ratio,price,growthVal,json.growth_source);
-    const gc='#26272b',tc='#8e8e99';
+    const gc=cssVar('--line'),tc=cssVar('--txt3');
 
     // לתצוגה: 4 האזורים החזקים ביותר, ממוינים לפי מחיר
     const topZones=[...zs].sort((a,b)=>b.touches-a.touches).slice(0,4).sort((a,b)=>b.p-a.p);
@@ -1322,11 +1418,11 @@ async function analyze(){
       (fvData?'<div style="padding:1.25rem;border-radius:14px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.09)"><div style="font-size:11px;color:rgba(255,255,255,0.3);margin-bottom:6px">FAIR VALUE</div><div style="font-size:18px;font-weight:700">$'+fvData.fv+'</div><div style="font-size:12px;font-weight:600;color:'+fvData.color+';margin-top:4px">'+fvData.label+' ('+Math.abs(fvData.diff)+'%)</div><div style="font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px">'+fvData.basis+'</div></div>':'')+
       '</div>'+
       '<div class="ai-card"><div class="ai-card-header"><span class="ai-badge">AI</span><span class="ai-card-title">ניתוח חכם — '+esc(t)+'</span></div>'+
-      '<div id="aiText" class="ai-loading"><div class="ai-spinner"><svg width="16" height="16" viewBox="0 0 100 100"><polyline points="10,80 35,55 55,65 90,15" fill="none" stroke="#7dd3a0" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" pathLength="100" style="stroke-dasharray:100;stroke-dashoffset:100;animation:drawLine 1.2s ease-in-out infinite"/></svg></div>מנתח...</div></div>'+
+      '<div id="aiText" class="ai-loading"><div class="ai-spinner"><svg width="16" height="16" viewBox="0 0 100 100"><polyline points="10,80 35,55 55,65 90,15" fill="none" stroke="'+cssVar('--accent')+'" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" pathLength="100" style="stroke-dasharray:100;stroke-dashoffset:100;animation:drawLine 1.2s ease-in-out infinite"/></svg></div>מנתח...</div></div>'+
       '<div class="signal-banner '+sg.c+'"><div class="signal-dot dot-'+sg.c+'"></div><div><div class="signal-title '+sg.c+'">ניתוח טכני — '+esc(sg.l)+'</div><div class="signal-reasons">'+esc(sg.rs.join(' · '))+'</div></div></div>'+
-      '<div class="glass sentiment-card" id="sentCard"><div class="ai-loading"><div class="ai-spinner"><svg width="16" height="16" viewBox="0 0 100 100"><polyline points="10,80 35,55 55,65 90,15" fill="none" stroke="#7dd3a0" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" pathLength="100" style="stroke-dasharray:100;stroke-dashoffset:100;animation:drawLine 1.2s ease-in-out infinite"/></svg></div>טוען נתוני אנליסטים...</div></div>'+
+      '<div class="glass sentiment-card" id="sentCard"><div class="ai-loading"><div class="ai-spinner"><svg width="16" height="16" viewBox="0 0 100 100"><polyline points="10,80 35,55 55,65 90,15" fill="none" stroke="'+cssVar('--accent')+'" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" pathLength="100" style="stroke-dasharray:100;stroke-dashoffset:100;animation:drawLine 1.2s ease-in-out infinite"/></svg></div>טוען נתוני אנליסטים...</div></div>'+
       '<div class="metrics">'+
-      '<div class="glass metric"><div class="metric-label">RSI (14)</div><div class="metric-value" style="color:'+(rv_>70?'#f87171':rv_<30?'#4ade80':'#fff')+'">'+(rv_!=null&&!isNaN(rv_)?esc(rv_):'—')+'</div><div class="metric-sub">'+(rv_==null||isNaN(rv_)?'אין מספיק נתונים':rv_>70?'Overbought':rv_<30?'Oversold':'Neutral')+'</div></div>'+
+      '<div class="glass metric"><div class="metric-label">RSI (14)</div><div class="metric-value '+(rv_>70?'down':rv_<30?'up':'')+'">'+(rv_!=null&&!isNaN(rv_)?esc(rv_):'—')+'</div><div class="metric-sub">'+(rv_==null||isNaN(rv_)?'אין מספיק נתונים':rv_>70?'Overbought':rv_<30?'Oversold':'Neutral')+'</div></div>'+
       '<div class="glass metric"><div class="metric-label">MA9 / MA20</div><div class="metric-value" style="font-size:16px">$'+(lm9?.toFixed(2)||'—')+'</div><div class="metric-sub">/ $'+(lm20?.toFixed(2)||'—')+'</div></div>'+
       '<div class="glass metric"><div class="metric-label">MA200</div><div class="metric-value" style="font-size:16px">'+(lm200?'$'+lm200.toFixed(2):'—')+'</div></div>'+
       '</div>'+
@@ -1337,15 +1433,15 @@ async function analyze(){
       '</div>';
 
     pc=new Chart(document.getElementById('pc'),{type:'line',data:{labels:lb,datasets:[
-      {label:'מחיר',data:d,borderColor:'rgba(255,255,255,0.9)',borderWidth:2,pointRadius:0,tension:0.3,spanGaps:true},
-      {label:'MA9',data:m9v,borderColor:'#3b82f6',borderWidth:1.2,pointRadius:0,tension:0.3,spanGaps:true},
-      {label:'MA20',data:m20v,borderColor:'#fbbf24',borderWidth:1.2,pointRadius:0,tension:0.3,spanGaps:true},
-      {label:'MA200',data:m200v,borderColor:'#8b9cc4',borderWidth:1.2,pointRadius:0,tension:0.3,spanGaps:true},
+      {label:'מחיר',data:d,borderColor:cssVar('--strong'),borderWidth:2,pointRadius:0,tension:0.3,spanGaps:true},
+      {label:'MA9',data:m9v,borderColor:cssVar('--ma9'),borderWidth:1.2,pointRadius:0,tension:0.3,spanGaps:true},
+      {label:'MA20',data:m20v,borderColor:cssVar('--ma20'),borderWidth:1.2,pointRadius:0,tension:0.3,spanGaps:true},
+      {label:'MA200',data:m200v,borderColor:cssVar('--alt'),borderWidth:1.2,pointRadius:0,tension:0.3,spanGaps:true},
     ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
-      plugins:{legend:{display:false},tooltip:{backgroundColor:'#1c1d21',titleColor:'#fff',bodyColor:'#9b9ba6',borderColor:'#33343a',borderWidth:1,padding:10,cornerRadius:10}},
+      plugins:{legend:{display:false},tooltip:{backgroundColor:cssVar('--raised'),titleColor:cssVar('--strong'),bodyColor:cssVar('--txt2'),borderColor:cssVar('--line2'),borderWidth:1,padding:10,cornerRadius:10}},
       scales:{x:{ticks:{color:tc,maxTicksLimit:7,font:{size:11}},grid:{color:gc}},y:{ticks:{color:tc,font:{size:11},callback:v=>'$'+v.toFixed(0)},grid:{color:gc}}}}});
 
-    rc=new Chart(document.getElementById('rc'),{type:'line',data:{labels:lb,datasets:[{label:'RSI',data:rv,borderColor:'#7dd3a0',borderWidth:1.5,pointRadius:0,tension:0.4,spanGaps:true}]},
+    rc=new Chart(document.getElementById('rc'),{type:'line',data:{labels:lb,datasets:[{label:'RSI',data:rv,borderColor:cssVar('--accent'),borderWidth:1.5,pointRadius:0,tension:0.4,spanGaps:true}]},
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
         scales:{x:{ticks:{color:tc,maxTicksLimit:7,font:{size:11}},grid:{color:gc}},y:{min:0,max:100,ticks:{color:tc,font:{size:11},stepSize:30},grid:{color:gc}}}}});
 
@@ -1398,6 +1494,7 @@ async function analyze(){
 fetch(API+'/',{cache:'no-store'}).catch(()=>{});
 
 // Init
+applyTheme(readTheme());
 showHome();
 loadIndices(); // הטיקר טוען מיד — מוצג בכל דף
 </script>
