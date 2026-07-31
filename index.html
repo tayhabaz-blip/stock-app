@@ -59,6 +59,17 @@
   .search-bar input{flex:1;font-size:15px;font-family:var(--mono);background:transparent;border:none;
     outline:none;color:#9ffcff;text-transform:uppercase;letter-spacing:0.04em}
   .search-bar input::placeholder{color:rgba(0,240,255,0.3);text-transform:none;letter-spacing:0}
+  /* Chrome צובע שדה שמולא אוטומטית בלבן ומוחק את העיצוב.
+     box-shadow פנימי הוא הדרך היחידה לעקוף — background נדרס. */
+  .search-bar input:-webkit-autofill,
+  .search-bar input:-webkit-autofill:hover,
+  .search-bar input:-webkit-autofill:focus,
+  .search-bar input:-webkit-autofill:active{
+    -webkit-text-fill-color:#9ffcff;
+    -webkit-box-shadow:0 0 0 1000px #080a12 inset;
+            box-shadow:0 0 0 1000px #080a12 inset;
+    caret-color:#9ffcff;
+    transition:background-color 9999s ease-out 0s}
   .search-bar button{padding:10px 22px;border-radius:9px;border:none;
     background:linear-gradient(135deg,var(--cy),var(--mg));color:#04050a;font-size:14px;font-weight:700;
     cursor:pointer;font-family:inherit;box-shadow:0 0 18px rgba(0,240,255,0.45);transition:box-shadow 0.18s}
