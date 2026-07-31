@@ -666,7 +666,7 @@ async function loadIndices(){
     renderIndices();
     _indicesLoaded=true;
     // מרענן כל 5 דקות בשקט
-    setTimeout(()=>{_indicesLoaded=false;loadIndices();},5*60*1000);
+    setTimeout(()=>{_indicesLoaded=false;loadIndices();},rate('idx'));
   }catch(e){/* שקט — הטיקר הוא דקורטיבי */}
   finally{_indicesInFlight=false;}
 }
@@ -694,8 +694,32 @@ function safeUrl(u){
 // ── ניהול טיימרים במקום אחד. בלי זה הם ממשיכים לרוץ אחרי מעבר דף
 // ומושכים נתונים ברקע לנצח, גם כשהטאב לא פעיל. ──
 const timers={price:null,news:null,wl:null};
-function stopTimer(k){if(timers[k]){clearInterval(timers[k]);timers[k]=null;}}
+function stopTimer(k){if(timers[k]){clearInterval(timers[k]);clearTimeout(timers[k]);timers[k]=null;}}
 function stopAllTimers(){Object.keys(timers).forEach(stopTimer);}
+
+// ── קצב הרענון נגזר משעות המסחר בניו יורק.
+// כשהבורסה סגורה המחירים לא זזים, ודגימה מהירה היא בזבוז נטו —
+// גם על הסוללה של המשתמש וגם על המכסה מול יאהו.
+// הערה: ימי חג בבורסה לא מזוהים כאן, ובהם נדגום מהר לחינם. ──
+function usMarketOpen(){
+  try{
+    const p={};
+    new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',weekday:'short',
+      hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(new Date())
+      .forEach(x=>{p[x.type]=x.value;});
+    if(p.weekday==='Sat'||p.weekday==='Sun')return false;
+    const m=parseInt(p.hour,10)*60+parseInt(p.minute,10);
+    return m>=570&&m<960;            // 09:30–16:00 שעון ניו יורק
+  }catch(e){return true;}            // בספק — מרעננים מהר
+}
+const RATES={price:[15000,60000],wl:[30000,300000],idx:[60000,300000],news:[300000,900000]};
+function rate(kind){const r=RATES[kind]||[60000,60000];return usMarketOpen()?r[0]:r[1];}
+// setTimeout שמתזמן את עצמו מחדש, כדי שהקצב יתעדכן לבד כשהבורסה
+// נפתחת או נסגרת — בלי צורך לרענן את הדף
+function schedule(key,kind,fn){
+  stopTimer(key);
+  (function loop(){ timers[key]=setTimeout(function(){ fn(); loop(); }, rate(kind)); })();
+}
 
 // ── NAV ──
 function setPage(id){
@@ -704,16 +728,16 @@ function setPage(id){
   document.getElementById(id).style.display='block';
   ['btnHome','btnAnalyze','btnWatchlist','btnScan','btnCompare'].forEach(b=>document.getElementById(b).classList.remove('active'));
 }
-function showHome(){setPage('homePage');document.getElementById('btnHome').classList.add('active');loadNews();timers.news=setInterval(loadNews,5*60*1000);loadIndices();}
+function showHome(){setPage('homePage');document.getElementById('btnHome').classList.add('active');loadNews();schedule('news','news',loadNews);loadIndices();}
 function showAnalyze(){
   setPage('analyzePage');
   document.getElementById('btnAnalyze').classList.add('active');
   // אם כבר מוצג ניתוח, מחדשים את דגימת המחיר שנעצרה במעבר הדף
   if(currentTicker&&document.querySelector('.company-price-value')){
-    stopTimer('price');timers.price=setInterval(updatePrice,30000);
+    stopTimer('price');schedule('price','price',updatePrice);
   }
 }
-function showWatchlist(){setPage('watchlistPage');document.getElementById('btnWatchlist').classList.add('active');renderWL();stopTimer('wl');timers.wl=setInterval(()=>loadWLQuotes(getWL()),60000);}
+function showWatchlist(){setPage('watchlistPage');document.getElementById('btnWatchlist').classList.add('active');renderWL();stopTimer('wl');schedule('wl','wl',()=>loadWLQuotes(getWL()));}
 function showScanner(){setPage('scanPage');document.getElementById('btnScan').classList.add('active');}
 function showCompare(){setPage('comparePage');document.getElementById('btnCompare').classList.add('active');}
 function loadHome(){const t=document.getElementById('homeInput').value.trim().toUpperCase();if(!t)return;showAnalyze();document.getElementById('ticker').value=t;analyze();}
@@ -725,9 +749,9 @@ document.addEventListener('visibilitychange',()=>{
     return;}
   const s=document.getElementById('tickerScroll');if(s)s.style.animationPlayState='running';
   if(document.getElementById('analyzePage').style.display!=='none'&&currentTicker){
-    stopTimer('price');updatePrice();timers.price=setInterval(updatePrice,30000);
+    stopTimer('price');updatePrice();schedule('price','price',updatePrice);
   }else if(document.getElementById('homePage').style.display!=='none'){
-    stopTimer('news');loadNews();timers.news=setInterval(loadNews,5*60*1000);
+    stopTimer('news');loadNews();schedule('news','news',loadNews);
   }
 });
 
@@ -1356,7 +1380,7 @@ async function analyze(){
   }
   currentTicker=t;
   stopTimer('price');
-  timers.price=setInterval(updatePrice,30000);
+  schedule('price','price',updatePrice);
   if(pc){pc.destroy();pc=null;}if(rc){rc.destroy();rc=null;}
   results.innerHTML='<div class="loading-state">טוען '+esc(t)+'...</div>';
   // Render בתוכנית החינמית נרדם אחרי 15 דקות וההתעוררות אורכת עד דקה.
