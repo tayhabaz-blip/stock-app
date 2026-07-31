@@ -1198,3 +1198,116 @@ class TestIndicesEndpoint:
             mock_yf.Ticker.return_value = self._mock_yf()
             codes = [client.get("/indices?ids=sp500").status_code for _ in range(30)]
         assert 429 in codes
+
+
+class TestQuotesEndpoint:
+    """‏/quotes מקבל רשימת טיקרים מהלקוח ומושך אותם במשיכה אחת.
+    הבדיקות מוודאות ולידציה, תקרה, ושהמטמון לא מערבב בין רשימות."""
+
+    def setup_method(self):
+        _clear_cache()
+        _clear_rate()
+
+    def _bulk(self, symbols, n=40):
+        import pandas as pd
+        closes = [100.0 + i for i in range(n)]
+        if len(symbols) == 1:
+            return pd.DataFrame({"Close": closes, "High": closes, "Low": closes})
+        cols = pd.MultiIndex.from_product([symbols, ["Close", "High", "Low"]])
+        data = {(s, f): closes for s in symbols for f in ("Close", "High", "Low")}
+        return pd.DataFrame(data, columns=cols)
+
+    def test_empty_tickers_returns_empty_list(self):
+        with patch("stock_api.yf") as mock_yf:
+            r = client.get("/quotes")
+        assert r.json() == []
+        mock_yf.download.assert_not_called()
+
+    def test_invalid_tickers_are_rejected(self):
+        with patch("stock_api.yf") as mock_yf:
+            r = client.get("/quotes?tickers=bad!!,%5EEVIL,../etc")
+        assert r.json() == []
+        mock_yf.download.assert_not_called()
+
+    def test_single_ticker_flat_columns(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.download.return_value = self._bulk(["AAPL"])
+            r = client.get("/quotes?tickers=AAPL")
+        d = r.json()
+        assert len(d) == 1 and d[0]["ticker"] == "AAPL"
+        assert isinstance(d[0]["spark"], list) and len(d[0]["spark"]) <= 30
+
+    def test_multi_ticker_multiindex(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.download.return_value = self._bulk(["AAPL", "MSFT"])
+            r = client.get("/quotes?tickers=AAPL,MSFT")
+        assert [x["ticker"] for x in r.json()] == ["AAPL", "MSFT"]
+
+    def test_one_bulk_call_not_one_per_ticker(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.download.return_value = self._bulk(["AAPL", "MSFT", "NVDA"])
+            client.get("/quotes?tickers=AAPL,MSFT,NVDA")
+        assert mock_yf.download.call_count == 1
+
+    def test_duplicates_collapsed(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.download.return_value = self._bulk(["AAPL"])
+            r = client.get("/quotes?tickers=AAPL,AAPL,aapl")
+        assert len(r.json()) == 1
+
+    def test_capped_at_max(self):
+        many = ",".join("A%d" % i for i in range(60))
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.download.return_value = self._bulk(["A0"])
+            client.get("/quotes?tickers=" + many)
+            sent = mock_yf.download.call_args.kwargs["tickers"].split()
+        assert len(sent) <= api.MAX_QUOTES
+
+    def test_pct_computed_from_previous_close(self):
+        import pandas as pd
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.download.return_value = pd.DataFrame({"Close": [100.0, 110.0]})
+            r = client.get("/quotes?tickers=AAPL")
+        assert r.json()[0]["pct"] == 10.0
+
+    def test_missing_symbol_is_skipped(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.download.return_value = self._bulk(["AAPL", "MSFT"])
+            r = client.get("/quotes?tickers=AAPL,ZZZZ")
+        assert [x["ticker"] for x in r.json()] == ["AAPL"]
+
+    def test_empty_bulk_returns_empty(self):
+        import pandas as pd
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.download.return_value = pd.DataFrame()
+            r = client.get("/quotes?tickers=AAPL")
+        assert r.json() == []
+
+    def test_download_failure_returns_502(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.download.side_effect = Exception("network")
+            r = client.get("/quotes?tickers=AAPL")
+        assert r.status_code == 502
+
+    def test_different_lists_do_not_share_cache(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.download.return_value = self._bulk(["AAPL", "MSFT"])
+            a = client.get("/quotes?tickers=AAPL").json()
+            mock_yf.download.return_value = self._bulk(["MSFT"])
+            b = client.get("/quotes?tickers=MSFT").json()
+        assert [x["ticker"] for x in a] == ["AAPL"]
+        assert [x["ticker"] for x in b] == ["MSFT"]
+
+    def test_same_list_is_cached(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.download.return_value = self._bulk(["AAPL"])
+            client.get("/quotes?tickers=AAPL")
+            n = mock_yf.download.call_count
+            client.get("/quotes?tickers=AAPL")
+        assert mock_yf.download.call_count == n
+
+    def test_rate_limit_blocks_flood(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.download.return_value = self._bulk(["AAPL"])
+            codes = [client.get("/quotes?tickers=T%d" % i).status_code for i in range(40)]
+        assert 429 in codes
