@@ -144,8 +144,24 @@
   /* ── טיקר מדדים עולמיים ── */
   /* direction:ltr חובה — הדף כולו RTL, ובלעדיו הרצועה נצמדת לימין
      והאנימציה ל--50% דוחפת אותה כולה מחוץ למסך במקום לגלול ברצף */
-  .ticker-tape{overflow:hidden;height:30px;background:rgba(255,255,255,0.018);border-bottom:1px solid rgba(255,255,255,0.045);display:flex;align-items:center;direction:ltr}
+  .ticker-tape{height:30px;background:rgba(255,255,255,0.018);border-bottom:1px solid rgba(255,255,255,0.045);display:flex;align-items:center;direction:ltr;position:relative}
+  .ticker-viewport{flex:1;min-width:0;overflow:hidden;height:100%;display:flex;align-items:center}
   .ticker-tape:hover .ticker-scroll{animation-play-state:paused}
+  .ticker-gear{flex-shrink:0;width:30px;height:30px;border:none;background:transparent;color:rgba(255,255,255,0.25);font-size:13px;cursor:pointer;font-family:inherit;line-height:1;transition:color 0.15s}
+  .ticker-gear:hover{color:#7fd8ff}
+  /* חלונית בחירת השווקים */
+  .idx-panel{position:absolute;top:32px;right:6px;z-index:120;direction:rtl;width:250px;max-height:70vh;overflow-y:auto;padding:12px;border-radius:12px;background:#0d1526;border:1px solid rgba(63,169,224,0.25);box-shadow:0 12px 32px rgba(0,0,0,0.55)}
+  .idx-panel[hidden]{display:none}
+  .idx-region{font-size:10px;font-weight:600;color:rgba(255,255,255,0.3);text-transform:uppercase;letter-spacing:0.08em;margin:10px 0 5px}
+  .idx-region:first-child{margin-top:0}
+  .idx-opt{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:7px;font-size:12.5px;color:rgba(255,255,255,0.75);cursor:pointer}
+  .idx-opt:hover{background:rgba(255,255,255,0.045)}
+  .idx-opt input{accent-color:#0ea5e9;cursor:pointer;margin:0}
+  .idx-msg{font-size:11px;color:#f87171;min-height:14px;margin-top:6px}
+  .idx-foot{display:flex;gap:8px;margin-top:8px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.07)}
+  .idx-save{flex:1;padding:7px;border-radius:8px;border:none;background:linear-gradient(135deg,#0ea5e9,#7fd8ff);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+  .idx-reset{padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:transparent;color:rgba(255,255,255,0.45);font-size:12px;cursor:pointer;font-family:inherit}
+  .idx-reset:hover{color:#7fd8ff;border-color:rgba(63,169,224,0.4)}
   .ticker-scroll{display:flex;white-space:nowrap;direction:ltr;animation:tickerMove 90s linear infinite}
   @keyframes tickerMove{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
   .ticker-item{display:inline-flex;align-items:center;gap:7px;padding:0 18px;font-size:11.5px;border-right:1px solid rgba(255,255,255,0.04);color:rgba(255,255,255,0.4)}
@@ -188,9 +204,13 @@ if ('serviceWorker' in navigator) {
 
 <!-- ── טיקר מדדים עולמיים ── -->
 <div class="ticker-tape" id="tickerTape">
-  <div class="ticker-scroll" id="tickerScroll">
-    <span class="ticker-loading">טוען מדדים...</span>
+  <div class="ticker-viewport">
+    <div class="ticker-scroll" id="tickerScroll">
+      <span class="ticker-loading">טוען מדדים...</span>
+    </div>
   </div>
+  <button class="ticker-gear" id="tickerGear" title="בחר שווקים" aria-label="בחר שווקים">⚙</button>
+  <div class="idx-panel" id="idxPanel" hidden></div>
 </div>
 
 <main id="main">
@@ -244,6 +264,84 @@ const API='https://stock-app-1-dbrs.onrender.com';
 let pc=null,rc=null,currentTicker=null;
 
 // ── טיקר מדדים עולמיים ──
+// הקטלוג יושב כאן ולא בשרת: השמות בעברית הם עניין של תצוגה,
+// והשרת מקבל רק מזהים ומחזיר מחיר ואחוז.
+const INDEX_CATALOG=[
+  {id:'sp500',   name:'S&P 500',      region:'ארה"ב'},
+  {id:'nasdaq',  name:'נאסד"ק',       region:'ארה"ב'},
+  {id:'dow',     name:'דאו ג\'ונס',    region:'ארה"ב'},
+  {id:'russell', name:'Russell 2000', region:'ארה"ב'},
+  {id:'vix',     name:'VIX (תנודתיות)',region:'ארה"ב'},
+  {id:'dax',     name:'DAX',          region:'אירופה'},
+  {id:'ftse',    name:'FTSE 100',     region:'אירופה'},
+  {id:'cac',     name:'CAC 40',       region:'אירופה'},
+  {id:'stoxx',   name:'Euro Stoxx 50',region:'אירופה'},
+  {id:'ibex',    name:'IBEX 35',      region:'אירופה'},
+  {id:'smi',     name:'SMI',          region:'אירופה'},
+  {id:'nikkei',  name:'ניקיי',        region:'אסיה ופסיפיק'},
+  {id:'hangseng',name:'האנג סנג',      region:'אסיה ופסיפיק'},
+  {id:'shanghai',name:'שנגחאי',       region:'אסיה ופסיפיק'},
+  {id:'kospi',   name:'קוספי',        region:'אסיה ופסיפיק'},
+  {id:'sensex',  name:'סנסקס',        region:'אסיה ופסיפיק'},
+  {id:'asx',     name:'ASX 200',      region:'אסיה ופסיפיק'},
+  {id:'ta35',    name:'ת"א 35',       region:'ישראל'},
+  {id:'ta125',   name:'ת"א 125',      region:'ישראל'}
+];
+const DEFAULT_INDICES=['sp500','nasdaq','dow','russell','vix'];
+const MAX_INDICES=12;
+const idxName=id=>{const c=INDEX_CATALOG.find(c=>c.id===id);return c?c.name:id;};
+function loadIdxPrefs(){
+  try{
+    const l=JSON.parse(localStorage.getItem('idx')||'null');
+    const ok=Array.isArray(l)?l.filter(id=>INDEX_CATALOG.some(c=>c.id===id)):[];
+    return ok.length?ok.slice(0,MAX_INDICES):DEFAULT_INDICES.slice();
+  }catch(e){return DEFAULT_INDICES.slice();}
+}
+function saveIdxPrefs(l){try{localStorage.setItem('idx',JSON.stringify(l));}catch(e){}}
+
+// ── חלונית הבחירה ──
+function buildIdxPanel(){
+  const panel=document.getElementById('idxPanel');
+  panel.textContent='';
+  const sel=new Set(loadIdxPrefs());
+  [...new Set(INDEX_CATALOG.map(c=>c.region))].forEach(reg=>{
+    const h=document.createElement('div');h.className='idx-region';h.textContent=reg;panel.append(h);
+    INDEX_CATALOG.filter(c=>c.region===reg).forEach(c=>{
+      const lab=document.createElement('label');lab.className='idx-opt';
+      const cb=document.createElement('input');cb.type='checkbox';cb.value=c.id;cb.checked=sel.has(c.id);
+      const sp=document.createElement('span');sp.textContent=c.name;
+      lab.append(cb,sp);panel.append(lab);
+    });
+  });
+  const msg=document.createElement('div');msg.className='idx-msg';msg.id='idxMsg';panel.append(msg);
+  const foot=document.createElement('div');foot.className='idx-foot';
+  const rst=document.createElement('button');rst.className='idx-reset';rst.textContent='ברירת מחדל';
+  rst.addEventListener('click',()=>{
+    panel.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=DEFAULT_INDICES.includes(cb.value));
+    msg.textContent='';
+  });
+  const btn=document.createElement('button');btn.className='idx-save';btn.textContent='שמור';
+  btn.addEventListener('click',applyIdxPrefs);
+  foot.append(rst,btn);panel.append(foot);
+}
+function applyIdxPrefs(){
+  const panel=document.getElementById('idxPanel');
+  const msg=document.getElementById('idxMsg');
+  const chosen=[...panel.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value);
+  if(!chosen.length){msg.textContent='צריך לבחור לפחות מדד אחד';return;}
+  if(chosen.length>MAX_INDICES){msg.textContent='אפשר לבחור עד '+MAX_INDICES+' מדדים';return;}
+  saveIdxPrefs(chosen);
+  panel.hidden=true;
+  _indicesLoaded=false;_indicesHTML='';
+  document.getElementById('tickerScroll').innerHTML='<span class="ticker-loading">טוען מדדים...</span>';
+  loadIndices();
+}
+function toggleIdxPanel(){
+  const panel=document.getElementById('idxPanel');
+  if(panel.hidden){buildIdxPanel();panel.hidden=false;}
+  else panel.hidden=true;
+}
+
 let _indicesLoaded=false,_indicesHTML='';
 function renderIndices(){
   const scroll=document.getElementById('tickerScroll');
@@ -263,13 +361,17 @@ function renderIndices(){
 async function loadIndices(){
   if(_indicesLoaded)return;
   try{
-    const data=await fetch(API+'/indices').then(r=>r.json());
+    const prefs=loadIdxPrefs();
+    const data=await fetch(API+'/indices?ids='+encodeURIComponent(prefs.join(','))).then(r=>r.json());
     if(!Array.isArray(data)||data.length===0)return;
-    _indicesHTML=data.map(d=>{
+    // מציגים לפי סדר הבחירה של המשתמש, לא לפי סדר התשובה מהשרת
+    const byId=new Map(data.map(d=>[d.id,d]));
+    _indicesHTML=prefs.map(id=>byId.get(id)).filter(Boolean).map(d=>{
       const up=d.pct>=0;
       const sign=up?'+':'';
-      return`<span class="ticker-item"><span class="ticker-name">${esc(d.name)}</span><span class="ticker-val">${Number(d.price).toLocaleString('en-US',{maximumFractionDigits:2})}</span><span class="ticker-pct ${up?'up':'down'}">${sign}${d.pct}%</span></span>`;
+      return`<span class="ticker-item"><span class="ticker-name">${esc(idxName(d.id))}</span><span class="ticker-val">${Number(d.price).toLocaleString('en-US',{maximumFractionDigits:2})}</span><span class="ticker-pct ${up?'up':'down'}">${sign}${d.pct}%</span></span>`;
     }).join('');
+    if(!_indicesHTML)return;
     renderIndices();
     _indicesLoaded=true;
     // מרענן כל 5 דקות בשקט
@@ -279,6 +381,11 @@ async function loadIndices(){
 // שינוי רוחב חלון משנה כמה עותקים צריך — מחשבים מחדש בהשהיה קלה
 let _idxResize=null;
 window.addEventListener('resize',()=>{clearTimeout(_idxResize);_idxResize=setTimeout(renderIndices,250);});
+// גלגל השיניים פותח את חלונית הבחירה; לחיצה בחוץ או Esc סוגרות
+document.getElementById('tickerGear').addEventListener('click',e=>{e.stopPropagation();toggleIdxPanel();});
+document.getElementById('idxPanel').addEventListener('click',e=>e.stopPropagation());
+document.addEventListener('click',()=>{const p=document.getElementById('idxPanel');if(p&&!p.hidden)p.hidden=true;});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){const p=document.getElementById('idxPanel');if(p)p.hidden=true;}});
 
 // ── בריחת תווים לכל טקסט שמגיע מבחוץ (Yahoo / Finnhub) ולפני שרשור ל-HTML.
 // שם חברה או כותרת עם גרש או תו < שוברים אחרת את המבנה ומאפשרים הזרקה. ──
