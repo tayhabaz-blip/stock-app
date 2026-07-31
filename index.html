@@ -884,7 +884,14 @@ function renderCompare(a,b){
   const ht=document.createElement('div');ht.className='chart-header-title';
   ht.textContent='ביצועים יחסיים — 12 חודשים (בסיס 100)';
   hd.append(ht);card.append(hd);
-  const cv=document.createElement('canvas');cv.height=90;card.append(cv);
+  // הקנבס חייב אב עם גובה קבוע. עם maintainAspectRatio:false
+  // Chart.js מותח אותו לגובה ההורה, וגובה ההורה נגזר מהקנבס עצמו —
+  // תלות מעגלית שניפחה אותו ל-617px (1235px בפועל) והקפיאה את הדף.
+  // שאר הגרפים באתר עטופים כך; ההשוואה חרגה מהדפוס.
+  const wrap=document.createElement('div');
+  wrap.style.cssText='position:relative;height:240px';
+  const cv=document.createElement('canvas');
+  wrap.append(cv);card.append(wrap);
   box.append(card);
   const note=document.createElement('div');note.className='cmp-note';
   note.textContent='ירוק מסמן את העדיף בשורה לפי הכלל שלצידה. שווי שוק, RSI וסקטור מוצגים להקשר בלבד ואין בהם "מנצח". אין כאן ייעוץ השקעות.';
@@ -901,7 +908,8 @@ function renderCompare(a,b){
      borderWidth:2,pointRadius:0,tension:0.25,fill:true},
     {label:b.ticker,data:nb.slice(-len),borderColor:'#ff2d95',backgroundColor:'rgba(255,45,149,0.08)',
      borderWidth:2,pointRadius:0,tension:0.25,fill:true}]},
-    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      interaction:{mode:'index',intersect:false},
       plugins:{legend:{labels:{color:'rgba(255,255,255,0.7)',font:{family:'JetBrains Mono'}}}},
       scales:{x:{display:false},y:{ticks:{color:'rgba(255,255,255,0.35)',font:{family:'JetBrains Mono',size:10}},
         grid:{color:'rgba(0,240,255,0.07)'}}}}});
