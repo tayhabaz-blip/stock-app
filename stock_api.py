@@ -312,8 +312,9 @@ WORLD_INDICES = {
     "kospi": "^KS11",
     "sensex": "^BSESN",
     "asx": "^AXJO",
-    # ישראל
-    "ta35": "^TA35.TA",
+    # ישראל — ת"א 35 הוא ללא ^ ביאהו, בניגוד לת"א 125. אומת מול
+    # התשובה החיה: ^TA35.TA מחזיר ריק ולכן המדד נשמט מהרצועה.
+    "ta35": "TA35.TA",
     "ta125": "^TA125.TA",
 }
 DEFAULT_INDICES = ["sp500", "nasdaq", "dow", "russell", "vix"]
