@@ -242,29 +242,41 @@ const API='https://stock-app-1-dbrs.onrender.com';
 let pc=null,rc=null,currentTicker=null;
 
 // ── טיקר מדדים עולמיים ──
-let _indicesLoaded=false;
+let _indicesLoaded=false,_indicesHTML='';
+function renderIndices(){
+  const scroll=document.getElementById('tickerScroll');
+  if(!scroll||!_indicesHTML)return;
+  // מודדים סט אחד, ואז משכפלים עד שחצי מהרוחב מכסה את המסך.
+  // בלי זה סט בודד צר מהחלון, והאנימציה ל--50% פותחת חלל ריק באמצע הלולאה.
+  scroll.style.animation='none';
+  scroll.innerHTML=_indicesHTML;
+  const oneSet=scroll.scrollWidth||1;
+  const need=Math.max(1,Math.ceil((scroll.parentElement.clientWidth||window.innerWidth)/oneSet));
+  scroll.innerHTML=_indicesHTML.repeat(need*2);
+  // קצב: ~70px לשנייה — מהיר מספיק שיהיה מוחש, איטי מספיק לקריאה
+  const dur=Math.max(20,Math.round((scroll.scrollWidth/2)/70));
+  scroll.style.animation='';
+  scroll.style.animationDuration=dur+'s';
+}
 async function loadIndices(){
   if(_indicesLoaded)return;
   try{
     const data=await fetch(API+'/indices').then(r=>r.json());
     if(!Array.isArray(data)||data.length===0)return;
-    const items=data.map(d=>{
+    _indicesHTML=data.map(d=>{
       const up=d.pct>=0;
       const sign=up?'+':'';
       return`<span class="ticker-item"><span class="ticker-name">${esc(d.name)}</span><span class="ticker-val">${Number(d.price).toLocaleString('en-US',{maximumFractionDigits:2})}</span><span class="ticker-pct ${up?'up':'down'}">${sign}${d.pct}%</span></span>`;
     }).join('');
-    const scroll=document.getElementById('tickerScroll');
-    // כפול — כדי שהלולאה תהיה חלקה (מחצית נעלמת, מחצית ממשיכה)
-    scroll.innerHTML=items+items;
-    // קצב: ~70px לשנייה — מהיר מספיק שיהיה מוחש, איטי מספיק לקריאה
-    const itemWidth=scroll.scrollWidth/2;
-    const dur=Math.round(itemWidth/70);
-    scroll.style.animationDuration=dur+'s';
+    renderIndices();
     _indicesLoaded=true;
     // מרענן כל 5 דקות בשקט
     setTimeout(()=>{_indicesLoaded=false;loadIndices();},5*60*1000);
   }catch(e){/* שקט — הטיקר הוא דקורטיבי */}
 }
+// שינוי רוחב חלון משנה כמה עותקים צריך — מחשבים מחדש בהשהיה קלה
+let _idxResize=null;
+window.addEventListener('resize',()=>{clearTimeout(_idxResize);_idxResize=setTimeout(renderIndices,250);});
 
 // ── בריחת תווים לכל טקסט שמגיע מבחוץ (Yahoo / Finnhub) ולפני שרשור ל-HTML.
 // שם חברה או כותרת עם גרש או תו < שוברים אחרת את המבנה ומאפשרים הזרקה. ──
