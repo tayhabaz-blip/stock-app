@@ -263,6 +263,39 @@
   .sig-green{background:rgba(74,222,128,0.14);color:var(--up);border:1px solid rgba(74,222,128,0.28)}
   .sig-red{background:rgba(248,113,113,0.14);color:var(--dn);border:1px solid rgba(248,113,113,0.28)}
   .sig-blue{background:rgba(0,240,255,0.12);color:#9ffcff;border:1px solid rgba(0,240,255,0.28)}
+  .cmp-inputs{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .cmp-inputs input{flex:1;min-width:120px;font-size:14px;font-family:var(--mono);text-transform:uppercase;
+    background:rgba(0,240,255,0.05);border:1px solid rgba(0,240,255,0.34);border-radius:10px;
+    padding:11px 13px;color:#9ffcff;outline:none}
+  .cmp-inputs input:focus{border-color:var(--cy);box-shadow:0 0 16px rgba(0,240,255,0.25)}
+  .cmp-inputs input::placeholder{color:rgba(0,240,255,0.3);text-transform:none}
+  .cmp-vs{font-size:11px;color:var(--mg);font-family:var(--mono);flex-shrink:0}
+  .cmp-head{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+  .cmp-card{padding:1.1rem;border-radius:12px;background:var(--panel);border:1px solid var(--line);text-align:center}
+  .cmp-card.a{border-color:rgba(0,240,255,0.42)}
+  .cmp-card.b{border-color:rgba(255,45,149,0.42)}
+  .cmp-tick{font-size:19px;font-weight:700;font-family:var(--mono)}
+  .cmp-card.a .cmp-tick{color:#9ffcff}
+  .cmp-card.b .cmp-tick{color:#ff8ac4}
+  .cmp-name{font-size:11px;color:var(--dim);margin:3px 0 7px;min-height:14px}
+  .cmp-price{font-size:17px;font-weight:700;font-family:var(--mono);color:#fff}
+  .cmp-chg{font-size:12px;font-weight:700;font-family:var(--mono);margin-top:2px}
+  .cmp-table{border-radius:12px;overflow:hidden;border:1px solid var(--line);margin-bottom:14px}
+  .cmp-row{display:grid;grid-template-columns:1fr 1.1fr 1fr;align-items:center;
+    border-bottom:1px solid rgba(0,240,255,0.09);font-family:var(--mono)}
+  .cmp-row:last-child{border-bottom:none}
+  .cmp-row>div{padding:11px 10px;font-size:13px}
+  .cmp-lbl{text-align:center;font-size:10.5px !important;color:rgba(0,240,255,0.6);
+    text-transform:uppercase;letter-spacing:0.08em;background:rgba(0,240,255,0.035)}
+  .cmp-val{text-align:center;color:var(--txt)}
+  .cmp-val.win{color:var(--up);font-weight:700;text-shadow:0 0 11px rgba(74,222,128,0.42)}
+  .cmp-note{font-size:11.5px;color:var(--faint);text-align:center;margin-top:10px;line-height:1.7}
+  @media (max-width:600px){
+    .cmp-inputs input{min-width:0}
+    .cmp-vs{display:none}
+    .cmp-row>div{padding:9px 5px;font-size:12px}
+    .cmp-lbl{font-size:9.5px !important}
+  }
   .disclaimer{max-width:960px;margin:2.5rem auto 0;padding:1rem 1.5rem 2rem;font-size:11.5px;
     line-height:1.75;color:var(--faint);border-top:1px solid var(--line);text-align:center}
 
@@ -387,6 +420,7 @@ if ('serviceWorker' in navigator) {
     <button class="nav-btn" id="btnAnalyze" onclick="showAnalyze()">ניתוח מניה</button>
     <button class="nav-btn" id="btnWatchlist" onclick="showWatchlist()">מעקב ⭐</button>
     <button class="nav-btn" id="btnScan" onclick="showScanner()">סריקת מניות 🔍</button>
+    <button class="nav-btn" id="btnCompare" onclick="showCompare()">השוואה ⚖</button>
   </div>
 </nav>
 
@@ -438,6 +472,19 @@ if ('serviceWorker' in navigator) {
     <button class="scan-btn" style="background:transparent;border:1px solid rgba(63,169,224,0.4);color:#7fd8ff" onclick="runScan('wl')">סרוק את רשימת המעקב ⭐</button>
     <div id="scanResults" style="margin-top:1.5rem">
       <div class="empty"><div class="empty-icon">🔍</div><div class="empty-title">לחץ הרץ סריקה</div></div>
+    </div>
+  </div>
+  <div id="comparePage" style="display:none">
+    <div style="font-size:20px;font-weight:600;margin-bottom:8px">השוואת מניות ⚖</div>
+    <div style="font-size:13px;color:rgba(255,255,255,0.4);margin-bottom:14px">שתי מניות זו מול זו — מכפיל, צמיחה, RSI, סנטימנט ומחיר מנורמל</div>
+    <div class="cmp-inputs">
+      <input type="text" id="cmpA" placeholder="מניה ראשונה... NVDA" onkeydown="if(event.key==='Enter')runCompare()"/>
+      <span class="cmp-vs">מול</span>
+      <input type="text" id="cmpB" placeholder="מניה שנייה... AMD" onkeydown="if(event.key==='Enter')runCompare()"/>
+      <button class="scan-btn" style="margin:0" onclick="runCompare()">השווה ←</button>
+    </div>
+    <div id="cmpResults" style="margin-top:1.5rem">
+      <div class="empty"><div class="empty-icon">⚖</div><div class="empty-title">הכנס שתי מניות להשוואה</div></div>
     </div>
   </div>
 </main>
@@ -601,9 +648,9 @@ function stopAllTimers(){Object.keys(timers).forEach(stopTimer);}
 // ── NAV ──
 function setPage(id){
   stopAllTimers();
-  ['homePage','analyzePage','watchlistPage','scanPage'].forEach(p=>document.getElementById(p).style.display='none');
+  ['homePage','analyzePage','watchlistPage','scanPage','comparePage'].forEach(p=>document.getElementById(p).style.display='none');
   document.getElementById(id).style.display='block';
-  ['btnHome','btnAnalyze','btnWatchlist','btnScan'].forEach(b=>document.getElementById(b).classList.remove('active'));
+  ['btnHome','btnAnalyze','btnWatchlist','btnScan','btnCompare'].forEach(b=>document.getElementById(b).classList.remove('active'));
 }
 function showHome(){setPage('homePage');document.getElementById('btnHome').classList.add('active');loadNews();timers.news=setInterval(loadNews,5*60*1000);loadIndices();}
 function showAnalyze(){
@@ -616,6 +663,7 @@ function showAnalyze(){
 }
 function showWatchlist(){setPage('watchlistPage');document.getElementById('btnWatchlist').classList.add('active');renderWL();stopTimer('wl');timers.wl=setInterval(()=>loadWLQuotes(getWL()),60000);}
 function showScanner(){setPage('scanPage');document.getElementById('btnScan').classList.add('active');}
+function showCompare(){setPage('comparePage');document.getElementById('btnCompare').classList.add('active');}
 function loadHome(){const t=document.getElementById('homeInput').value.trim().toUpperCase();if(!t)return;showAnalyze();document.getElementById('ticker').value=t;analyze();}
 
 // ── כשהטאב ברקע אין טעם להמשיך לדגום; חוזרים לדגום כשחוזרים אליו ──
@@ -736,6 +784,128 @@ async function loadWLQuotes(list){
   }
 }
 function loadWL(t){showAnalyze();document.getElementById('ticker').value=t;analyze();}
+
+// ── COMPARE ──
+// שתי מניות זו מול זו. הנתונים מגיעים מ-/stock (הכל בקריאה אחת לכל מניה),
+// והמנצח בכל שורה מסומן. "מנצח" הוא תמיד לפי כלל מפורש שכתוב ליד המדד —
+// אין כאן שקלול סמוי לציון אחד, כי לשתי מניות בסקטורים שונים זה חסר משמעות.
+let _cmpBusy=false;
+function cmpPct(a,b){ if(a==null||b==null)return null; return a-b; }
+
+async function runCompare(){
+  if(_cmpBusy)return;
+  const raw=id=>String(document.getElementById(id).value||'').trim().toUpperCase();
+  const ta=validTicker(raw('cmpA'))?raw('cmpA'):null;
+  const tb=validTicker(raw('cmpB'))?raw('cmpB'):null;
+  const box=document.getElementById('cmpResults');
+  if(!ta||!tb){box.innerHTML='<div class="error-state">צריך שני טיקרים תקינים</div>';return;}
+  if(ta===tb){box.innerHTML='<div class="error-state">בחר שתי מניות שונות</div>';return;}
+  _cmpBusy=true;
+  box.innerHTML='<div class="loading-state">טוען '+esc(ta)+' מול '+esc(tb)+'...</div>';
+  const slow=setTimeout(()=>{
+    if(box.querySelector('.loading-state'))
+      box.innerHTML='<div class="loading-state">מעיר את השרת, זה עשוי לקחת עד דקה...</div>';
+  },6000);
+  try{
+    const [ra,rb]=await Promise.all([fetch(API+'/stock/'+ta),fetch(API+'/stock/'+tb)]);
+    clearTimeout(slow);
+    const [da,db]=await Promise.all([ra.json(),rb.json()]);
+    if(da.error||db.error)throw new Error(da.error||db.error);
+    renderCompare(da,db);
+  }catch(e){
+    clearTimeout(slow);
+    box.innerHTML='<div class="error-state">לא ניתן לטעון את ההשוואה — בדוק את הטיקרים ונסה שוב</div>';
+  }finally{_cmpBusy=false;}
+}
+
+function cmpLast(arr){
+  if(!Array.isArray(arr))return null;
+  for(let i=arr.length-1;i>=0;i--) if(typeof arr[i]==='number'&&isFinite(arr[i]))return arr[i];
+  return null;
+}
+
+function renderCompare(a,b){
+  const box=document.getElementById('cmpResults');
+  const pa=cmpLast(a.closes),pb=cmpLast(b.closes);
+  const ca=a.closes.filter(v=>v!==null),cb=b.closes.filter(v=>v!==null);
+  const dayA=ca.length>1?(ca[ca.length-1]-ca[ca.length-2])/ca[ca.length-2]*100:null;
+  const dayB=cb.length>1?(cb[cb.length-1]-cb[cb.length-2])/cb[cb.length-2]*100:null;
+  const rsiA=cmpLast(rsi(a.closes)),rsiB=cmpLast(rsi(b.closes));
+  const yrA=ca.length>1?(ca[ca.length-1]-ca[0])/ca[0]*100:null;
+  const yrB=cb.length>1?(cb[cb.length-1]-cb[0])/cb[0]*100:null;
+  const grA=a.earnings_growth!=null?a.earnings_growth:a.revenue_growth;
+  const grB=b.earnings_growth!=null?b.earnings_growth:b.revenue_growth;
+
+  box.textContent='';
+  const head=document.createElement('div');head.className='cmp-head';
+  [[a,pa,dayA,'a'],[b,pb,dayB,'b']].forEach(([d,p,dy,cls])=>{
+    const c=document.createElement('div');c.className='cmp-card '+cls;
+    const t=document.createElement('div');t.className='cmp-tick';t.textContent=d.ticker;
+    const n=document.createElement('div');n.className='cmp-name';n.textContent=d.name||'';
+    const pr=document.createElement('div');pr.className='cmp-price';pr.textContent=p!=null?'$'+p.toFixed(2):'—';
+    const ch=document.createElement('div');
+    ch.className='cmp-chg '+(dy!=null&&dy>=0?'up':'down');
+    ch.textContent=dy!=null?((dy>=0?'▲ +':'▼ ')+dy.toFixed(2)+'%'):'—';
+    c.append(t,n,pr,ch);head.append(c);
+  });
+  box.append(head);
+
+  // ── mode: 'low' = נמוך עדיף, 'high' = גבוה עדיף, null = בלי מנצח ──
+  const rows=[
+    ['שווי שוק',      a.market_cap, b.market_cap, v=>fmt(v),                       null],
+    ['מכפיל P/E',     a.pe_ratio,   b.pe_ratio,   v=>v!=null?v.toFixed(1):'—',     'low'],
+    ['צמיחה',         grA,          grB,          v=>v!=null?(v*100).toFixed(1)+'%':'—','high'],
+    ['תשואת שנה',     yrA,          yrB,          v=>v!=null?(v>=0?'+':'')+v.toFixed(1)+'%':'—','high'],
+    ['RSI (14)',      rsiA,         rsiB,         v=>v!=null?v.toFixed(1):'—',     null],
+    ['דיבידנד',       a.dividend_pct,b.dividend_pct,v=>v!=null?v.toFixed(2)+'%':'—','high'],
+    ['סקטור',         a.sector,     b.sector,     v=>v||'—',                       null]
+  ];
+  const table=document.createElement('div');table.className='cmp-table';
+  rows.forEach(([label,va,vb,f,mode])=>{
+    const r=document.createElement('div');r.className='cmp-row';
+    const ea=document.createElement('div');ea.className='cmp-val';ea.textContent=f(va);
+    const el=document.createElement('div');el.className='cmp-lbl';el.textContent=label;
+    const eb=document.createElement('div');eb.className='cmp-val';eb.textContent=f(vb);
+    // מסמנים מנצח רק כששני הערכים מספריים ושונים — אחרת אין מה להשוות
+    if(mode&&typeof va==='number'&&typeof vb==='number'&&isFinite(va)&&isFinite(vb)&&va!==vb){
+      const aWins=(mode==='low')?(va<vb):(va>vb);
+      // מכפיל שלילי אינו "זול" — חברה מפסידה. לא מכריזים מנצח.
+      const bad=(mode==='low')&&(va<=0||vb<=0);
+      if(!bad)(aWins?ea:eb).classList.add('win');
+    }
+    r.append(ea,el,eb);table.append(r);
+  });
+  box.append(table);
+
+  // ── גרף מנורמל: שתיהן מתחילות ב-100, כדי שמניה של $500 ואחת של $20
+  // יהיו ברות השוואה. בלי נרמול הגרף היה חסר משמעות. ──
+  const card=document.createElement('div');card.className='chart-card';
+  const hd=document.createElement('div');hd.className='chart-header';
+  const ht=document.createElement('div');ht.className='chart-header-title';
+  ht.textContent='ביצועים יחסיים — 12 חודשים (בסיס 100)';
+  hd.append(ht);card.append(hd);
+  const cv=document.createElement('canvas');cv.height=90;card.append(cv);
+  box.append(card);
+  const note=document.createElement('div');note.className='cmp-note';
+  note.textContent='ירוק מסמן את העדיף בשורה לפי הכלל שלצידה. שווי שוק, RSI וסקטור מוצגים להקשר בלבד ואין בהם "מנצח". אין כאן ייעוץ השקעות.';
+  box.append(note);
+
+  const norm2=arr=>{const c=arr.filter(v=>v!==null);if(!c.length)return[];const base=c[0]||1;return c.map(v=>v/base*100);};
+  const na=norm2(a.closes),nb=norm2(b.closes);
+  const len=Math.min(na.length,nb.length);
+  const labels=(a.labels||[]).slice(-len);
+  if(window.cmpChart){window.cmpChart.destroy();window.cmpChart=null;}
+  if(typeof Chart==='undefined')return;
+  window.cmpChart=new Chart(cv,{type:'line',data:{labels,datasets:[
+    {label:a.ticker,data:na.slice(-len),borderColor:'#00f0ff',backgroundColor:'rgba(0,240,255,0.08)',
+     borderWidth:2,pointRadius:0,tension:0.25,fill:true},
+    {label:b.ticker,data:nb.slice(-len),borderColor:'#ff2d95',backgroundColor:'rgba(255,45,149,0.08)',
+     borderWidth:2,pointRadius:0,tension:0.25,fill:true}]},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+      plugins:{legend:{labels:{color:'rgba(255,255,255,0.7)',font:{family:'JetBrains Mono'}}}},
+      scales:{x:{display:false},y:{ticks:{color:'rgba(255,255,255,0.35)',font:{family:'JetBrains Mono',size:10}},
+        grid:{color:'rgba(0,240,255,0.07)'}}}}});
+}
 
 // ── SCANNER ──
 function trendBgSvg(arr){
