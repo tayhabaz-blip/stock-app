@@ -1072,3 +1072,129 @@ class TestScanConstants:
 
     def test_max_ttl_at_least_one_hour(self):
         assert _MAX_TTL >= 3600
+
+
+class TestIndicesEndpoint:
+    """‏/indices מקבל ?ids= מהלקוח, ולכן הוא נקודת הכניסה היחידה שבה
+    קלט חיצוני בוחר איזה סימבול נמשוך מיאהו. הבדיקות כאן מוודאות
+    שהמיפוי סגור ושלא ניתן להרחיב אותו מבחוץ."""
+
+    def setup_method(self):
+        _clear_cache()
+        _clear_rate()
+
+    def _mock_yf(self, price=100.0, prev=98.0):
+        mock_ticker = MagicMock()
+        mock_ticker.fast_info = {"last_price": price, "previous_close": prev}
+        return mock_ticker
+
+    def test_no_ids_uses_us_default(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = self._mock_yf()
+            r = client.get("/indices")
+        assert r.status_code == 200
+        assert [d["id"] for d in r.json()] == api.DEFAULT_INDICES
+
+    def test_default_is_us_only(self):
+        us = {"sp500", "nasdaq", "dow", "russell", "vix"}
+        assert set(api.DEFAULT_INDICES) == us
+
+    def test_explicit_ids_are_honoured(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = self._mock_yf()
+            r = client.get("/indices?ids=dax,nikkei")
+        assert [d["id"] for d in r.json()] == ["dax", "nikkei"]
+
+    def test_unknown_ids_are_dropped(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = self._mock_yf()
+            r = client.get("/indices?ids=sp500,notreal,alsofake")
+        assert [d["id"] for d in r.json()] == ["sp500"]
+
+    def test_arbitrary_symbol_is_not_fetched(self):
+        """‏?ids=^EVIL לא אמור להגיע ל-yfinance בשום צורה."""
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = self._mock_yf()
+            client.get("/indices?ids=%5EEVIL,AAPL,../../etc/passwd")
+        called = [c.args[0] for c in mock_yf.Ticker.call_args_list]
+        assert all(s in api.WORLD_INDICES.values() for s in called)
+
+    def test_all_unknown_falls_back_to_default(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = self._mock_yf()
+            r = client.get("/indices?ids=nope,nada")
+        assert [d["id"] for d in r.json()] == api.DEFAULT_INDICES
+
+    def test_duplicates_are_collapsed(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = self._mock_yf()
+            r = client.get("/indices?ids=dax,dax,dax")
+        assert [d["id"] for d in r.json()] == ["dax"]
+
+    def test_request_is_capped(self):
+        every = ",".join(api.WORLD_INDICES.keys())
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = self._mock_yf()
+            r = client.get("/indices?ids=" + every)
+        assert len(r.json()) <= api.MAX_INDICES
+
+    def test_pct_is_computed_from_previous_close(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = self._mock_yf(price=110.0, prev=100.0)
+            r = client.get("/indices?ids=sp500")
+        assert r.json()[0]["pct"] == 10.0
+
+    def test_negative_move_is_negative_pct(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = self._mock_yf(price=90.0, prev=100.0)
+            r = client.get("/indices?ids=sp500")
+        assert r.json()[0]["pct"] == -10.0
+
+    def test_zero_previous_close_does_not_divide_by_zero(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = self._mock_yf(price=100.0, prev=0.0)
+            r = client.get("/indices?ids=sp500")
+        assert r.status_code == 200
+        assert r.json()[0]["pct"] == 0.0
+
+    def test_failing_index_is_skipped_not_fatal(self):
+        good = self._mock_yf()
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.side_effect = [Exception("boom"), good]
+            r = client.get("/indices?ids=sp500,dax")
+        assert r.status_code == 200
+        assert [d["id"] for d in r.json()] == ["dax"]
+
+    def test_different_selections_do_not_share_cache(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = self._mock_yf()
+            first = client.get("/indices?ids=sp500").json()
+            second = client.get("/indices?ids=dax").json()
+        assert [d["id"] for d in first] == ["sp500"]
+        assert [d["id"] for d in second] == ["dax"]
+
+    def test_same_selection_is_cached(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = self._mock_yf()
+            client.get("/indices?ids=dax")
+            calls_after_first = mock_yf.Ticker.call_count
+            client.get("/indices?ids=dax")
+            assert mock_yf.Ticker.call_count == calls_after_first
+
+    def test_id_order_is_ignored_by_cache_key(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = self._mock_yf()
+            client.get("/indices?ids=dax,ftse")
+            n = mock_yf.Ticker.call_count
+            client.get("/indices?ids=ftse,dax")
+        assert mock_yf.Ticker.call_count == n
+
+    def test_every_catalog_symbol_is_a_string(self):
+        for iid, sym in api.WORLD_INDICES.items():
+            assert isinstance(sym, str) and sym.strip()
+
+    def test_rate_limit_blocks_flood(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = self._mock_yf()
+            codes = [client.get("/indices?ids=sp500").status_code for _ in range(30)]
+        assert 429 in codes
