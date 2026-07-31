@@ -221,6 +221,19 @@
   .wl-ticker{font-size:15px;font-weight:700;font-family:var(--mono);color:#9ffcff}
   .wl-remove{font-size:18px;color:rgba(255,255,255,0.2);cursor:pointer;padding:4px 8px}
   .wl-remove:hover{color:var(--dn);text-shadow:0 0 10px rgba(248,113,113,0.7)}
+  .wl-main{flex:1;min-width:0}
+  .wl-spark{width:82px;flex-shrink:0;opacity:0.85}
+  .wl-spark svg{width:100%;height:26px;display:block}
+  .wl-quote{text-align:left;min-width:88px;flex-shrink:0;font-family:var(--mono)}
+  .wl-price{font-size:14px;font-weight:700;color:#fff}
+  .wl-price.wl-muted{color:var(--faint);font-weight:400}
+  .wl-chg{font-size:11.5px;font-weight:700;margin-top:2px;min-height:14px}
+  .watchlist-item{gap:12px}
+  @media (max-width:600px){
+    .wl-spark{width:56px}
+    .wl-quote{min-width:74px}
+    .wl-price{font-size:13px}
+  }
   .add-btn{width:100%;padding:12px;border-radius:9px;border:1px dashed rgba(0,240,255,0.36);
     background:transparent;color:rgba(0,240,255,0.7);font-size:12.5px;cursor:pointer;
     font-family:var(--mono);margin-top:12px}
@@ -573,7 +586,7 @@ function safeUrl(u){
 
 // ── ניהול טיימרים במקום אחד. בלי זה הם ממשיכים לרוץ אחרי מעבר דף
 // ומושכים נתונים ברקע לנצח, גם כשהטאב לא פעיל. ──
-const timers={price:null,news:null};
+const timers={price:null,news:null,wl:null};
 function stopTimer(k){if(timers[k]){clearInterval(timers[k]);timers[k]=null;}}
 function stopAllTimers(){Object.keys(timers).forEach(stopTimer);}
 
@@ -593,7 +606,7 @@ function showAnalyze(){
     stopTimer('price');timers.price=setInterval(updatePrice,30000);
   }
 }
-function showWatchlist(){setPage('watchlistPage');document.getElementById('btnWatchlist').classList.add('active');renderWL();}
+function showWatchlist(){setPage('watchlistPage');document.getElementById('btnWatchlist').classList.add('active');renderWL();stopTimer('wl');timers.wl=setInterval(()=>loadWLQuotes(getWL()),60000);}
 function showScanner(){setPage('scanPage');document.getElementById('btnScan').classList.add('active');}
 function loadHome(){const t=document.getElementById('homeInput').value.trim().toUpperCase();if(!t)return;showAnalyze();document.getElementById('ticker').value=t;analyze();}
 
@@ -655,17 +668,57 @@ function renderWL(){
   if(!l.length){box.innerHTML='<div class="watchlist-empty">⭐<div style="margin-top:8px">אין מניות ברשימה</div></div>';return;}
   box.textContent='';
   l.forEach(t=>{
-    const row=document.createElement('div');row.className='watchlist-item';
+    const row=document.createElement('div');row.className='watchlist-item';row.dataset.t=t;
+    const left=document.createElement('div');left.className='wl-main';
     const name=document.createElement('div');name.className='wl-ticker';name.textContent=t;
+    left.append(name);
+    const spark=document.createElement('div');spark.className='wl-spark';
+    const quote=document.createElement('div');quote.className='wl-quote';
+    const price=document.createElement('div');price.className='wl-price';price.textContent='···';
+    const chg=document.createElement('div');chg.className='wl-chg';
+    quote.append(price,chg);
     const x=document.createElement('span');x.className='wl-remove';x.textContent='×';
     x.addEventListener('click',e=>{e.stopPropagation();removeWL(t);});
-    row.append(name,x);
+    row.append(left,spark,quote,x);
     row.addEventListener('click',()=>loadWL(t));
     box.append(row);
   });
   const add=document.createElement('button');add.className='add-btn';add.textContent='+ הוסף מניה';
   add.addEventListener('click',showAnalyze);
   box.append(add);
+  loadWLQuotes(l);
+}
+
+// ── מחירים חיים לרשימת המעקב.
+// בקשה מרוכזת אחת ל-/quotes לכל הרשימה; אם היא נכשלת הרשימה
+// נשארת שמישה ומציגה '—' במקום להיעלם. ──
+let _wlQuotesAt=0;
+async function loadWLQuotes(list){
+  if(!list||!list.length)return;
+  try{
+    const res=await fetch(API+'/quotes?tickers='+encodeURIComponent(list.join(',')));
+    if(!res.ok)throw new Error('bad status');
+    const data=await res.json();
+    if(!Array.isArray(data))throw new Error('bad shape');
+    const by=new Map(data.map(d=>[d.ticker,d]));
+    document.querySelectorAll('#wlBox .watchlist-item').forEach(row=>{
+      const d=by.get(row.dataset.t);
+      const price=row.querySelector('.wl-price');
+      const chg=row.querySelector('.wl-chg');
+      const spark=row.querySelector('.wl-spark');
+      if(!d){price.textContent='—';price.classList.add('wl-muted');return;}
+      const up=d.pct>=0;
+      price.textContent='$'+Number(d.price).toFixed(2);
+      chg.textContent=(up?'▲ +':'▼ ')+d.pct+'%';
+      chg.className='wl-chg '+(up?'up':'down');
+      if(spark)spark.innerHTML=sparkSvg(d.spark,'#4bb8d4');
+    });
+    _wlQuotesAt=Date.now();
+  }catch(e){
+    document.querySelectorAll('#wlBox .wl-price').forEach(p=>{
+      if(p.textContent==='···'){p.textContent='—';p.classList.add('wl-muted');}
+    });
+  }
 }
 function loadWL(t){showAnalyze();document.getElementById('ticker').value=t;analyze();}
 
@@ -696,14 +749,17 @@ function trendBgSvg(arr){
     '<polyline points="'+line+'" fill="none" stroke="url(#trendLineGrad)" stroke-width="3" vector-effect="non-scaling-stroke"/>'+
     '</svg>';
 }
-function sparkSvg(input){
+function sparkSvg(input,forceColor){
   if(!Array.isArray(input))return'';
   const arr=input.filter(function(x){return typeof x==='number'&&isFinite(x);});
   if(arr.length<2)return'';
   const min=Math.min.apply(null,arr),max=Math.max.apply(null,arr),range=(max-min)||1;
   const w=100,h=28;
   const pts=arr.map(function(v,i){const x=i/(arr.length-1)*w;const y=h-((v-min)/range)*h;return x+','+y;}).join(' ');
-  const color=arr[arr.length-1]>=arr[0]?'#4ade80':'#f87171';
+  // ברשימת המעקב הגרף מכסה 30 יום בעוד האחוז לצידו הוא יומי, ולכן צבע
+  // לפי מגמת הגרף היה סותר חזותית את האחוז (ירוק +2% ליד קו אדום).
+  // שם מועבר צבע ניטרלי: הצורה מספרת את החודש, האחוז את היום.
+  const color=forceColor||(arr[arr.length-1]>=arr[0]?'#4ade80':'#f87171');
   return '<svg class="scan-spark" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none"><polyline points="'+pts+'" fill="none" stroke="'+color+'" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 }
 function scanGrade(r){
