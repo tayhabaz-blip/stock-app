@@ -236,7 +236,9 @@ def get_price(ticker: str, request: Request):
     if not rate_ok(request, "price", 120, 60):
         return err(429, "יותר מדי בקשות — נסה שוב בעוד רגע")
     key = "price:" + ticker
-    cached = cache_get(key, 30)
+    # 15 שניות — תואם לקצב הדגימה של הפרונטאנד בשעות המסחר.
+    # ערך גבוה יותר גרם לכך שחצי מהבקשות חזרו עם אותו מחיר בדיוק.
+    cached = cache_get(key, 15)
     if cached:
         return cached
     try:
@@ -397,7 +399,8 @@ def get_quotes(request: Request, tickers: str = ""):
     if not syms:
         return []
     key = "quotes:" + ",".join(sorted(syms))
-    cached = cache_get(key, 60)
+    # 30 שניות — תואם לרענון רשימת המעקב בשעות המסחר
+    cached = cache_get(key, 30)
     if cached is not None:
         return cached
     try:
