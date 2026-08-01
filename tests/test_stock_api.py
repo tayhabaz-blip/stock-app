@@ -1005,6 +1005,131 @@ class TestAIEndpoint:
         assert mock_r.post.call_count == 1
 
 
+class TestSplitBattle:
+    def test_both_sections_present(self):
+        text = "BULL:\nהמניה נראית חזקה מאוד.\nBEAR:\nיש סיכון ברור לירידה."
+        bull, bear = api._split_battle(text)
+        assert bull == "המניה נראית חזקה מאוד."
+        assert bear == "יש סיכון ברור לירידה."
+
+    def test_case_insensitive_labels(self):
+        text = "bull:\nטיעון שורי.\nbear:\nטיעון דובי."
+        bull, bear = api._split_battle(text)
+        assert bull == "טיעון שורי."
+        assert bear == "טיעון דובי."
+
+    def test_missing_bear_section(self):
+        text = "BULL:\nרק טיעון שורי כאן."
+        bull, bear = api._split_battle(text)
+        assert bull == "רק טיעון שורי כאן."
+        assert bear == ""
+
+    def test_missing_bull_section(self):
+        text = "BEAR:\nרק טיעון דובי כאן."
+        bull, bear = api._split_battle(text)
+        assert bull == ""
+        assert bear == "רק טיעון דובי כאן."
+
+    def test_empty_text(self):
+        bull, bear = api._split_battle("")
+        assert bull == "" and bear == ""
+
+    def test_multiline_sections(self):
+        text = "BULL:\nשורה ראשונה.\nשורה שנייה.\nBEAR:\nשורה שלישית.\nשורה רביעית."
+        bull, bear = api._split_battle(text)
+        assert "שורה ראשונה" in bull and "שורה שנייה" in bull
+        assert "שורה שלישית" in bear and "שורה רביעית" in bear
+
+
+class TestAIBattleEndpoint:
+    def setup_method(self):
+        _clear_cache()
+        _clear_rate()
+
+    def test_no_groq_key_returns_empty(self):
+        with patch.object(api, "GROQ_KEY", ""):
+            r = client.post("/ai/battle", json={"ticker": "AAPL", "trend": "up"})
+        assert r.status_code == 200
+        j = r.json()
+        assert j.get("bull") == "" and j.get("bear") == ""
+
+    def test_rate_limit_returns_429(self):
+        """Exhaust the /ai/battle rate bucket (12 per 60s) and expect 429."""
+        req = _fake_request("8.8.4.4")
+        for _ in range(12):
+            rate_ok(req, "ai_battle", 12, 60)
+        r = client.post(
+            "/ai/battle",
+            json={"ticker": "AAPL"},
+            headers={"x-forwarded-for": "8.8.4.4"},
+        )
+        assert r.status_code == 429
+
+    def test_valid_groq_response_split_and_cached(self):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": "BULL:\nטיעון שורי.\nBEAR:\nטיעון דובי."}}]
+        }
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r:
+            mock_r.post.return_value = mock_resp
+            r1 = client.post("/ai/battle", json={"ticker": "AAPL", "trend": "up",
+                                                   "rsiTxt": "neutral", "rsiNum": 55,
+                                                   "bullPct": 60, "bearPct": 10})
+            r2 = client.post("/ai/battle", json={"ticker": "AAPL", "trend": "up",
+                                                   "rsiTxt": "neutral", "rsiNum": 55,
+                                                   "bullPct": 60, "bearPct": 10})
+        assert r1.status_code == 200
+        j1 = r1.json()
+        assert j1.get("bull") == "טיעון שורי."
+        assert j1.get("bear") == "טיעון דובי."
+        # Groq called only once — second request served from cache
+        assert mock_r.post.call_count == 1
+        assert r2.json() == j1
+
+    def test_only_one_groq_call_per_request(self):
+        """The battle must NOT double AI usage: exactly one Groq call per uncached request."""
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": "BULL:\nא.\nBEAR:\nב."}}]
+        }
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r:
+            mock_r.post.return_value = mock_resp
+            client.post("/ai/battle", json={"ticker": "TSLA", "trend": "up"})
+        assert mock_r.post.call_count == 1
+
+    def test_no_choices_returns_empty(self):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"unexpected": "format"}
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r:
+            mock_r.post.return_value = mock_resp
+            r = client.post("/ai/battle", json={"ticker": "AAPL"})
+        assert r.status_code == 200
+        j = r.json()
+        assert j.get("bull") == "" and j.get("bear") == ""
+
+    def test_groq_exception_returns_empty(self):
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r:
+            mock_r.post.side_effect = Exception("network error")
+            r = client.post("/ai/battle", json={"ticker": "AAPL"})
+        assert r.status_code == 200
+        j = r.json()
+        assert j.get("bull") == "" and j.get("bear") == ""
+
+    def test_daily_budget_exhausted_returns_empty(self):
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch.object(api, "ai_budget_ok", return_value=False), \
+             patch("stock_api.crequests") as mock_r:
+            r = client.post("/ai/battle", json={"ticker": "AAPL", "trend": "unique-uncached"})
+        assert r.status_code == 200
+        j = r.json()
+        assert j.get("bull") == "" and j.get("bear") == ""
+        mock_r.post.assert_not_called()
+
+
 class TestNewsEndpoint:
     def setup_method(self):
         _clear_cache()
