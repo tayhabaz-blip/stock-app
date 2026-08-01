@@ -213,6 +213,39 @@ def get_stock(ticker: str, request: Request):
         return err(502, "שגיאה בשליפת נתוני המניה")
 
 
+# ── היסטוריה ארוכה — למכונת הזמן. נשמרת בנפרד מ-/stock (שמביא רק שנה)
+# כי טווחים ארוכים יותר כבדים יותר, ומטמון עם TTL ארוך בהרבה: נתוני
+# עבר לא משתנים, אז אין סיבה לרענן אותם כל 5 דקות כמו נתוני /stock. ──
+HISTORY_RANGES = {"5y", "10y", "max"}
+
+
+@app.get("/history/{ticker}")
+def get_history(ticker: str, request: Request, range: str = "5y"):
+    ticker = norm_ticker(ticker)
+    if not ticker:
+        return err(400, "טיקר לא תקין")
+    if range not in HISTORY_RANGES:
+        return err(400, "טווח לא נתמך")
+    if not rate_ok(request, "history", 30, 60):
+        return err(429, "יותר מדי בקשות — נסה שוב בעוד רגע")
+    key = "history:" + ticker + ":" + range
+    cached = cache_get(key, 3600)
+    if cached:
+        return cached
+    try:
+        stock = yf.Ticker(ticker, session=session)
+        hist = stock.history(period=range)
+        if hist.empty:
+            return err(404, "מניה לא נמצאה")
+        closes = [clean(v) for v in hist["Close"].tolist()]
+        labels = [str(d.date()) for d in hist.index]
+        result = {"ticker": ticker, "range": range, "closes": closes, "labels": labels}
+        return cache_set(key, result)
+    except Exception:
+        log.exception("get_history failed for %s (%s)", ticker, range)
+        return err(502, "שגיאה בשליפת ההיסטוריה של המניה")
+
+
 # ── מחיר בלבד — קל משקל, לרענון כל 30 שניות (מטמון 30 שניות) ──
 def _extended_hours_window():
     """True כשעדיין לא/כבר לא נמצאים בשעות המסחר הרגילות של ניו יורק —
