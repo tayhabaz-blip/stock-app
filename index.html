@@ -185,6 +185,10 @@
   .sentiment-label-bull{color:var(--up);font-weight:600}
   .sentiment-label-bear{color:var(--dn);font-weight:600}
   .sentiment-label-neutral{color:var(--txt2)}
+  .wl-pulse{margin-bottom:14px}
+  .wl-pulse-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px}
+  .wl-pulse-title{font-size:12.5px;font-weight:600;color:var(--txt2)}
+  .wl-pulse-summary{font-size:11.5px;font-family:var(--mono);color:var(--txt3)}
   .sentiment-votes{display:flex;gap:7px;flex-wrap:wrap}
   .vote-chip{font-size:11px;font-weight:500;padding:5px 11px;border-radius:6px;
     border:1px solid var(--line);color:var(--txt2);font-family:var(--mono)}
@@ -467,6 +471,13 @@ if ('serviceWorker' in navigator) {
   </div>
   <div id="watchlistPage" style="display:none">
     <div style="font-size:20px;font-weight:600;margin-bottom:1.5rem">רשימת מעקב ⭐</div>
+    <div class="wl-pulse" id="wlPulse" hidden>
+      <div class="wl-pulse-head">
+        <span class="wl-pulse-title">📊 דופק שוק</span>
+        <span class="wl-pulse-summary" id="wlPulseSummary"></span>
+      </div>
+      <div class="sentiment-bar-wrap" id="wlPulseBar"></div>
+    </div>
     <div class="glass" id="wlBox"></div>
   </div>
   <div id="scanPage" style="display:none">
@@ -886,7 +897,9 @@ function addWL(t){if(!validTicker(t))return;const l=getWL();if(!l.includes(t)){l
 function removeWL(t){saveWL(getWL().filter(x=>x!==t));renderWL();}
 function renderWL(){
   const l=getWL();const box=document.getElementById('wlBox');
-  if(!l.length){box.innerHTML='<div class="watchlist-empty">⭐<div style="margin-top:8px">אין מניות ברשימה</div></div>';return;}
+  if(!l.length){box.innerHTML='<div class="watchlist-empty">⭐<div style="margin-top:8px">אין מניות ברשימה</div></div>';
+    const pulse=document.getElementById('wlPulse');if(pulse)pulse.hidden=true;
+    return;}
   box.textContent='';
   l.forEach(t=>{
     const row=document.createElement('div');row.className='watchlist-item';row.dataset.t=t;
@@ -934,12 +947,33 @@ async function loadWLQuotes(list){
       chg.className='wl-chg '+(up?'up':'down');
       if(spark)spark.innerHTML=sparkSvg(d.spark,_indicesTint||cssVar('--alt'));
     });
+    renderWLPulse(data);
     _wlQuotesAt=Date.now();
   }catch(e){
     document.querySelectorAll('#wlBox .wl-price').forEach(p=>{
       if(p.textContent==='···'){p.textContent='—';p.classList.add('wl-muted');}
     });
   }
+}
+// ── "דופק שוק": כמה מהמניות ברשימת המעקב עולות מול יורדות היום.
+// נגזר ישירות מהתשובה של /quotes שכבר הגיעה — בלי שום קריאת רשת נוספת.
+// 0% נספר כ"עולה", בדיוק כמו הצביעה הירוקה של השורה הבודדת. ──
+function renderWLPulse(data){
+  const pulse=document.getElementById('wlPulse');
+  if(!pulse)return;
+  const valid=(data||[]).filter(d=>d&&typeof d.pct==='number');
+  if(!valid.length){pulse.hidden=true;return;}
+  let up=0,down=0;
+  valid.forEach(d=>{ if(d.pct>=0)up++; else down++; });
+  const total=up+down;
+  const upPct=Math.round(up/total*100);
+  const downPct=100-upPct;
+  pulse.hidden=false;
+  document.getElementById('wlPulseBar').innerHTML=
+    (up>0?'<div class="sentiment-bar-bull" style="width:'+upPct+'%">'+(upPct>12?upPct+'%':'')+'</div>':'')+
+    (down>0?'<div class="sentiment-bar-bear" style="width:'+downPct+'%">'+(downPct>12?downPct+'%':'')+'</div>':'');
+  document.getElementById('wlPulseSummary').textContent=
+    '🟢 '+up+' עולות'+(down?' · 🔴 '+down+' יורדות':'');
 }
 function loadWL(t){showAnalyze();document.getElementById('ticker').value=t;analyze();}
 
