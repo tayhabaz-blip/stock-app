@@ -395,6 +395,11 @@
   .dna-btn-download{background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent)}
   .dna-btn-share{background:var(--accent);color:var(--accent-fg)}
   .dna-hint{font-size:11px;color:var(--txt3);text-align:center}
+  /* ── מודל מונטה קרלו ── */
+  .mc-modal{max-width:520px}
+  .mc-range{align-self:center}
+  .mc-summary{font-size:13px;color:var(--txt2);line-height:1.9;text-align:center}
+  .mc-summary b{font-weight:700}
 </style>
 <!-- ===== PWA ===== -->
 <link rel="manifest" href="manifest.json">
@@ -1701,6 +1706,140 @@ async function openDNACard(){
     }catch(e){ /* המשתמש ביטל שיתוף, או שהדפדפן לא תומך — לא מציגים שגיאה */ }
   });
 }
+
+// ── סימולציית מונטה קרלו ("עתידים אפשריים"): תנועה גיאומטרית בראונית (GBM)
+// מבוססת על drift/volatility שנגזרים מהתשואות היומיות ההיסטוריות שכבר בזיכרון —
+// בלי שום קריאת רשת נוספת. לא תחזית — הדמיה סטטיסטית בלבד. ──
+function computeMonteCarlo(closes,price,numSims,numDays){
+  numSims=numSims||500;numDays=numDays||90;
+  const clean=(closes||[]).filter(v=>v!=null);
+  const rets=[];
+  for(let i=1;i<clean.length;i++){
+    if(clean[i-1]>0&&clean[i]>0)rets.push(Math.log(clean[i]/clean[i-1]));
+  }
+  // פחות מ-20 תשואות יומיות — אין מספיק היסטוריה למודל תנודתיות אמין
+  if(rets.length<20||!price||price<=0)return null;
+  const mu=rets.reduce((a,b)=>a+b,0)/rets.length;
+  const variance=rets.reduce((a,b)=>a+(b-mu)*(b-mu),0)/rets.length;
+  const sigma=Math.sqrt(variance);
+  const drift=mu-0.5*variance;
+  function randn(){
+    let u=0,v=0;
+    while(u===0)u=Math.random();
+    while(v===0)v=Math.random();
+    return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+  }
+  // byDay[d] = מערך המחירים של כל הסימולציות ביום d, כדי לחשב אחוזונים לפי יום
+  const byDay=[];
+  for(let d=0;d<=numDays;d++)byDay.push(new Array(numSims));
+  for(let s=0;s<numSims;s++){
+    let p=price;
+    byDay[0][s]=p;
+    for(let d=1;d<=numDays;d++){
+      p=p*Math.exp(drift+sigma*randn());
+      byDay[d][s]=p;
+    }
+  }
+  function pct(arr,q){
+    const sorted=[...arr].sort((a,b)=>a-b);
+    const idx=Math.min(sorted.length-1,Math.max(0,Math.round(q*(sorted.length-1))));
+    return sorted[idx];
+  }
+  const days=[],p10=[],p25=[],p50=[],p75=[],p90=[];
+  for(let d=0;d<=numDays;d++){
+    days.push(d);
+    p10.push(pct(byDay[d],0.10));
+    p25.push(pct(byDay[d],0.25));
+    p50.push(pct(byDay[d],0.50));
+    p75.push(pct(byDay[d],0.75));
+    p90.push(pct(byDay[d],0.90));
+  }
+  return{days,p10,p25,p50,p75,p90,mu,sigma,numSims,numDays};
+}
+let mcChart=null;
+async function openMonteCarlo(){
+  const ph=window.__priceHist;
+  if(!ph)return;
+  const mc=computeMonteCarlo(ph.closes,ph.price);
+  const tkr=window.__dna?window.__dna.t:'';
+  const overlay=document.createElement('div');
+  overlay.className='dna-overlay';
+  if(!mc){
+    overlay.innerHTML=
+      '<div class="dna-modal">'+
+        '<div class="dna-modal-head"><div class="dna-modal-title">🔮 עתידים אפשריים</div>'+
+        '<button class="dna-close" id="mcCloseBtn">✕</button></div>'+
+        '<div style="padding:1rem 0;color:var(--txt2);font-size:13.5px;text-align:center">'+
+        'אין מספיק נתוני מחיר היסטוריים כדי להריץ סימולציה אמינה עבור המניה הזו.</div>'+
+      '</div>';
+    document.body.appendChild(overlay);
+    const close0=()=>overlay.remove();
+    overlay.addEventListener('click',e=>{if(e.target===overlay)close0();});
+    document.getElementById('mcCloseBtn').addEventListener('click',close0);
+    return;
+  }
+
+  overlay.innerHTML=
+    '<div class="dna-modal mc-modal">'+
+      '<div class="dna-modal-head"><div class="dna-modal-title">🔮 עתידים אפשריים — '+esc(tkr)+'</div>'+
+      '<button class="dna-close" id="mcCloseBtn">✕</button></div>'+
+      '<div class="tf-group mc-range" id="mcRange">'+
+        '<button class="tf-btn active" data-d="30">30 ימים</button>'+
+        '<button class="tf-btn" data-d="90">90 ימים</button>'+
+      '</div>'+
+      '<div style="position:relative;height:260px"><canvas id="mcCanvas"></canvas></div>'+
+      '<div class="mc-summary" id="mcSummary"></div>'+
+      '<div class="dna-hint">⚠️ הדמיה סטטיסטית המבוססת על תנודתיות ומגמה היסטוריות (מודל Monte Carlo / GBM, '+mc.numSims+' מסלולים) — אינה תחזית, המלצה או ייעוץ השקעות. הריצה מקומית לחלוטין, בלי קריאת שרת.</div>'+
+    '</div>';
+  document.body.appendChild(overlay);
+
+  const close=()=>{
+    overlay.remove();
+    document.removeEventListener('keydown',onKey);
+    if(mcChart){mcChart.destroy();mcChart=null;}
+  };
+  const onKey=e=>{if(e.key==='Escape')close();};
+  document.addEventListener('keydown',onKey);
+  overlay.addEventListener('click',e=>{if(e.target===overlay)close();});
+  document.getElementById('mcCloseBtn').addEventListener('click',close);
+
+  function render(nDays){
+    const cut=arr=>arr.slice(0,nDays+1);
+    const labels=cut(mc.days).map(dd=>dd===0?'היום':'+'+dd);
+    const gc=cssVar('--line'),tc=cssVar('--txt3'),accent=cssVar('--accent');
+    if(mcChart)mcChart.destroy();
+    mcChart=new Chart(document.getElementById('mcCanvas'),{
+      type:'line',
+      data:{labels:labels,datasets:[
+        {data:cut(mc.p10),borderColor:'transparent',pointRadius:0,fill:false},
+        {data:cut(mc.p90),borderColor:'transparent',pointRadius:0,backgroundColor:'rgba(125,211,160,0.10)',fill:0},
+        {data:cut(mc.p25),borderColor:'transparent',pointRadius:0,fill:false},
+        {data:cut(mc.p75),borderColor:'transparent',pointRadius:0,backgroundColor:'rgba(125,211,160,0.22)',fill:2},
+        {data:cut(mc.p50),borderColor:accent,borderWidth:2,pointRadius:0,tension:0.15,fill:false}
+      ]},
+      options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+        plugins:{legend:{display:false},tooltip:{backgroundColor:cssVar('--raised'),titleColor:cssVar('--strong'),
+          bodyColor:cssVar('--txt2'),borderColor:cssVar('--line2'),borderWidth:1,padding:10,cornerRadius:10,
+          callbacks:{label:c=>'$'+c.parsed.y.toFixed(2)}}},
+        scales:{
+          x:{ticks:{color:tc,maxTicksLimit:7,font:{size:11}},grid:{color:gc}},
+          y:{ticks:{color:tc,font:{size:11},callback:v=>'$'+v.toFixed(0)},grid:{color:gc}}
+        }}
+    });
+    const lo10=mc.p10[nDays],hi90=mc.p90[nDays],lo25=mc.p25[nDays],hi75=mc.p75[nDays],med=mc.p50[nDays];
+    document.getElementById('mcSummary').innerHTML=
+      'ב-80% מהתרחישים, בעוד '+nDays+' ימי מסחר המחיר צפוי להיות בין <b>$'+lo10.toFixed(2)+'</b> ל-<b>$'+hi90.toFixed(2)+'</b>'+
+      '<br>חציון התרחישים: <b style="color:var(--accent)">$'+med.toFixed(2)+'</b> · טווח מצומצם (50% מהתרחישים): $'+lo25.toFixed(2)+'–$'+hi75.toFixed(2);
+  }
+  render(30);
+  document.getElementById('mcRange').addEventListener('click',e=>{
+    const btn=e.target.closest('.tf-btn');
+    if(!btn)return;
+    document.querySelectorAll('#mcRange .tf-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    render(parseInt(btn.dataset.d,10));
+  });
+}
 // ── AUTO PRICE UPDATE ──
 async function updatePrice(){
   if(!currentTicker)return;
@@ -1779,11 +1918,14 @@ async function analyze(){
     // נתוני הניתוח האחרון — נשמרים בזיכרון בלבד לצורך כרטיס ה-DNA (בלי קריאת רשת נוספת)
     window.__dna={t:t,name:json.name||t,price:price,ch:ch,isUp:isUp,grade:sg.grade,gradeLabel:sg.label,
       rsi:rv_,weekHigh:json.week_high,weekLow:json.week_low,dividendPct:json.dividend_pct,fvData:fvData,growthVal:growthVal};
+    // היסטוריית מחירים גולמית — לצורך סימולציית מונטה קרלו (בלי קריאת רשת נוספת)
+    window.__priceHist={closes:d,price:price};
 
     document.getElementById('results').innerHTML=
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">'+
       '<span class="back-btn" onclick="showHome()">← בית</span>'+
       '<div style="display:flex;gap:8px">'+
+      '<button id="mcBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(251,191,36,0.12);color:var(--warn);cursor:pointer;font-family:inherit">🔮 עתידים אפשריים</button>'+
       '<button id="dnaBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(139,156,196,0.12);color:var(--alt);cursor:pointer;font-family:inherit">🎴 שתף כרטיס</button>'+
       '<button id="wlAddBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(125,211,160,0.12);color:#7dd3a0;cursor:pointer;font-family:inherit">⭐ הוסף למעקב</button>'+
       '</div>'+
@@ -1864,6 +2006,8 @@ async function analyze(){
     if(addBtn)addBtn.addEventListener('click',function(){addWL(t);this.textContent='✅ נוסף!';});
     const dnaBtn=document.getElementById('dnaBtn');
     if(dnaBtn)dnaBtn.addEventListener('click',openDNACard);
+    const mcBtn=document.getElementById('mcBtn');
+    if(mcBtn)mcBtn.addEventListener('click',openMonteCarlo);
 
     getSentiment(t).then(sentData=>{
       getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows,sector:json.sector,weekHigh:json.week_high,weekLow:json.week_low}).then(res=>{
