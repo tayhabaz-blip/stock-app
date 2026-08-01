@@ -378,6 +378,23 @@
     .ticker-scroll{animation:none}
     *{animation-duration:0.01ms !important;transition-duration:0.01ms !important}
   }
+  /* ── כרטיס DNA משותף ── */
+  .dna-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.72);backdrop-filter:blur(4px);
+    display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px;animation:dnaFadeIn 0.18s ease}
+  @keyframes dnaFadeIn{from{opacity:0}to{opacity:1}}
+  .dna-modal{background:var(--surface);border:1px solid var(--line2);border-radius:18px;padding:18px;
+    max-width:420px;width:100%;max-height:92vh;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+  .dna-modal-head{display:flex;justify-content:space-between;align-items:center}
+  .dna-modal-title{font-size:15px;font-weight:700;color:var(--strong)}
+  .dna-close{width:30px;height:30px;flex-shrink:0;border-radius:8px;border:1px solid var(--line);
+    background:transparent;color:var(--txt2);cursor:pointer;font-size:15px;line-height:1}
+  .dna-canvas-wrap{border-radius:14px;overflow:hidden;border:1px solid var(--line);line-height:0}
+  .dna-canvas-wrap img{width:100%;display:block}
+  .dna-actions{display:flex;gap:10px}
+  .dna-btn{flex:1;padding:12px;border-radius:10px;border:none;font-family:inherit;font-size:14px;font-weight:600;cursor:pointer}
+  .dna-btn-download{background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent)}
+  .dna-btn-share{background:var(--accent);color:var(--accent-fg)}
+  .dna-hint{font-size:11px;color:var(--txt3);text-align:center}
 </style>
 <!-- ===== PWA ===== -->
 <link rel="manifest" href="manifest.json">
@@ -1492,6 +1509,198 @@ function computeEventBadges(price,weekHigh,weekLow,prevClose,prevM200,lm200,rv_)
   }
   return badges.sort((a,b)=>a.pri-b.pri).slice(0,3);
 }
+
+// ── כרטיס DNA: "אישיות" נגזרת-נתונים למניה, לצורך כרטיס משותף.
+// מבוסס-כללים ומדורג בעדיפות (כמו computeEventBadges), אבל מחזיר תוצאה אחת בלבד —
+// ההתאמה הראשונה שמתקבלת מנצחת. משתמש רק בנתונים שכבר בזיכרון מ-analyze(). ──
+function computeArchetype(rv_,fvData,grade,price,weekHigh,weekLow,dividendPct,growthVal){
+  if(rv_!=null&&!isNaN(rv_)&&weekHigh!=null&&rv_>=75&&price>=weekHigh*0.98)
+    return{icon:'🚀',name:'הפרא הפראי',desc:'מומנטום רותח, ממש קרובה לשיא של 52 שבועות'};
+  if(fvData&&fvData.diff<=-15&&(grade==='A'||grade==='B'))
+    return{icon:'💎',name:'היהלום הגולמי',desc:'נסחרת מתחת לשווי ההוגן, עם יסודות חזקים'};
+  if(fvData&&fvData.diff>=25)
+    return{icon:'🎭',name:'השחקן',desc:'נסחרת הרבה מעל השווי ההוגן המחושב'};
+  if(rv_!=null&&!isNaN(rv_)&&rv_<=30)
+    return{icon:'🧊',name:'הקרחון',desc:'באזור מכירת יתר — שקטה כרגע מתחת לפני השטח'};
+  if(dividendPct!=null&&dividendPct>=2.5&&(grade==='A'||grade==='B'))
+    return{icon:'🛡️',name:'השומר הזהיר',desc:'דיבידנד יציב לצד יסודות בריאים'};
+  if(growthVal!=null&&growthVal>=0.25)
+    return{icon:'⚡',name:'הרודף המהיר',desc:'צמיחה דו-ספרתית גבוהה מניעה את המניה'};
+  if(grade==='A'&&weekHigh!=null&&price>=weekHigh*0.95&&rv_!=null&&!isNaN(rv_)&&rv_>=40&&rv_<=65)
+    return{icon:'🏔️',name:'האגדה היציבה',desc:'ביצועים חזקים ויציבים, בלי היסטריה'};
+  return{icon:'🌊',name:'הגל השקט',desc:'תנועה מאוזנת כרגע, בלי איתות קיצון בולט'};
+}
+function buildDNAStats(d){
+  const stats=[];
+  stats.push({label:'RSI (14)',value:(d.rsi!=null&&!isNaN(d.rsi))?String(Math.round(d.rsi)):'—',
+    color:(d.rsi>70?'#f87171':d.rsi<30?'#4ade80':'#ffffff')});
+  if(d.fvData){
+    const diff=d.fvData.diff;
+    stats.push({label:'משווי הוגן',value:(diff>=0?'+':'')+diff+'%',
+      color:(diff>5?'#f87171':diff<-5?'#4ade80':'#fbbf24')});
+  }
+  if(d.dividendPct!=null)
+    stats.push({label:'תשואת דיבידנד',value:d.dividendPct.toFixed(2)+'%',color:'#a3e635'});
+  if(d.weekHigh!=null&&d.weekLow!=null&&d.weekHigh>d.weekLow){
+    const pos=Math.max(0,Math.min(100,Math.round((d.price-d.weekLow)/(d.weekHigh-d.weekLow)*100)));
+    stats.push({label:'מיקום בטווח שנתי',value:pos+'%',color:'#8b9cc4'});
+  }
+  return stats.slice(0,4);
+}
+function dnaTruncate(s,n){s=s||'';return s.length>n?s.slice(0,n-1)+'…':s;}
+function dnaRoundRect(ctx,x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+function dnaWrapText(ctx,text,cx,startY,maxW,lh){
+  const words=(text||'').split(' ');let line='',lines=[];
+  words.forEach(w=>{
+    const test=line?line+' '+w:w;
+    if(ctx.measureText(test).width>maxW&&line){lines.push(line);line=w;}
+    else line=test;
+  });
+  if(line)lines.push(line);
+  lines.forEach((l,i)=>ctx.fillText(l,cx,startY+i*lh));
+}
+// ── ציור כרטיס ה-DNA. פורמט 1080x1350 (4:5) — נוח לוואטסאפ, X ואינסטגרם כאחד.
+// עיצוב "כהה-מותג" קבוע (לא תלוי בתמה של האתר), כדי שהכרטיס ייראה עקבי לכל מי שמקבל אותו. ──
+function drawDNACard(canvas,d){
+  const W=1080,H=1350;
+  canvas.width=W;canvas.height=H;
+  const ctx=canvas.getContext('2d');
+  const gcolor={A:'#4ade80',B:'#a3e635',C:'#fbbf24',D:'#f87171'}[d.grade]||'#8b9cc4';
+
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#1c1d21');bg.addColorStop(1,'#111214');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+  const glow=ctx.createRadialGradient(W/2,180,10,W/2,180,520);
+  glow.addColorStop(0,gcolor+'33');glow.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=glow;ctx.fillRect(0,0,W,H);
+
+  ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.direction='ltr';
+  ctx.fillStyle='#7dd3a0';ctx.font='700 30px Inter, sans-serif';
+  ctx.fillText('🧬 StockIQ',W/2,86);
+  ctx.fillStyle='#6b6b76';ctx.font='500 18px Inter, sans-serif';
+  ctx.fillText('כרטיס DNA למניה',W/2,116);
+
+  ctx.strokeStyle='#33343a';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(90,150);ctx.lineTo(W-90,150);ctx.stroke();
+
+  // טיקר — גודל גופן דינמי כדי שגם טיקרים ארוכים לא יגלשו
+  let tSize=108;
+  ctx.font='800 '+tSize+'px Inter, sans-serif';
+  while(ctx.measureText(d.t).width>W-200&&tSize>50){tSize-=6;ctx.font='800 '+tSize+'px Inter, sans-serif';}
+  ctx.fillStyle='#ffffff';
+  ctx.fillText(d.t,W/2,270);
+
+  ctx.fillStyle='#9b9ba6';ctx.font='500 34px Inter, sans-serif';
+  ctx.fillText(dnaTruncate(d.name,28),W/2,320);
+
+  ctx.fillStyle='#ffffff';ctx.font='700 64px "JetBrains Mono", monospace';
+  ctx.fillText('$'+Number(d.price).toFixed(2),W/2,410);
+  ctx.fillStyle=d.isUp?'#4ade80':'#f87171';ctx.font='700 32px Inter, sans-serif';
+  ctx.fillText((d.isUp?'▲ ':'▼ ')+Math.abs(d.ch)+'% היום',W/2,455);
+
+  ctx.direction='rtl';
+  ctx.fillStyle=gcolor;ctx.font='600 28px Inter, sans-serif';
+  ctx.fillText('ציון בריאות: '+d.grade+' · '+d.gradeLabel,W/2,500);
+
+  const archY=550,archH=270;
+  dnaRoundRect(ctx,90,archY,W-180,archH,20);
+  const panel=ctx.createLinearGradient(0,archY,0,archY+archH);
+  panel.addColorStop(0,'rgba(255,255,255,0.05)');panel.addColorStop(1,'rgba(255,255,255,0.02)');
+  ctx.fillStyle=panel;ctx.fill();
+  ctx.lineWidth=1;ctx.strokeStyle='rgba(255,255,255,0.09)';ctx.stroke();
+
+  ctx.direction='ltr';ctx.fillStyle='#ffffff';ctx.font='72px Inter, sans-serif';
+  ctx.fillText(d.arch.icon,W/2,archY+95);
+  ctx.direction='rtl';ctx.fillStyle='#7dd3a0';ctx.font='700 44px Inter, sans-serif';
+  ctx.fillText(d.arch.name,W/2,archY+155);
+  ctx.fillStyle='#b4b4be';ctx.font='500 26px Inter, sans-serif';
+  dnaWrapText(ctx,d.arch.desc,W/2,archY+200,W-260,32);
+
+  const stats=d.stats,statY=archY+archH+55,boxH=150;
+  if(stats.length){
+    const boxW=(W-180-30*(stats.length-1))/stats.length;
+    stats.forEach((s,i)=>{
+      const x=90+i*(boxW+30);
+      dnaRoundRect(ctx,x,statY,boxW,boxH,16);
+      ctx.fillStyle='rgba(255,255,255,0.04)';ctx.fill();
+      ctx.lineWidth=1;ctx.strokeStyle='rgba(255,255,255,0.09)';ctx.stroke();
+      ctx.direction='rtl';ctx.textAlign='center';
+      ctx.fillStyle='#6b6b76';ctx.font='500 20px Inter, sans-serif';
+      ctx.fillText(s.label,x+boxW/2,statY+45);
+      // ctx.direction='ltr' כאן — הערך תמיד מספרי (עם +/-/%), ובכיוון rtl
+      // אלגוריתם ה-bidi מזיז את סימן ה-'+' לקצה ההפוך (למשל "158.3%+" במקום "+158.3%")
+      ctx.direction='ltr';
+      ctx.fillStyle=s.color||'#ffffff';ctx.font='700 34px Inter, sans-serif';
+      ctx.fillText(s.value,x+boxW/2,statY+95);
+    });
+  }
+
+  ctx.direction='rtl';ctx.textAlign='center';
+  ctx.fillStyle='#4a4a52';ctx.font='500 20px Inter, sans-serif';
+  ctx.fillText('נוצר ב-StockIQ · '+d.dateStr,W/2,H-50);
+
+  return canvas;
+}
+// ── מודל תצוגה/הורדה/שיתוף של כרטיס ה-DNA. פועל כולו על נתונים שכבר בזיכרון —
+// אין קריאת רשת נוספת, ולכן הכרטיס נפתח מיידית. ──
+async function openDNACard(){
+  const d=window.__dna;
+  if(!d)return;
+  try{if(document.fonts&&document.fonts.ready)await document.fonts.ready;}catch(e){}
+  const arch=computeArchetype(d.rsi,d.fvData,d.grade,d.price,d.weekHigh,d.weekLow,d.dividendPct,d.growthVal);
+  const dateStr=new Date().toLocaleDateString('he-IL');
+  const stats=buildDNAStats(d);
+  const canvas=document.createElement('canvas');
+  drawDNACard(canvas,Object.assign({},d,{arch:arch,dateStr:dateStr,stats:stats}));
+  const dataUrl=canvas.toDataURL('image/png');
+
+  const overlay=document.createElement('div');
+  overlay.className='dna-overlay';
+  overlay.innerHTML=
+    '<div class="dna-modal">'+
+      '<div class="dna-modal-head"><div class="dna-modal-title">🎴 כרטיס DNA — '+esc(d.t)+'</div>'+
+      '<button class="dna-close" id="dnaCloseBtn">✕</button></div>'+
+      '<div class="dna-canvas-wrap"><img src="'+dataUrl+'" alt="כרטיס DNA של '+esc(d.t)+'"></div>'+
+      '<div class="dna-actions">'+
+        '<button class="dna-btn dna-btn-download" id="dnaDownloadBtn">⬇ הורדה</button>'+
+        (navigator.share?'<button class="dna-btn dna-btn-share" id="dnaShareBtn">📤 שיתוף</button>':'')+
+      '</div>'+
+      '<div class="dna-hint">התמונה נוצרת מקומית מהנתונים המוצגים — לא נשלחת לשום שרת</div>'+
+    '</div>';
+  document.body.appendChild(overlay);
+
+  const close=()=>{overlay.remove();document.removeEventListener('keydown',onKey);};
+  const onKey=e=>{if(e.key==='Escape')close();};
+  document.addEventListener('keydown',onKey);
+  overlay.addEventListener('click',e=>{if(e.target===overlay)close();});
+  const closeBtn=document.getElementById('dnaCloseBtn');
+  if(closeBtn)closeBtn.addEventListener('click',close);
+  const dlBtn=document.getElementById('dnaDownloadBtn');
+  if(dlBtn)dlBtn.addEventListener('click',()=>{
+    const a=document.createElement('a');
+    a.href=dataUrl;a.download='stockiq-'+d.t+'.png';
+    document.body.appendChild(a);a.click();a.remove();
+  });
+  const shareBtn=document.getElementById('dnaShareBtn');
+  if(shareBtn)shareBtn.addEventListener('click',async()=>{
+    try{
+      const blob=await(await fetch(dataUrl)).blob();
+      const file=new File([blob],'stockiq-'+d.t+'.png',{type:'image/png'});
+      if(navigator.canShare&&navigator.canShare({files:[file]}))
+        await navigator.share({files:[file],title:'StockIQ — '+d.t,text:'הכרטיס של '+d.t+' ב-StockIQ 🧬'});
+      else
+        await navigator.share({title:'StockIQ — '+d.t,text:'הכרטיס של '+d.t+' ב-StockIQ 🧬'});
+    }catch(e){ /* המשתמש ביטל שיתוף, או שהדפדפן לא תומך — לא מציגים שגיאה */ }
+  });
+}
 // ── AUTO PRICE UPDATE ──
 async function updatePrice(){
   if(!currentTicker)return;
@@ -1567,10 +1776,17 @@ async function analyze(){
     // לתצוגה: 4 האזורים החזקים ביותר, ממוינים לפי מחיר
     const topZones=[...zs].sort((a,b)=>b.touches-a.touches).slice(0,4).sort((a,b)=>b.p-a.p);
 
+    // נתוני הניתוח האחרון — נשמרים בזיכרון בלבד לצורך כרטיס ה-DNA (בלי קריאת רשת נוספת)
+    window.__dna={t:t,name:json.name||t,price:price,ch:ch,isUp:isUp,grade:sg.grade,gradeLabel:sg.label,
+      rsi:rv_,weekHigh:json.week_high,weekLow:json.week_low,dividendPct:json.dividend_pct,fvData:fvData,growthVal:growthVal};
+
     document.getElementById('results').innerHTML=
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">'+
       '<span class="back-btn" onclick="showHome()">← בית</span>'+
+      '<div style="display:flex;gap:8px">'+
+      '<button id="dnaBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(139,156,196,0.12);color:var(--alt);cursor:pointer;font-family:inherit">🎴 שתף כרטיס</button>'+
       '<button id="wlAddBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(125,211,160,0.12);color:#7dd3a0;cursor:pointer;font-family:inherit">⭐ הוסף למעקב</button>'+
+      '</div>'+
       '</div>'+
       '<div class="company-header"><div class="trend-bg">'+trendBgSvg(d)+'</div>'+
       '<div><div class="company-name">'+esc(json.name||t)+'</div><div class="company-ticker">'+esc(t)+(json.country?' · '+esc(json.country):'')+'</div>'+
@@ -1646,6 +1862,8 @@ async function analyze(){
 
     const addBtn=document.getElementById('wlAddBtn');
     if(addBtn)addBtn.addEventListener('click',function(){addWL(t);this.textContent='✅ נוסף!';});
+    const dnaBtn=document.getElementById('dnaBtn');
+    if(dnaBtn)dnaBtn.addEventListener('click',openDNACard);
 
     getSentiment(t).then(sentData=>{
       getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows,sector:json.sector,weekHigh:json.week_high,weekLow:json.week_low}).then(res=>{
