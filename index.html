@@ -700,16 +700,23 @@ function stopAllTimers(){Object.keys(timers).forEach(stopTimer);}
 // ── קצב הרענון נגזר משעות המסחר בניו יורק.
 // כשהבורסה סגורה המחירים לא זזים, ודגימה מהירה היא בזבוז נטו —
 // גם על הסוללה של המשתמש וגם על המכסה מול יאהו.
-// הערה: ימי חג בבורסה לא מזוהים כאן, ובהם נדגום מהר לחינם. ──
+// לוח חגי NYSE (מקור רשמי: הודעת NYSE Group ל-2025-2027) — עדכון נדרש לקראת סוף 2027.
+const NYSE_HOLIDAYS=new Set(['2026-01-01','2026-01-19','2026-02-16','2026-04-03','2026-05-25','2026-06-19','2026-07-03','2026-09-07','2026-11-26','2026-12-25',
+  '2027-01-01','2027-01-18','2027-02-15','2027-03-26','2027-05-31','2027-06-18','2027-07-05','2027-09-06','2027-11-25','2027-12-24']);
+// ימי מסחר מקוצר — נסגר ב-13:00 שעון ניו יורק (יום שישי שאחרי חג ההודיה)
+const NYSE_EARLY_CLOSE=new Set(['2026-11-27','2027-11-26']);
 function usMarketOpen(){
   try{
     const p={};
     new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',weekday:'short',
-      hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(new Date())
+      year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(new Date())
       .forEach(x=>{p[x.type]=x.value;});
     if(p.weekday==='Sat'||p.weekday==='Sun')return false;
+    const dateKey=`${p.year}-${p.month}-${p.day}`;
+    if(NYSE_HOLIDAYS.has(dateKey))return false;   // חג — הבורסה סגורה כל היום
     const m=parseInt(p.hour,10)*60+parseInt(p.minute,10);
-    return m>=570&&m<960;            // 09:30–16:00 שעון ניו יורק
+    const closeMin=NYSE_EARLY_CLOSE.has(dateKey)?780:960;   // 13:00 ביום מקוצר, אחרת 16:00
+    return m>=570&&m<closeMin;       // מ-09:30 שעון ניו יורק
   }catch(e){return true;}            // בספק — מרעננים מהר
 }
 const RATES={price:[15000,60000],wl:[30000,300000],idx:[60000,300000],news:[300000,900000]};
