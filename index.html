@@ -433,6 +433,21 @@
   .tm-result-card{padding:10px 12px;border-radius:10px;background:var(--raised);border:1px solid var(--line)}
   .tm-result-label{font-size:11px;color:var(--txt3)}
   .tm-result-value{font-size:15.5px;font-weight:700;font-family:var(--mono);margin-top:2px}
+  /* ── מודל קרב AI ── */
+  .battle-modal{max-width:520px}
+  .battle-cards{display:flex;flex-direction:column;gap:4px}
+  .battle-card{position:relative;padding:14px;border-radius:14px;background:var(--raised);
+    border:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+  .battle-card.battle-winner{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .battle-ribbon{position:absolute;top:-10px;inset-inline-end:14px;background:var(--accent);
+    color:var(--accent-fg);font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px}
+  .battle-avatar{font-size:30px;text-align:center;line-height:1}
+  .battle-side-title{font-size:13px;font-weight:700;text-align:center}
+  .battle-bull .battle-side-title{color:var(--up)}
+  .battle-bear .battle-side-title{color:var(--dn)}
+  .battle-text{font-size:12.5px;line-height:1.75;color:var(--txt);white-space:pre-line;text-align:center}
+  .battle-vs{align-self:center;font-size:11px;color:var(--txt3);font-weight:700}
+  .battle-verdict{font-size:13px;color:var(--txt2);text-align:center;font-weight:600}
 </style>
 <!-- ===== PWA ===== -->
 <link rel="manifest" href="manifest.json">
@@ -1462,19 +1477,23 @@ async function getAI(data){
   }
 
   let trendText='';
+  // אותם נתונים בדיוק שנשלחים ל-/ai נשמרים כאן — קרב ה-AI (⚔️) קורא אותם
+  // משם כדי לא לחשב את כל התמונה הטכנית פעם נוספת ("מקור אמת" יחיד לשני הפיצ'רים)
+  const aiFacts={
+    ticker,trend,rsiTxt,
+    rsiNum:rsiVal,
+    bullPct:bullPct||'N/A',bearPct:bearPct||'N/A',
+    sector:sector||null,
+    peRatio:pe||null,
+    weekPos,
+    distToBreakPct
+  };
+  window.__aiFacts=aiFacts;
   try{
     const r=await fetch(API+'/ai',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        ticker,trend,rsiTxt,
-        rsiNum:rsiVal,
-        bullPct:bullPct||'N/A',bearPct:bearPct||'N/A',
-        sector:sector||null,
-        peRatio:pe||null,
-        weekPos,
-        distToBreakPct
-      })
+      body:JSON.stringify(aiFacts)
     });
     const d=await r.json();
     trendText=(d.text||'').trim();
@@ -2169,6 +2188,116 @@ async function openTimeMachine(){
   curIdx=0;
   render();
 }
+
+// ── ניקוד "מנצח" לקרב ה-AI — מחושב מקומית מתוך האינדיקטורים הקיימים בלבד
+// (מגמה, RSI, מיקום ב-52 שבועות, סנטימנט אנליסטים), לא ע"י המודל ולא בקריאת
+// רשת נוספת. דטרמיניסטי: אותה מניה עם אותם נתונים תמיד תיתן אותה תוצאה. ──
+function computeBattleScore(facts){
+  let bullPts=0,bearPts=0;
+  const trend=facts&&facts.trend,rsiNum=facts&&facts.rsiNum,weekPos=facts&&facts.weekPos;
+  const bullPct=facts&&facts.bullPct,bearPct=facts&&facts.bearPct;
+  if(trend==='עולה')bullPts++;
+  else if(trend==='יורד')bearPts++;
+  if(typeof rsiNum==='number'){
+    if(rsiNum<30)bullPts++;
+    else if(rsiNum>70)bearPts++;
+  }
+  if(typeof weekPos==='number'){
+    if(weekPos>=60)bullPts++;
+    else if(weekPos<=40)bearPts++;
+  }
+  if(typeof bullPct==='number'&&typeof bearPct==='number'){
+    if(bullPct>bearPct)bullPts++;
+    else if(bearPct>bullPct)bearPts++;
+  }
+  const winner=bullPts>bearPts?'bull':bearPts>bullPts?'bear':'tie';
+  return{winner,bullPts,bearPts};
+}
+// ── קרב AI: שוורים מול דובים. שולף את שני הטיעונים מקריאה אחת בודדת ל-/ai/battle
+// (אותם נתונים ש-getAI כבר אספה ל-window.__aiFacts — בלי לחשב שום דבר פעמיים),
+// וה"מנצח" המוצג מחושב מקומית ולא ע"י ה-AI. ──
+async function openAIBattle(){
+  const tkr=window.__dna?window.__dna.t:'';
+  if(!tkr)return;
+  const overlay=document.createElement('div');
+  overlay.className='dna-overlay';
+  // window.__aiFacts מתמלא ע"י getAI() — אם הניתוח החכם עוד לא סיים לטעון,
+  // מציגים הודעה במקום לדשדש בשקט (הכפתור עצמו תמיד לחיץ מרגע שהתוצאות עלו)
+  const facts=window.__aiFacts;
+  if(!facts){
+    overlay.innerHTML=
+      '<div class="dna-modal battle-modal">'+
+        '<div class="dna-modal-head"><div class="dna-modal-title">⚔️ קרב AI — '+esc(tkr)+'</div>'+
+        '<button class="dna-close" id="battleCloseBtn">✕</button></div>'+
+        '<div class="tm-loading">הניתוח החכם עדיין נטען — נסה שוב בעוד רגע.</div>'+
+      '</div>';
+    document.body.appendChild(overlay);
+    const close0=()=>{
+      overlay.remove();
+      document.removeEventListener('keydown',onKey0);
+    };
+    const onKey0=e=>{if(e.key==='Escape')close0();};
+    document.addEventListener('keydown',onKey0);
+    overlay.addEventListener('click',e=>{if(e.target===overlay)close0();});
+    document.getElementById('battleCloseBtn').addEventListener('click',close0);
+    return;
+  }
+  overlay.innerHTML=
+    '<div class="dna-modal battle-modal">'+
+      '<div class="dna-modal-head"><div class="dna-modal-title">⚔️ קרב AI — '+esc(tkr)+'</div>'+
+      '<button class="dna-close" id="battleCloseBtn">✕</button></div>'+
+      '<div class="tm-loading" id="battleBody">שני הצדדים בונים טיעונים...</div>'+
+    '</div>';
+  document.body.appendChild(overlay);
+  const close=()=>{
+    overlay.remove();
+    document.removeEventListener('keydown',onKey);
+  };
+  const onKey=e=>{if(e.key==='Escape')close();};
+  document.addEventListener('keydown',onKey);
+  overlay.addEventListener('click',e=>{if(e.target===overlay)close();});
+  document.getElementById('battleCloseBtn').addEventListener('click',close);
+
+  const body=document.getElementById('battleBody');
+  try{
+    const r=await fetch(API+'/ai/battle',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(facts)
+    });
+    const d=await r.json();
+    const bullTxt=(d.bull||'').trim();
+    const bearTxt=(d.bear||'').trim();
+    if(!bullTxt&&!bearTxt){
+      body.innerHTML='<div class="tm-loading">קרב ה-AI לא זמין כרגע — נסה שוב מאוחר יותר.</div>';
+      return;
+    }
+    const score=computeBattleScore(facts);
+    const bullWin=score.winner==='bull',bearWin=score.winner==='bear',tie=score.winner==='tie';
+    body.innerHTML=
+      '<div class="battle-cards">'+
+        '<div class="battle-card battle-bull'+(bullWin?' battle-winner':'')+'">'+
+          (bullWin?'<div class="battle-ribbon">🏆 מנצח</div>':'')+
+          '<div class="battle-avatar">🐂</div><div class="battle-side-title">השור — התיק האופטימי</div>'+
+          '<div class="battle-text" id="battleBullText"></div>'+
+        '</div>'+
+        '<div class="battle-vs">מול</div>'+
+        '<div class="battle-card battle-bear'+(bearWin?' battle-winner':'')+'">'+
+          (bearWin?'<div class="battle-ribbon">🏆 מנצח</div>':'')+
+          '<div class="battle-avatar">🐻</div><div class="battle-side-title">הדוב — התיק הזהיר</div>'+
+          '<div class="battle-text" id="battleBearText"></div>'+
+        '</div>'+
+      '</div>'+
+      '<div class="battle-verdict">'+(tie?'תיקו — האינדיקטורים הטכניים מפוזרים בין שני הצדדים ('+score.bullPts+'-'+score.bearPts+')':'הניקוד הטכני נוטה ל'+(bullWin?'שור 🐂':'דוב 🐻')+' ('+score.bullPts+'-'+score.bearPts+')')+'</div>'+
+      '<div class="dna-hint">⚠️ שני הצדדים נכתבים ע"י אותו מודל AI על סמך אותם נתונים בדיוק — תרגיל מחשבה ולא שתי דעות עצמאיות. תג ה"מנצח" מחושב מקומית לפי האינדיקטורים הקיימים בלבד. אינו תחזית, המלצה או ייעוץ השקעות.</div>';
+    const bullEl=document.getElementById('battleBullText');
+    const bearEl=document.getElementById('battleBearText');
+    if(bullEl)bullEl.textContent=bullTxt||'לא זמין הפעם.';
+    if(bearEl)bearEl.textContent=bearTxt||'לא זמין הפעם.';
+  }catch(e){
+    body.innerHTML='<div class="tm-loading">שגיאה בטעינת קרב ה-AI. נסה שוב מאוחר יותר.</div>';
+  }
+}
 // ── AUTO PRICE UPDATE ──
 async function updatePrice(){
   if(!currentTicker)return;
@@ -2254,6 +2383,7 @@ async function analyze(){
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">'+
       '<span class="back-btn" onclick="showHome()">← בית</span>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+      '<button id="battleBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(248,113,113,0.12);color:var(--dn);cursor:pointer;font-family:inherit">⚔️ קרב AI</button>'+
       '<button id="timeBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(96,165,250,0.12);color:var(--ma9);cursor:pointer;font-family:inherit">🕰️ מכונת זמן</button>'+
       '<button id="twinBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(163,230,53,0.12);color:var(--lime);cursor:pointer;font-family:inherit">👯 תאום מוזר בזמן</button>'+
       '<button id="mcBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(251,191,36,0.12);color:var(--warn);cursor:pointer;font-family:inherit">🔮 עתידים אפשריים</button>'+
@@ -2343,6 +2473,8 @@ async function analyze(){
     if(twinBtn)twinBtn.addEventListener('click',openTwinFinder);
     const timeBtn=document.getElementById('timeBtn');
     if(timeBtn)timeBtn.addEventListener('click',openTimeMachine);
+    const battleBtn=document.getElementById('battleBtn');
+    if(battleBtn)battleBtn.addEventListener('click',openAIBattle);
 
     getSentiment(t).then(sentData=>{
       getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows,sector:json.sector,weekHigh:json.week_high,weekLow:json.week_low}).then(res=>{
