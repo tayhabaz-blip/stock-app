@@ -309,6 +309,8 @@
   .market-dot.open{background:var(--up);animation:marketPulse 1.8s ease-out infinite}
   .market-dot.closed{background:var(--dn)}
   @keyframes marketPulse{0%{box-shadow:0 0 0 0 rgba(74,222,128,0.55)}70%{box-shadow:0 0 0 6px rgba(74,222,128,0)}100%{box-shadow:0 0 0 0 rgba(74,222,128,0)}}
+  .live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--txt3);vertical-align:middle}
+  .live-dot.live{background:var(--up);animation:marketPulse 1.8s ease-out infinite}
   .market-countdown{font-family:var(--mono);color:var(--txt3);direction:ltr;unicode-bidi:isolate}
   @media (max-width:560px){.market-badge span.market-countdown{display:none}}
   .idx-panel{position:absolute;top:34px;right:6px;z-index:120;direction:rtl;width:252px;max-height:70vh;
@@ -470,7 +472,7 @@ if ('serviceWorker' in navigator) {
     </div>
   </div>
   <div id="watchlistPage" style="display:none">
-    <div style="font-size:20px;font-weight:600;margin-bottom:1.5rem">רשימת מעקב ⭐</div>
+    <div style="font-size:20px;font-weight:600;margin-bottom:1.5rem"><span class="live-dot" id="wlLiveDot" title="ירוק פועם = מחירים מתעדכנים בזמן אמת · אפור = השוק סגור, מוצגים ערכים אחרונים"></span> רשימת מעקב ⭐</div>
     <div class="wl-pulse" id="wlPulse" hidden>
       <div class="wl-pulse-head">
         <span class="wl-pulse-title">📊 דופק שוק</span>
@@ -803,14 +805,17 @@ function marketCountdown(){
   return {open:false,seconds:daysAhead*86400-secNow+openSec};
 }
 function updateMarketBadge(){
-  const dot=document.getElementById('marketDot');
-  if(!dot)return;
-  const txt=document.getElementById('marketStatusText');
-  const cd=document.getElementById('marketCountdown');
   const {open,seconds}=marketCountdown();
-  dot.className='market-dot '+(open?'open':'closed');
-  txt.textContent=open?'השוק פתוח':'השוק סגור';
-  cd.textContent=(open?'נסגר בעוד ':'נפתח בעוד ')+fmtCountdown(seconds);
+  const dot=document.getElementById('marketDot');
+  if(dot){
+    const txt=document.getElementById('marketStatusText');
+    const cd=document.getElementById('marketCountdown');
+    dot.className='market-dot '+(open?'open':'closed');
+    txt.textContent=open?'השוק פתוח':'השוק סגור';
+    cd.textContent=(open?'נסגר בעוד ':'נפתח בעוד ')+fmtCountdown(seconds);
+  }
+  // נקודות "חי" ליד מחירים (ניתוח מניה + כותרת רשימת המעקב) — פועמות רק כשהשוק פתוח בפועל
+  document.querySelectorAll('.live-dot').forEach(d=>d.classList.toggle('live',open));
 }
 setInterval(updateMarketBadge,1000);
 
@@ -1540,7 +1545,7 @@ async function analyze(){
       '<div class="company-header"><div class="trend-bg">'+trendBgSvg(d)+'</div>'+
       '<div><div class="company-name">'+esc(json.name||t)+'</div><div class="company-ticker">'+esc(t)+(json.country?' · '+esc(json.country):'')+'</div>'+
       '<div class="company-tags">'+(json.sector?'<span class="tag">'+esc(json.sector)+'</span>':'')+(json.employees?'<span class="tag">'+esc(Number(json.employees).toLocaleString())+' עובדים</span>':'')+'</div></div>'+
-      '<div><div class="company-price-value">$'+price.toFixed(2)+'</div><div class="company-price-change '+(isUp?'up':'down')+'">'+(isUp?'▲':'▼')+' '+Math.abs(ch)+'% היום</div><div id="ahBadge">'+ahHtml(live&&live.afterHours)+'</div></div>'+
+      '<div><div class="company-price-value"><span class="live-dot" id="priceLiveDot" title="ירוק פועם = מחיר מתעדכן בזמן אמת · אפור = השוק סגור, מוצג ערך אחרון"></span> $'+price.toFixed(2)+'</div><div class="company-price-change '+(isUp?'up':'down')+'">'+(isUp?'▲':'▼')+' '+Math.abs(ch)+'% היום</div><div id="ahBadge">'+ahHtml(live&&live.afterHours)+'</div></div>'+
       '</div>'+
       '<div class="fundamentals">'+
       '<div class="glass fund-card"><div class="fund-label">שווי שוק</div><div class="fund-value">'+fmt(json.market_cap)+'</div></div>'+
@@ -1571,6 +1576,7 @@ async function analyze(){
       '<div class="glass chart-card"><div class="section-title">אזורי תמיכה והתנגדות (לפי נגיעות)</div>'+
       (topZones.length?topZones.map(z=>'<div class="zone-row '+(z.t==='תמיכה'?'support':'resist')+'"><div class="zone-label">'+z.t+' '+z.str+' · '+z.touches+' נגיעות</div><div style="display:flex;align-items:center;gap:10px"><span class="zone-badge '+(z.t==='תמיכה'?'badge-support':'badge-resist')+'">'+z.t+'</span><span class="zone-price">$'+z.p+'</span></div></div>').join(''):'<div style="color:rgba(255,255,255,0.3);font-size:13px">אין מספיק נתונים לזיהוי אזורים</div>')+
       '</div>';
+    updateMarketBadge(); // מציב מיד את מצב נקודת ה"חי" ליד המחיר, בלי לחכות לטיק הבא
 
     pc=new Chart(document.getElementById('pc'),{type:'line',data:{labels:lb,datasets:[
       {label:'מחיר',data:d,borderColor:cssVar('--strong'),borderWidth:2,pointRadius:0,tension:0.3,spanGaps:true},
