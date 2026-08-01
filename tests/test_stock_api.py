@@ -778,6 +778,97 @@ class TestStockEndpoint:
         assert r.status_code == 200
 
 
+class TestHistoryEndpoint:
+    def setup_method(self):
+        _clear_cache()
+        _clear_rate()
+
+    def test_invalid_ticker_returns_400(self):
+        r = client.get("/history/!!bad!!")
+        assert r.status_code == 400
+
+    def test_invalid_range_returns_400(self):
+        r = client.get("/history/AAPL?range=2y")
+        assert r.status_code == 400
+
+    def test_valid_ticker_queries_yfinance(self):
+        import pandas as pd
+        fake_hist = pd.DataFrame({
+            "Close": [150.0, 151.0, 152.5],
+        }, index=pd.to_datetime(["2021-01-01", "2021-01-02", "2021-01-03"]))
+
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = fake_hist
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = mock_ticker
+            r = client.get("/history/AAPL?range=5y")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["ticker"] == "AAPL"
+        assert data["range"] == "5y"
+        assert data["closes"] == [150.0, 151.0, 152.5]
+        assert data["labels"] == ["2021-01-01", "2021-01-02", "2021-01-03"]
+        mock_ticker.history.assert_called_once_with(period="5y")
+
+    def test_default_range_is_5y(self):
+        import pandas as pd
+        fake_hist = pd.DataFrame({"Close": [10.0]}, index=pd.to_datetime(["2021-01-01"]))
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = fake_hist
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = mock_ticker
+            r = client.get("/history/AAPL")
+        assert r.status_code == 200
+        assert r.json()["range"] == "5y"
+        mock_ticker.history.assert_called_once_with(period="5y")
+
+    def test_max_range_accepted(self):
+        import pandas as pd
+        fake_hist = pd.DataFrame({"Close": [10.0]}, index=pd.to_datetime(["2021-01-01"]))
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = fake_hist
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = mock_ticker
+            r = client.get("/history/AAPL?range=max")
+        assert r.status_code == 200
+        assert r.json()["range"] == "max"
+
+    def test_empty_history_returns_404(self):
+        import pandas as pd
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = pd.DataFrame()
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = mock_ticker
+            r = client.get("/history/ZZZZ?range=5y")
+        assert r.status_code == 404
+
+    def test_yfinance_exception_returns_502(self):
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.side_effect = Exception("network error")
+            r = client.get("/history/AAPL?range=5y")
+        assert r.status_code == 502
+
+    def test_cache_hit_returns_cached(self):
+        cache_set("history:AAPL:5y", {"ticker": "AAPL", "range": "5y", "closes": [1.0], "labels": ["2021-01-01"]})
+        with patch("stock_api.yf") as mock_yf:
+            r = client.get("/history/AAPL?range=5y")
+        # אמור להיות מוגש מהמטמון — בלי קריאה ל-yfinance בכלל
+        mock_yf.Ticker.assert_not_called()
+        assert r.status_code == 200
+
+    def test_different_ranges_use_separate_cache_keys(self):
+        import pandas as pd
+        fake_hist = pd.DataFrame({"Close": [10.0]}, index=pd.to_datetime(["2021-01-01"]))
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = fake_hist
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = mock_ticker
+            r1 = client.get("/history/AAPL?range=5y")
+            r2 = client.get("/history/AAPL?range=10y")
+        assert r1.status_code == 200 and r2.status_code == 200
+        assert mock_ticker.history.call_count == 2
+
+
 class TestPriceEndpoint:
     def setup_method(self):
         _clear_cache()
