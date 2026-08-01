@@ -1040,6 +1040,32 @@ class TestSplitBattle:
         assert "שורה ראשונה" in bull and "שורה שנייה" in bull
         assert "שורה שלישית" in bear and "שורה רביעית" in bear
 
+    def test_strips_stray_markdown_bold_wrapper(self):
+        # דוגמה אמיתית שחזרה מהמודל בפרודקשן: כוכביות עוטפות את כל הפסקה
+        text = "BULL:\n**  \nהמגמה חיובית מאוד.\n\n**\nBEAR:\n**  \nיש סיכון לירידה.\n\n**"
+        bull, bear = api._split_battle(text)
+        assert bull == "המגמה חיובית מאוד."
+        assert bear == "יש סיכון לירידה."
+        assert "*" not in bull and "*" not in bear
+
+
+class TestStripMdWrap:
+    def test_no_markdown_unchanged(self):
+        assert api._strip_md_wrap("טקסט רגיל.") == "טקסט רגיל."
+
+    def test_strips_leading_and_trailing_double_asterisk(self):
+        assert api._strip_md_wrap("**  \nטקסט.\n\n**") == "טקסט."
+
+    def test_strips_single_asterisk(self):
+        assert api._strip_md_wrap("*טקסט*") == "טקסט"
+
+    def test_does_not_touch_inner_asterisks(self):
+        # רק העטיפה בקצוות מוסרת — כוכביות שהן חלק אמיתי מהמשפט נשארות
+        assert api._strip_md_wrap("מחיר * נפח = מחזור") == "מחיר * נפח = מחזור"
+
+    def test_empty_string(self):
+        assert api._strip_md_wrap("") == ""
+
 
 class TestAIBattleEndpoint:
     def setup_method(self):
