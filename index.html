@@ -409,6 +409,30 @@
   .twin-row-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;margin-inline-end:8px}
   .twin-row-label{display:flex;align-items:center;color:var(--txt2)}
   .twin-row-ret{font-family:var(--mono);font-weight:700}
+  /* ── מודל מכונת הזמן ── */
+  .tm-modal{max-width:560px}
+  .tm-range{align-self:center}
+  .tm-loading{text-align:center;padding:2rem 0;color:var(--txt2);font-size:13.5px}
+  .tm-slider-wrap{margin:2px 0 4px}
+  .tm-slider-label{display:flex;justify-content:space-between;font-size:12px;color:var(--txt2);margin-bottom:8px}
+  .tm-slider-label b{color:var(--strong);font-family:var(--mono)}
+  .tm-slider{-webkit-appearance:none;appearance:none;width:100%;height:6px;border-radius:3px;
+    background:var(--line);outline:none;cursor:pointer}
+  .tm-slider::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;
+    background:var(--accent);cursor:pointer;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--line2)}
+  .tm-slider::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:var(--accent);
+    cursor:pointer;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--line2)}
+  .tm-amount-row{display:flex;align-items:center;gap:10px}
+  .tm-amount-row label{font-size:12.5px;color:var(--txt2);white-space:nowrap}
+  .tm-amount-input{flex:1;padding:9px 11px;border-radius:9px;border:1px solid var(--line2);
+    background:var(--raised);color:var(--strong);font-family:var(--mono);font-size:14px;min-width:0}
+  .tm-hero{text-align:center;padding:10px 0 2px}
+  .tm-hero-value{font-size:28px;font-weight:800;font-family:var(--mono)}
+  .tm-hero-sub{font-size:12.5px;color:var(--txt2);margin-top:2px}
+  .tm-results{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .tm-result-card{padding:10px 12px;border-radius:10px;background:var(--raised);border:1px solid var(--line)}
+  .tm-result-label{font-size:11px;color:var(--txt3)}
+  .tm-result-value{font-size:15.5px;font-weight:700;font-family:var(--mono);margin-top:2px}
 </style>
 <!-- ===== PWA ===== -->
 <link rel="manifest" href="manifest.json">
@@ -1977,6 +2001,174 @@ async function openTwinFinder(){
       }}
   });
 }
+
+// ── מכונת זמן ("מה היה קורה אם הייתי משקיע ב-X בתאריך Y"): מבוססת על היסטוריית
+// מחירים ארוכה (עד MAX שנים) שנשלפת פעם אחת לכל טווח מ-/history — החישוב עצמו
+// (מניות שנקנו, שווי נוכחי, CAGR) רץ מקומית לגמרי בלי קריאת רשת נוספת. ──
+function computeTimeMachine(closes,labels,startIdx,amount){
+  if(!closes||!closes.length||startIdx==null||startIdx<0||startIdx>=closes.length-1)return null;
+  const startPrice=closes[startIdx];
+  if(!startPrice||startPrice<=0||!amount||amount<=0)return null;
+  const endIdx=closes.length-1;
+  const endPrice=closes[endIdx];
+  if(!endPrice||endPrice<=0)return null;
+  const shares=amount/startPrice;
+  const currentValue=shares*endPrice;
+  const totalReturnPct=(currentValue/amount-1)*100;
+  const startDate=new Date(labels[startIdx]);
+  const endDate=new Date(labels[endIdx]);
+  const days=Math.max(1,(endDate-startDate)/86400000);
+  const years=days/365.25;
+  const growthRatio=currentValue/amount;
+  // תקופה קצרה מדי (פחות מ-~18 יום) — תשואה שנתית מוצגת (CAGR) לא אמינה/קיצונית מדי
+  const cagr=(years>=0.05&&growthRatio>0)?(Math.pow(growthRatio,1/years)-1)*100:null;
+  const seriesLabels=[],seriesValues=[];
+  for(let i=startIdx;i<=endIdx;i++){
+    if(closes[i]==null)continue;
+    seriesLabels.push(labels[i]);
+    seriesValues.push(shares*closes[i]);
+  }
+  return{startPrice,endPrice,startDate:labels[startIdx],endDate:labels[endIdx],shares,currentValue,
+    totalReturnPct,years,cagr,seriesLabels,seriesValues,amount};
+}
+let tmChart=null;
+async function openTimeMachine(){
+  const tkr=window.__dna?window.__dna.t:'';
+  if(!tkr)return;
+  const overlay=document.createElement('div');
+  overlay.className='dna-overlay';
+  overlay.innerHTML=
+    '<div class="dna-modal tm-modal">'+
+      '<div class="dna-modal-head"><div class="dna-modal-title">🕰️ מכונת זמן — '+esc(tkr)+'</div>'+
+      '<button class="dna-close" id="tmCloseBtn">✕</button></div>'+
+      '<div class="tm-loading" id="tmBody">טוען היסטוריה ארוכה...</div>'+
+    '</div>';
+  document.body.appendChild(overlay);
+  const close=()=>{
+    overlay.remove();
+    document.removeEventListener('keydown',onKey);
+    if(tmChart){tmChart.destroy();tmChart=null;}
+  };
+  const onKey=e=>{if(e.key==='Escape')close();};
+  document.addEventListener('keydown',onKey);
+  overlay.addEventListener('click',e=>{if(e.target===overlay)close();});
+  document.getElementById('tmCloseBtn').addEventListener('click',close);
+
+  const body=document.getElementById('tmBody');
+  const histCache={};
+  let curRange='5y',curData=null,curAmount=1000,curIdx=0;
+
+  async function loadRange(range){
+    if(histCache[range])return histCache[range];
+    try{
+      const res=await fetch(API+'/history/'+encodeURIComponent(tkr)+'?range='+range);
+      if(!res.ok)return null;
+      const j=await res.json();
+      if(!j||!j.closes||!j.closes.length)return null;
+      histCache[range]=j;
+      return j;
+    }catch(e){return null;}
+  }
+
+  function fmtMoney(v){return '$'+v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
+  function fmtDate(s){
+    try{const dt=new Date(s);return dt.toLocaleDateString('he-IL',{year:'numeric',month:'short',day:'numeric'});}
+    catch(e){return s;}
+  }
+  function fmtYears(y){
+    const totalMonths=Math.round(y*12);
+    const yy=Math.floor(totalMonths/12),mm=totalMonths%12;
+    if(yy<=0)return mm+' חודשים';
+    if(mm===0)return yy+' שנים';
+    return yy+' שנים ו-'+mm+' חודשים';
+  }
+
+  function render(){
+    if(!curData)return;
+    const n=curData.closes.length;
+    const maxIdx=Math.max(0,n-2);
+    curIdx=Math.min(curIdx,maxIdx);
+    const tm=computeTimeMachine(curData.closes,curData.labels,curIdx,curAmount);
+    if(!tm){
+      body.innerHTML='<div class="tm-loading">אין מספיק נתונים לחשב עבור התאריך הזה.</div>';
+      return;
+    }
+    const up=tm.totalReturnPct>=0;
+    body.innerHTML=
+      '<div class="tf-group tm-range" id="tmRangeGroup">'+
+        '<button class="tf-btn'+(curRange==='5y'?' active':'')+'" data-r="5y">5 שנים</button>'+
+        '<button class="tf-btn'+(curRange==='10y'?' active':'')+'" data-r="10y">10 שנים</button>'+
+        '<button class="tf-btn'+(curRange==='max'?' active':'')+'" data-r="max">מקסימום</button>'+
+      '</div>'+
+      '<div class="tm-amount-row"><label>סכום השקעה</label>'+
+        '<input type="number" dir="ltr" id="tmAmount" class="tm-amount-input" value="'+curAmount+'" min="1" step="100"></div>'+
+      '<div class="tm-slider-wrap">'+
+        '<div class="tm-slider-label"><span>תאריך השקעה:</span><b id="tmDateLabel">'+esc(fmtDate(tm.startDate))+'</b></div>'+
+        '<input type="range" id="tmSlider" class="tm-slider" min="0" max="'+maxIdx+'" step="1" value="'+curIdx+'">'+
+      '</div>'+
+      '<div class="tm-hero"><div class="tm-hero-value" style="color:'+(up?'var(--up)':'var(--dn)')+'">'+fmtMoney(tm.currentValue)+'</div>'+
+      '<div class="tm-hero-sub">'+(up?'+':'')+tm.totalReturnPct.toFixed(1)+'% מאז '+esc(fmtDate(tm.startDate))+'</div></div>'+
+      '<div class="tm-results">'+
+        '<div class="tm-result-card"><div class="tm-result-label">מניות שנקנו</div><div class="tm-result-value">'+tm.shares.toFixed(3)+'</div></div>'+
+        '<div class="tm-result-card"><div class="tm-result-label">מחיר כניסה</div><div class="tm-result-value">$'+tm.startPrice.toFixed(2)+'</div></div>'+
+        '<div class="tm-result-card"><div class="tm-result-label">תשואה שנתית (CAGR)</div><div class="tm-result-value" style="color:'+(tm.cagr!=null&&tm.cagr>=0?'var(--up)':tm.cagr!=null?'var(--dn)':'var(--txt3)')+'">'+(tm.cagr!=null?(tm.cagr>=0?'+':'')+tm.cagr.toFixed(1)+'%':'—')+'</div></div>'+
+        '<div class="tm-result-card"><div class="tm-result-label">תקופת החזקה</div><div class="tm-result-value" style="font-size:13px">'+fmtYears(tm.years)+'</div></div>'+
+      '</div>'+
+      '<div style="position:relative;height:220px"><canvas id="tmCanvas"></canvas></div>'+
+      '<div class="dna-hint">⚠️ מבוסס על נתוני מחירי סגירה היסטוריים בפועל (ללא דיבידנדים) — לצורכי המחשה בלבד, אינו תחזית, המלצה או ייעוץ השקעות. ביצועי עבר אינם מעידים על העתיד.</div>';
+
+    const gc=cssVar('--line'),tc=cssVar('--txt3');
+    if(tmChart)tmChart.destroy();
+    tmChart=new Chart(document.getElementById('tmCanvas'),{
+      type:'line',
+      data:{labels:tm.seriesLabels,datasets:[
+        {data:tm.seriesValues,borderColor:up?cssVar('--up'):cssVar('--dn'),borderWidth:2,pointRadius:0,tension:0.15,fill:false}
+      ]},
+      options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+        plugins:{legend:{display:false},tooltip:{backgroundColor:cssVar('--raised'),titleColor:cssVar('--strong'),
+          bodyColor:cssVar('--txt2'),borderColor:cssVar('--line2'),borderWidth:1,padding:10,cornerRadius:10,
+          callbacks:{label:c=>fmtMoney(c.parsed.y)}}},
+        scales:{
+          x:{ticks:{color:tc,maxTicksLimit:6,font:{size:10}},grid:{color:gc}},
+          y:{ticks:{color:tc,font:{size:11},callback:v=>'$'+Math.round(v).toLocaleString('en-US')},grid:{color:gc}}
+        }}
+    });
+
+    document.getElementById('tmRangeGroup').addEventListener('click',async e=>{
+      const btn=e.target.closest('.tf-btn');
+      if(!btn||btn.dataset.r===curRange)return;
+      const newRange=btn.dataset.r;
+      body.innerHTML='<div class="tm-loading">טוען היסטוריה ארוכה...</div>';
+      const j=await loadRange(newRange);
+      if(!j){
+        body.innerHTML='<div class="tm-loading">שגיאה בטעינת ההיסטוריה. נסה שוב מאוחר יותר.</div>';
+        return;
+      }
+      curRange=newRange;curData=j;curIdx=0;
+      render();
+    });
+    document.getElementById('tmSlider').addEventListener('input',e=>{
+      curIdx=parseInt(e.target.value,10)||0;
+      const lbl=curData.labels[curIdx];
+      if(lbl)document.getElementById('tmDateLabel').textContent=fmtDate(lbl);
+    });
+    document.getElementById('tmSlider').addEventListener('change',()=>{render();});
+    document.getElementById('tmAmount').addEventListener('change',e=>{
+      const v=parseFloat(e.target.value);
+      curAmount=(v&&v>0)?v:1000;
+      render();
+    });
+  }
+
+  const first=await loadRange(curRange);
+  if(!first){
+    body.innerHTML='<div class="tm-loading">לא ניתן לטעון היסטוריה ארוכה עבור המניה הזו כרגע.</div>';
+    return;
+  }
+  curData=first;
+  curIdx=0;
+  render();
+}
 // ── AUTO PRICE UPDATE ──
 async function updatePrice(){
   if(!currentTicker)return;
@@ -2062,6 +2254,7 @@ async function analyze(){
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">'+
       '<span class="back-btn" onclick="showHome()">← בית</span>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+      '<button id="timeBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(96,165,250,0.12);color:var(--ma9);cursor:pointer;font-family:inherit">🕰️ מכונת זמן</button>'+
       '<button id="twinBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(163,230,53,0.12);color:var(--lime);cursor:pointer;font-family:inherit">👯 תאום מוזר בזמן</button>'+
       '<button id="mcBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(251,191,36,0.12);color:var(--warn);cursor:pointer;font-family:inherit">🔮 עתידים אפשריים</button>'+
       '<button id="dnaBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(139,156,196,0.12);color:var(--alt);cursor:pointer;font-family:inherit">🎴 שתף כרטיס</button>'+
@@ -2148,6 +2341,8 @@ async function analyze(){
     if(mcBtn)mcBtn.addEventListener('click',openMonteCarlo);
     const twinBtn=document.getElementById('twinBtn');
     if(twinBtn)twinBtn.addEventListener('click',openTwinFinder);
+    const timeBtn=document.getElementById('timeBtn');
+    if(timeBtn)timeBtn.addEventListener('click',openTimeMachine);
 
     getSentiment(t).then(sentData=>{
       getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows,sector:json.sector,weekHigh:json.week_high,weekLow:json.week_low}).then(res=>{
