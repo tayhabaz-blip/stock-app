@@ -400,6 +400,15 @@
   .mc-range{align-self:center}
   .mc-summary{font-size:13px;color:var(--txt2);line-height:1.9;text-align:center}
   .mc-summary b{font-weight:700}
+  /* ── מודל מוצא התאום הסטטיסטי ── */
+  .twin-modal{max-width:540px}
+  .twin-intro{font-size:12.5px;color:var(--txt2);text-align:center;line-height:1.7}
+  .twin-list{display:flex;flex-direction:column;gap:6px}
+  .twin-row{display:flex;justify-content:space-between;align-items:center;padding:9px 12px;
+    border-radius:10px;background:var(--raised);border:1px solid var(--line);font-size:12.5px}
+  .twin-row-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;margin-inline-end:8px}
+  .twin-row-label{display:flex;align-items:center;color:var(--txt2)}
+  .twin-row-ret{font-family:var(--mono);font-weight:700}
 </style>
 <!-- ===== PWA ===== -->
 <link rel="manifest" href="manifest.json">
@@ -1840,6 +1849,134 @@ async function openMonteCarlo(){
     render(parseInt(btn.dataset.d,10));
   });
 }
+
+// ── מוצא התאום הסטטיסטי ("תאום מוזר בזמן"): סורק את ההיסטוריה של המניה עצמה
+// (בלי קריאת רשת נוספת) כדי למצוא חלונות עבר שבהם תבנית המחיר דמתה ביותר
+// ל-20 ימי המסחר האחרונים, ומראה מה קרה בפועל ב-10 ימי המסחר שאחרי כל תאום. ──
+function computeTwins(closes,labels,windowLen,forwardLen,topK){
+  windowLen=windowLen||20;forwardLen=forwardLen||10;topK=topK||3;
+  const clean=[],cleanLabels=[];
+  for(let i=0;i<(closes||[]).length;i++){
+    if(closes[i]!=null){clean.push(closes[i]);cleanLabels.push(labels&&labels[i]?labels[i]:String(i));}
+  }
+  const n=clean.length;
+  const curStart=n-windowLen;
+  if(curStart<0)return null;
+  const curWin=clean.slice(curStart,n);
+  const curBase=curWin[0];
+  if(!curBase||curBase<=0)return null;
+  const curPct=curWin.map(v=>(v/curBase-1)*100);
+
+  const candidates=[];
+  const maxStart=curStart-windowLen-forwardLen;
+  for(let i=0;i<=maxStart;i++){
+    const win=clean.slice(i,i+windowLen);
+    const base=win[0];
+    if(!base||base<=0)continue;
+    const pct=win.map(v=>(v/base-1)*100);
+    let ssd=0;
+    for(let k=0;k<windowLen;k++){const diff=pct[k]-curPct[k];ssd+=diff*diff;}
+    const dist=Math.sqrt(ssd/windowLen);
+    const endIdx=i+windowLen-1,fwdIdx=endIdx+forwardLen;
+    if(fwdIdx>=n)continue;
+    const fwdReturn=(clean[fwdIdx]/clean[endIdx]-1)*100;
+    const fullWin=clean.slice(i,i+windowLen+forwardLen);
+    const fullPct=fullWin.map(v=>(v/base-1)*100);
+    candidates.push({start:i,end:endIdx,dist,fwdReturn,fullPct,
+      startLabel:cleanLabels[i],endLabel:cleanLabels[endIdx]});
+  }
+  // פחות מ-3 חלונות עבר תקפים — אין מספיק היסטוריה למודל אמין
+  if(candidates.length<3)return null;
+  candidates.sort((a,b)=>a.dist-b.dist);
+  const top=candidates.slice(0,topK);
+  const avgFwd=top.reduce((s,c)=>s+c.fwdReturn,0)/top.length;
+  const winRate=Math.round(top.filter(c=>c.fwdReturn>0).length/top.length*100);
+  return{curPct,top,avgFwd,winRate,windowLen,forwardLen,totalCandidates:candidates.length};
+}
+let twinChart=null;
+async function openTwinFinder(){
+  const ph=window.__priceHist;
+  if(!ph)return;
+  const tw=computeTwins(ph.closes,ph.labels,20,10,3);
+  const tkr=window.__dna?window.__dna.t:'';
+  const overlay=document.createElement('div');
+  overlay.className='dna-overlay';
+  if(!tw){
+    overlay.innerHTML=
+      '<div class="dna-modal">'+
+        '<div class="dna-modal-head"><div class="dna-modal-title">👯 תאום מוזר בזמן</div>'+
+        '<button class="dna-close" id="twinCloseBtn">✕</button></div>'+
+        '<div style="padding:1rem 0;color:var(--txt2);font-size:13.5px;text-align:center">'+
+        'אין מספיק היסטוריה מחירים כדי לחפש תבניות דומות עבור המניה הזו.</div>'+
+      '</div>';
+    document.body.appendChild(overlay);
+    const close0=()=>overlay.remove();
+    overlay.addEventListener('click',e=>{if(e.target===overlay)close0();});
+    document.getElementById('twinCloseBtn').addEventListener('click',close0);
+    return;
+  }
+
+  const twinColorVars=['--ma9','--ma20','--alt'];
+  const listHtml=tw.top.map((c,i)=>{
+    const up=c.fwdReturn>=0;
+    return '<div class="twin-row"><div class="twin-row-label"><span class="twin-row-dot" style="background:'+cssVar(twinColorVars[i]||'--alt')+'"></span>'+
+      esc(c.startLabel)+' – '+esc(c.endLabel)+'</div>'+
+      '<div class="twin-row-ret" style="color:'+(up?'var(--up)':'var(--dn)')+'">'+(up?'+':'')+c.fwdReturn.toFixed(1)+'%</div></div>';
+  }).join('');
+
+  overlay.innerHTML=
+    '<div class="dna-modal twin-modal">'+
+      '<div class="dna-modal-head"><div class="dna-modal-title">👯 תאום מוזר בזמן — '+esc(tkr)+'</div>'+
+      '<button class="dna-close" id="twinCloseBtn">✕</button></div>'+
+      '<div class="twin-intro">מצאנו את '+tw.top.length+' התקופות (מתוך '+tw.totalCandidates+' שנבדקו בהיסטוריה של '+esc(tkr)+') שבהן תבנית המחיר הכי דמתה ל-'+tw.windowLen+' ימי המסחר האחרונים. הקו המודגש הוא התבנית של היום; הקווים הצבעוניים ממשיכים אל מה שקרה בפועל אחריה.</div>'+
+      '<div style="position:relative;height:240px"><canvas id="twinCanvas"></canvas></div>'+
+      '<div class="mc-summary">תשואה ממוצעת קדימה ('+tw.forwardLen+' ימי מסחר): '+
+        '<b style="color:'+(tw.avgFwd>=0?'var(--up)':'var(--dn)')+'">'+(tw.avgFwd>=0?'+':'')+tw.avgFwd.toFixed(1)+'%</b>'+
+        ' · אחוז ניצחון: <b>'+tw.winRate+'%</b></div>'+
+      '<div class="twin-list">'+listHtml+'</div>'+
+      '<div class="dna-hint">⚠️ זו התאמת תבנית סטטיסטית בתוך ההיסטוריה של המניה עצמה — דמיון בעבר אינו ערובה שהעתיד יחזור על עצמו. אינה תחזית, המלצה או ייעוץ השקעות.</div>'+
+    '</div>';
+  document.body.appendChild(overlay);
+
+  const close=()=>{
+    overlay.remove();
+    document.removeEventListener('keydown',onKey);
+    if(twinChart){twinChart.destroy();twinChart=null;}
+  };
+  const onKey=e=>{if(e.key==='Escape')close();};
+  document.addEventListener('keydown',onKey);
+  overlay.addEventListener('click',e=>{if(e.target===overlay)close();});
+  document.getElementById('twinCloseBtn').addEventListener('click',close);
+
+  const total=tw.windowLen+tw.forwardLen;
+  const labels=[];
+  for(let k=0;k<total;k++){
+    if(k===tw.windowLen-1)labels.push('היום');
+    else if(k<tw.windowLen-1)labels.push('-'+(tw.windowLen-1-k));
+    else labels.push('+'+(k-tw.windowLen+1));
+  }
+  const curData=tw.curPct.concat(new Array(tw.forwardLen).fill(null));
+  const gc=cssVar('--line'),tc=cssVar('--txt3');
+  const twinDatasets=tw.top.map((c,i)=>({
+    data:c.fullPct,borderColor:cssVar(twinColorVars[i]||'--alt'),borderWidth:1.5,
+    borderDash:[4,3],pointRadius:0,tension:0.15,fill:false
+  }));
+  twinChart=new Chart(document.getElementById('twinCanvas'),{
+    type:'line',
+    data:{labels:labels,datasets:[
+      ...twinDatasets,
+      {data:curData,borderColor:cssVar('--lime'),borderWidth:3,pointRadius:0,tension:0.15,fill:false}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+      plugins:{legend:{display:false},tooltip:{backgroundColor:cssVar('--raised'),titleColor:cssVar('--strong'),
+        bodyColor:cssVar('--txt2'),borderColor:cssVar('--line2'),borderWidth:1,padding:10,cornerRadius:10,
+        callbacks:{label:c=>(c.parsed.y>=0?'+':'')+c.parsed.y.toFixed(1)+'%'}}},
+      scales:{
+        x:{ticks:{color:tc,maxTicksLimit:8,font:{size:10}},grid:{color:gc}},
+        y:{ticks:{color:tc,font:{size:11},callback:v=>(v>=0?'+':'')+v+'%'},grid:{color:gc}}
+      }}
+  });
+}
 // ── AUTO PRICE UPDATE ──
 async function updatePrice(){
   if(!currentTicker)return;
@@ -1918,13 +2055,14 @@ async function analyze(){
     // נתוני הניתוח האחרון — נשמרים בזיכרון בלבד לצורך כרטיס ה-DNA (בלי קריאת רשת נוספת)
     window.__dna={t:t,name:json.name||t,price:price,ch:ch,isUp:isUp,grade:sg.grade,gradeLabel:sg.label,
       rsi:rv_,weekHigh:json.week_high,weekLow:json.week_low,dividendPct:json.dividend_pct,fvData:fvData,growthVal:growthVal};
-    // היסטוריית מחירים גולמית — לצורך סימולציית מונטה קרלו (בלי קריאת רשת נוספת)
-    window.__priceHist={closes:d,price:price};
+    // היסטוריית מחירים גולמית — לצורך סימולציית מונטה קרלו ומוצא התאום הסטטיסטי (בלי קריאת רשת נוספת)
+    window.__priceHist={closes:d,labels:lb,price:price};
 
     document.getElementById('results').innerHTML=
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">'+
       '<span class="back-btn" onclick="showHome()">← בית</span>'+
-      '<div style="display:flex;gap:8px">'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+      '<button id="twinBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(163,230,53,0.12);color:var(--lime);cursor:pointer;font-family:inherit">👯 תאום מוזר בזמן</button>'+
       '<button id="mcBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(251,191,36,0.12);color:var(--warn);cursor:pointer;font-family:inherit">🔮 עתידים אפשריים</button>'+
       '<button id="dnaBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(139,156,196,0.12);color:var(--alt);cursor:pointer;font-family:inherit">🎴 שתף כרטיס</button>'+
       '<button id="wlAddBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(125,211,160,0.12);color:#7dd3a0;cursor:pointer;font-family:inherit">⭐ הוסף למעקב</button>'+
@@ -2008,6 +2146,8 @@ async function analyze(){
     if(dnaBtn)dnaBtn.addEventListener('click',openDNACard);
     const mcBtn=document.getElementById('mcBtn');
     if(mcBtn)mcBtn.addEventListener('click',openMonteCarlo);
+    const twinBtn=document.getElementById('twinBtn');
+    if(twinBtn)twinBtn.addEventListener('click',openTwinFinder);
 
     getSentiment(t).then(sentData=>{
       getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows,sector:json.sector,weekHigh:json.week_high,weekLow:json.week_low}).then(res=>{
