@@ -850,6 +850,15 @@ async def ai_analysis(req: Request):
         return {"text": ""}
 
 
+# ── מסיר עיטופי Markdown שוליים שהמודל לפעמים מוסיף סביב פסקה שלמה
+# (למשל "**\n...\n**") גם כשמתבקש טקסט רגיל — לא נוגע בכוכביות באמצע המשפט. ──
+def _strip_md_wrap(s: str) -> str:
+    s = s.strip()
+    s = re.sub(r"^\*{1,2}\s*", "", s)
+    s = re.sub(r"\s*\*{1,2}$", "", s)
+    return s.strip()
+
+
 # ── מפצל את תשובת ה-AI לשני הצדדים לפי הכותרות BULL:/BEAR: שביקשנו בפרומפט.
 # עמיד לרווחים/שינויי שורה — אם חלק אחד חסר, מוחזר עבורו מחרוזת ריקה
 # והלקוח מציג רק את הצד שכן חזר. ──
@@ -858,9 +867,9 @@ def _split_battle(text: str):
     m_bull = re.search(r"BULL:\s*(.*?)(?=BEAR:|$)", text, re.IGNORECASE | re.DOTALL)
     m_bear = re.search(r"BEAR:\s*(.*)", text, re.IGNORECASE | re.DOTALL)
     if m_bull:
-        bull = m_bull.group(1).strip()
+        bull = _strip_md_wrap(m_bull.group(1))
     if m_bear:
-        bear = m_bear.group(1).strip()
+        bear = _strip_md_wrap(m_bear.group(1))
     return bull, bear
 
 
@@ -922,7 +931,8 @@ async def ai_battle(req: Request):
         "BULL:\n<כאן הטיעון השורי (האופטימי) החזק ביותר האפשרי על בסיס הנתונים לעיל, כמו משקיע שמאמין במניה>\n"
         "BEAR:\n<כאן הטיעון הדובי (הפסימי) החזק ביותר האפשרי על בסיס אותם נתונים בדיוק, כמו משקיע חשדן>\n\n"
         "אל תכתוב מספרי מחיר, כניסה, סטופ או יעד — אלה כבר מחושבים בנפרד. "
-        "אל תמליץ לקנות או למכור. הישאר נאמן לעובדות שניתנו גם כשאתה בצד הפסימי או האופטימי, ואל תמציא נתונים חדשים."
+        "אל תמליץ לקנות או למכור. הישאר נאמן לעובדות שניתנו גם כשאתה בצד הפסימי או האופטימי, ואל תמציא נתונים חדשים. "
+        "כתוב טקסט רגיל בלבד — בלי כוכביות, בלי הדגשות Markdown ובלי כותרות משנה."
     )
     try:
         r = crequests.post(
