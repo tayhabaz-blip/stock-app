@@ -850,6 +850,110 @@ async def ai_analysis(req: Request):
         return {"text": ""}
 
 
+# ── מפצל את תשובת ה-AI לשני הצדדים לפי הכותרות BULL:/BEAR: שביקשנו בפרומפט.
+# עמיד לרווחים/שינויי שורה — אם חלק אחד חסר, מוחזר עבורו מחרוזת ריקה
+# והלקוח מציג רק את הצד שכן חזר. ──
+def _split_battle(text: str):
+    bull, bear = "", ""
+    m_bull = re.search(r"BULL:\s*(.*?)(?=BEAR:|$)", text, re.IGNORECASE | re.DOTALL)
+    m_bear = re.search(r"BEAR:\s*(.*)", text, re.IGNORECASE | re.DOTALL)
+    if m_bull:
+        bull = m_bull.group(1).strip()
+    if m_bear:
+        bear = m_bear.group(1).strip()
+    return bull, bear
+
+
+# ── קרב AI: שוורים מול דובים. בכוונה קריאה אחת בודדת ל-Groq (לא שתיים) —
+# אותו פרומפט מבקש משני הצדדים בו-זמנית, כדי לא להכפיל את צריכת התקציב
+# היומי (AI_DAILY_MAX) ביחס ל-/ai הרגיל. ה"מנצח" בין הצדדים מחושב
+# מקומית בפרונט מתוך האינדיקטורים הקיימים — לא ע"י המודל. ──
+@app.post("/ai/battle")
+async def ai_battle(req: Request):
+    if not rate_ok(req, "ai_battle", 12, 60):
+        return err(429, "יותר מדי בקשות ניתוח — נסה שוב בעוד רגע")
+    if not GROQ_KEY:
+        return {"bull": "", "bear": ""}
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    ticker = body.get("ticker", "")
+    trend = body.get("trend", "")
+    rsi_txt = body.get("rsiTxt", "")
+    rsi_num = body.get("rsiNum")
+    bull_pct = body.get("bullPct", "N/A")
+    bear_pct = body.get("bearPct", "N/A")
+    sector = body.get("sector")
+    pe = body.get("peRatio")
+    week_pos = body.get("weekPos")
+    dist_break = body.get("distToBreakPct")
+
+    facts = ["מניית " + str(ticker) + (" בסקטור " + str(sector) if sector else "") + "."]
+    facts.append("מגמה טכנית (ממוצעים נעים): " + str(trend) + ".")
+    facts.append("RSI: " + (str(rsi_num) if rsi_num is not None else "לא זמין") + " (" + str(rsi_txt) + ").")
+    if pe:
+        facts.append("מכפיל רווח P/E: " + str(pe) + ".")
+    if week_pos is not None:
+        facts.append("מיקום המחיר בטווח 52 השבועות: " + str(week_pos) + "% (100% = שיא שנתי, 0% = שפל שנתי).")
+    if dist_break is not None:
+        facts.append("מרחק מההתנגדות הקרובה ביותר: " + str(dist_break) + "%.")
+    facts.append("סנטימנט אנליסטים: " + str(bull_pct) + "% שוריים, " + str(bear_pct) + "% דוביים.")
+
+    battle_key = "aibattle:" + "|".join(str(x) for x in [
+        ticker, trend, rsi_txt,
+        round(rsi_num) if isinstance(rsi_num, (int, float)) else rsi_num,
+        bull_pct, bear_pct, sector, pe, week_pos,
+        round(dist_break) if isinstance(dist_break, (int, float)) else dist_break,
+    ])
+    cached = cache_get(battle_key, 3600)
+    if cached:
+        return cached
+
+    if not ai_budget_ok():
+        log.warning("AI daily budget of %s reached; serving empty battle", AI_DAILY_MAX)
+        return {"bull": "", "bear": ""}
+
+    prompt = (
+        "אתה מנחה דיון משפטי על מניה, ומייצג את שני הצדדים המתמודדים בנפרד ובכנות. "
+        "הנה נתונים עובדתיים בלבד על המניה:\n"
+        + "\n".join(facts) +
+        "\n\nכתוב שני קטעים קצרים בעברית, כל אחד 2-3 משפטים, בפורמט הבא בדיוק:\n"
+        "BULL:\n<כאן הטיעון השורי (האופטימי) החזק ביותר האפשרי על בסיס הנתונים לעיל, כמו משקיע שמאמין במניה>\n"
+        "BEAR:\n<כאן הטיעון הדובי (הפסימי) החזק ביותר האפשרי על בסיס אותם נתונים בדיוק, כמו משקיע חשדן>\n\n"
+        "אל תכתוב מספרי מחיר, כניסה, סטופ או יעד — אלה כבר מחושבים בנפרד. "
+        "אל תמליץ לקנות או למכור. הישאר נאמן לעובדות שניתנו גם כשאתה בצד הפסימי או האופטימי, ואל תמציא נתונים חדשים."
+    )
+    try:
+        r = crequests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer " + GROQ_KEY,
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "openai/gpt-oss-120b",
+                "max_completion_tokens": 900,
+                "reasoning_effort": "low",
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            impersonate="chrome",
+            timeout=20,
+        )
+        d = r.json()
+        if "choices" not in d:
+            log.warning("groq returned no choices for battle: %s", str(d)[:400])
+            return {"bull": "", "bear": ""}
+        text = (d["choices"][0]["message"].get("content") or "").strip()
+        bull, bear = _split_battle(text)
+        if not bull and not bear:
+            return {"bull": "", "bear": ""}
+        return cache_set(battle_key, {"bull": bull, "bear": bear})
+    except Exception:
+        log.exception("ai_battle failed for %s", ticker)
+        return {"bull": "", "bear": ""}
+
+
 def _translate(txt: str, budget_left: float):
     """תרגום כותרת בודדת לעברית. נקודת הקצה של גוגל אינה רשמית, ולכן
     הכישלון כאן חייב להיות רך — מחזירים None והלקוח יציג את המקור."""
