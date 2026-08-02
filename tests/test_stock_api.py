@@ -1895,6 +1895,59 @@ class TestHistoricalPrecedentInFacts:
     def test_system_prompt_forbids_presenting_precedent_as_forecast(self):
         assert "חל איסור מוחלט לנסח אותו כתחזית" in api.AI_SYSTEM
 
+    def test_precedent_prefix_matches_the_detector(self):
+        """אם ניסוח שורת התקדים ישתנה בלי הקידומת, ההנחיה שמחייבת להזכיר
+        אותו תתנתק בשקט — והנתון הייחודי ביותר יפסיק להופיע."""
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, **self.TWIN))
+        assert api._has_precedent(facts) is True
+
+    def test_no_precedent_is_detected_when_absent(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE))
+        assert api._has_precedent(facts) is False
+
+
+class TestPrecedentIsGivenItsOwnSentence:
+    """בבדיקה חיה התקדים ההיסטורי נשמט מהתשובה כשהיו עשר עובדות מתחרות על
+    מכסה של 3-4 משפטים. הפרומפט מקצה לו עכשיו משפט ייעודי — הטסטים כאן
+    בודקים את הפרומפט שנשלח בפועל, לא רק את בניית העובדות."""
+
+    BASE = {"ticker": "AAPL", "trend": "עולה", "rsiNum": 55,
+            "bullPct": 60, "bearPct": 10}
+    TWIN = {"twinAvgFwd": 4.2, "twinWinRate": 67, "twinSamples": 3, "twinForwardLen": 10}
+
+    def setup_method(self):
+        _clear_cache()
+        _clear_rate()
+
+    def _captured_prompt(self, body):
+        """מריץ /ai עם Groq מדומה ומחזיר את הפרומפט שנשלח בפועל."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"choices": [{"message": {"content": "תשובה"}}]}
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r:
+            mock_r.post.return_value = mock_resp
+            client.post("/ai", json=body)
+            sent = mock_r.post.call_args
+        payload = sent.kwargs.get("json") or sent[1].get("json")
+        return payload["messages"][1]["content"]
+
+    def test_prompt_demands_the_precedent_sentence_when_present(self):
+        p = self._captured_prompt(dict(self.BASE, ticker="WITHTWIN", **self.TWIN))
+        assert "המשפט על התקדים ההיסטורי הוא חובה" in p
+        assert "4-5 משפטים" in p
+
+    def test_prompt_stays_short_when_no_precedent(self):
+        p = self._captured_prompt(dict(self.BASE, ticker="NOTWIN"))
+        assert "3-4 משפטים" in p
+        assert "המשפט על התקדים ההיסטורי הוא חובה" not in p
+
+    def test_prompt_carries_the_precedent_numbers(self):
+        p = self._captured_prompt(dict(self.BASE, ticker="NUMS", **self.TWIN))
+        assert "4.2%" in p
+        assert "67%" in p
+        assert "מדגם קטן" in p
+
 
 class TestRSIThresholdConsistency:
     """הבאג שנמצא בסריקה של הפרודקשן: הסורק סימן "RSI נמוך" מתחת ל-35 בעוד
