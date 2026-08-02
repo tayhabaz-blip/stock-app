@@ -997,6 +997,46 @@ class TestExtractStockFacts:
         assert cache_fields[-2] == 3.5
         assert cache_fields[-1] == 1.8
 
+    def test_rsi_is_never_described_as_volatility(self):
+        """הבאג שנמצא בפרודקשן: RSI 31.7 תואר ע"י המודל כ'תנודתיות יתר' —
+        טעות מקצועית. המצב נגזר עכשיו מהמספר בצד השרת ונמסר במפורש."""
+        for v in (12, 31.7, 55, 78):
+            _, facts, _ = api._extract_stock_facts(dict(self.BASE, rsiNum=v))
+            assert "תנודתיות" not in " ".join(facts)
+
+    def test_low_rsi_is_labelled_oversold(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, rsiNum=22))
+        assert "מכירת יתר" in " ".join(facts)
+
+    def test_high_rsi_is_labelled_overbought(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, rsiNum=78))
+        assert "קניית יתר" in " ".join(facts)
+
+    def test_mid_rsi_is_labelled_neutral(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, rsiNum=52))
+        assert "RSI: 52 — נייטרלי." in facts
+
+    def test_rsi_just_above_thirty_is_neutral_not_oversold(self):
+        """31.7 אינו מכירת יתר לפי הסף התקני 30 — וכרטיס המדד באפליקציה
+        כבר מציג Neutral. ה-AI חייב לומר את אותו הדבר, לא לסתור אותו."""
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, rsiNum=31.7))
+        joined = " ".join(facts)
+        assert "מכירת יתר" not in joined
+        assert "נייטרלי, בחלק התחתון של הטווח" in joined
+
+    def test_missing_rsi_does_not_crash(self):
+        body = dict(self.BASE)
+        body["rsiNum"] = None
+        _, facts, _ = api._extract_stock_facts(body)
+        assert "RSI: לא זמין." in facts
+
+    def test_pe_ratio_is_rounded(self):
+        """המודל חוזר על המספר כלשונו — 285.51373 נראה שבור בטקסט עברי."""
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, peRatio=285.51373))
+        joined = " ".join(facts)
+        assert "285.5" in joined
+        assert "285.51373" not in joined
+
 
 class TestAIEndpoint:
     def setup_method(self):
@@ -1087,6 +1127,44 @@ class TestAIEndpoint:
         assert r.status_code == 200
         assert r.json().get("text") == "ניתוח אחרי נפילה זמנית"
         assert mock_r.post.call_count == 2
+
+
+class TestGroqPayload:
+    """מנעולי רגרסיה על הבחירות שתיקנו את איכות העברית: מודל שכותב עברית
+    ישירות, temperature נמוך, והנחיות מערכת. temperature=1 (ברירת המחדל של
+    Groq) הוא מה שגרם למודל להמציא מילים כמו 'מפולס' באמצע משפט."""
+
+    def test_uses_hebrew_capable_model(self):
+        p = api._groq_payload("שלום", 600)
+        assert p["model"] == "llama-3.3-70b-versatile"
+        assert "gpt-oss" not in p["model"]
+
+    def test_temperature_is_low(self):
+        p = api._groq_payload("שלום", 600)
+        assert "temperature" in p, "בלי temperature מפורש Groq משתמש ב-1.0 והעברית נשברת"
+        assert p["temperature"] <= 0.5
+
+    def test_never_sends_reasoning_effort(self):
+        """llama-3.3-70b אינו מודל reasoning — הפרמטר הזה יחזיר שגיאה."""
+        p = api._groq_payload("שלום", 600)
+        assert "reasoning_effort" not in p
+
+    def test_has_system_message_before_user(self):
+        p = api._groq_payload("שאלת המשתמש", 600)
+        assert p["messages"][0]["role"] == "system"
+        assert p["messages"][1]["role"] == "user"
+        assert p["messages"][1]["content"] == "שאלת המשתמש"
+
+    def test_system_message_pins_rsi_terminology(self):
+        """הטעות המקורית בפרודקשן: RSI נמוך תואר כ'תנודתיות יתר'."""
+        p = api._groq_payload("x", 600)
+        sys_msg = p["messages"][0]["content"]
+        assert "מכירת יתר" in sys_msg
+        assert "קניית יתר" in sys_msg
+        assert "RSI אינו מדד לתנודתיות" in sys_msg
+
+    def test_max_tokens_passed_through(self):
+        assert api._groq_payload("x", 900)["max_completion_tokens"] == 900
 
 
 class TestCallGroq:
