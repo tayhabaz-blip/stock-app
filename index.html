@@ -588,6 +588,11 @@ if ('serviceWorker' in navigator) {
 // ── כתובת הבקאנד — שנה כאן בלבד אם עוברים ל-ngrok ──
 const API='https://stock-app-1-dbrs.onrender.com';
 
+// ── ספי RSI תקניים, מוגדרים פעם אחת. בעבר ציון הבריאות נתן +3 על "RSI נמוך"
+// מתחת ל-35 בזמן שכרטיס המדד ממש לידו הציג "Neutral" עד 30 — אותה מניה,
+// שני תיאורים סותרים באותו מסך. אותם ערכים בדיוק מוגדרים גם בשרת. ──
+const RSI_OVERSOLD=30, RSI_OVERBOUGHT=70;
+
 // ── ערכת צבעים. ברירת המחדל נגזרת מהגדרת המערכת, ובחירה מפורשת
 // נשמרת ומנצחת אותה. אותו מנגנון אחסון של רשימת המעקב. ──
 function readTheme(){
@@ -1364,8 +1369,8 @@ function assess(price,m9,m20,m150,m200,rv,pe,sector){
   // שימו לב ל-!= ולא ל-!== : כשאין מספיק ימי מסחר הערך הוא undefined,
   // והשוואה קשיחה ל-null הייתה מכניסה אותנו לענף ומדפיסה "RSI (undefined)"
   if(rv!=null&&!isNaN(rv)){
-    if(rv<35){s+=3;rs.push('RSI נמוך ('+rv+')');}
-    else if(rv>70){s-=2;rs.push('RSI גבוה ('+rv+')');}
+    if(rv<RSI_OVERSOLD){s+=3;rs.push('RSI נמוך ('+rv+')');}
+    else if(rv>RSI_OVERBOUGHT){s-=2;rs.push('RSI גבוה ('+rv+')');}
     else{s+=1;rs.push('RSI ניטרלי ('+rv+')');}
   }else rs.push('RSI לא זמין');
   if(pe&&pe>0){
@@ -1419,7 +1424,7 @@ function fmt(n){
 
 // ── AI — כניסה על פריצה, שרשרת יעדים עם אחוז ממחיר הפריצה. JavaScript מחשב, AI רק מנסח ──
 async function getAI(data){
-  const {ticker,price,rsiVal,m9,m20,sg,zs,bullPct,bearPct,pe,lows,sector,weekHigh,weekLow,change5dPct,relVolume,daysToEarnings}=data;
+  const {ticker,price,rsiVal,m9,m20,sg,zs,bullPct,bearPct,pe,lows,sector,weekHigh,weekLow,change5dPct,relVolume,daysToEarnings,twinStats}=data;
   const priceNum=parseFloat(price);
   const rnd=v=>parseFloat(v.toFixed(priceNum<1?4:2));
 
@@ -1482,7 +1487,7 @@ async function getAI(data){
   const rr=(targets.length&&targets[0].rr!=null)?targets[0].rr:null;
 
   const trend=m9&&m20&&parseFloat(m9)>parseFloat(m20)?'עולה':'יורד';
-  const rsiTxt=rsiVal<35?'נמוך — אזור קנייה':rsiVal>70?'גבוה — אזור מכירה':'נייטרלי';
+  const rsiTxt=rsiVal<RSI_OVERSOLD?'נמוך — אזור קנייה':rsiVal>RSI_OVERBOUGHT?'גבוה — אזור מכירה':'נייטרלי';
 
   // AI — משפט ניסוח בלבד, דרך הבקאנד
   // מיקום המחיר בטווח 52 השבועות (0% = שפל שנתי, 100% = שיא שנתי)
@@ -1516,7 +1521,11 @@ async function getAI(data){
     change5dPct:change5dPct!=null?change5dPct:null,
     relVolume:relVolume!=null?relVolume:null,
     newsHeadlines,
-    daysToEarnings:daysToEarnings!=null?daysToEarnings:null
+    daysToEarnings:daysToEarnings!=null?daysToEarnings:null,
+    twinAvgFwd:twinStats?twinStats.avgFwd:null,
+    twinWinRate:twinStats?twinStats.winRate:null,
+    twinSamples:twinStats?twinStats.samples:null,
+    twinForwardLen:twinStats?twinStats.forwardLen:null
   };
   window.__aiFacts=aiFacts;
   try{
@@ -1596,8 +1605,8 @@ function computeEventBadges(price,weekHigh,weekLow,prevClose,prevM200,lm200,rv_)
     else if(prevClose>prevM200&&price<lm200)badges.push({icon:'⚡',text:'חצה מתחת לממוצע נע 200',dir:'down',pri:2});
   }
   if(rv_!=null){
-    if(rv_>=70)badges.push({icon:'📈',text:'RSI גבוה ('+Math.round(rv_)+') · קניית יתר',dir:'down',pri:4});
-    else if(rv_<=30)badges.push({icon:'📉',text:'RSI נמוך ('+Math.round(rv_)+') · מכירת יתר',dir:'up',pri:4});
+    if(rv_>=RSI_OVERBOUGHT)badges.push({icon:'📈',text:'RSI גבוה ('+Math.round(rv_)+') · קניית יתר',dir:'down',pri:4});
+    else if(rv_<=RSI_OVERSOLD)badges.push({icon:'📉',text:'RSI נמוך ('+Math.round(rv_)+') · מכירת יתר',dir:'up',pri:4});
   }
   return badges.sort((a,b)=>a.pri-b.pri).slice(0,3);
 }
@@ -1612,7 +1621,7 @@ function computeArchetype(rv_,fvData,grade,price,weekHigh,weekLow,dividendPct,gr
     return{icon:'💎',name:'היהלום הגולמי',desc:'נסחרת מתחת לשווי ההוגן, עם יסודות חזקים'};
   if(fvData&&fvData.diff>=25)
     return{icon:'🎭',name:'השחקן',desc:'נסחרת הרבה מעל השווי ההוגן המחושב'};
-  if(rv_!=null&&!isNaN(rv_)&&rv_<=30)
+  if(rv_!=null&&!isNaN(rv_)&&rv_<=RSI_OVERSOLD)
     return{icon:'🧊',name:'הקרחון',desc:'באזור מכירת יתר — שקטה כרגע מתחת לפני השטח'};
   if(dividendPct!=null&&dividendPct>=2.5&&(grade==='A'||grade==='B'))
     return{icon:'🛡️',name:'השומר הזהיר',desc:'דיבידנד יציב לצד יסודות בריאים'};
@@ -1625,7 +1634,7 @@ function computeArchetype(rv_,fvData,grade,price,weekHigh,weekLow,dividendPct,gr
 function buildDNAStats(d){
   const stats=[];
   stats.push({label:'RSI (14)',value:(d.rsi!=null&&!isNaN(d.rsi))?String(Math.round(d.rsi)):'—',
-    color:(d.rsi>70?'#f87171':d.rsi<30?'#4ade80':'#ffffff')});
+    color:(d.rsi>RSI_OVERBOUGHT?'#f87171':d.rsi<RSI_OVERSOLD?'#4ade80':'#ffffff')});
   if(d.fvData){
     const diff=d.fvData.diff;
     stats.push({label:'משווי הוגן',value:(diff>=0?'+':'')+diff+'%',
@@ -2244,8 +2253,8 @@ function computeBattleScore(facts){
   if(trend==='עולה')bullPts++;
   else if(trend==='יורד')bearPts++;
   if(typeof rsiNum==='number'){
-    if(rsiNum<30)bullPts++;
-    else if(rsiNum>70)bearPts++;
+    if(rsiNum<RSI_OVERSOLD)bullPts++;
+    else if(rsiNum>RSI_OVERBOUGHT)bearPts++;
   }
   if(typeof weekPos==='number'){
     if(weekPos>=60)bullPts++;
@@ -2400,6 +2409,22 @@ async function analyze(){
     const price=(live&&live.price!=null)?live.price:histLast;
     const prev=(live&&live.prev!=null)?live.prev:histPrev;
     window.__lastTick=price;
+    // ── תקדים היסטורי מתוך המניה עצמה: מה קרה אחרי תבניות מחיר דומות בעבר.
+    // אותם פרמטרים בדיוק (20/10/3) כמו חלון "תאום מוזר בזמן", כדי שה-AI לא
+    // יוכל לסתור את המספרים שהמשתמש רואה שם. מחושב מנתונים שכבר בזיכרון —
+    // אפס קריאות רשת נוספות. כישלון כאן לא מעכב את שאר הניתוח. ──
+    let twinStats=null;
+    try{
+      const tw=computeTwins(d,lb,20,10,3);
+      if(tw&&tw.top&&tw.top.length>=3){
+        twinStats={
+          avgFwd:parseFloat(tw.avgFwd.toFixed(1)),
+          winRate:tw.winRate,
+          samples:tw.top.length,
+          forwardLen:tw.forwardLen
+        };
+      }
+    }catch(e){}
     // ── שינוי מחיר ב-5 ימי מסחר אחרונים, ונפח מסחר יחסי לממוצע 20 הימים —
     // שני נתונים חדשים שמוזנים ל-AI (שלב 2 בשיפור כלי ה-AI). מחושבים כאן כי
     // הנתונים הגולמים (סגירות/נפחים) כבר בזיכרון מתשובת /stock, בלי בקשת רשת נוספת. ──
@@ -2473,7 +2498,7 @@ async function analyze(){
       '<div class="signal-banner '+sg.c+'"><div class="signal-dot dot-'+sg.c+'"></div><div><div class="signal-title '+sg.c+'">ניתוח טכני — '+esc(sg.l)+'</div><div class="signal-reasons">'+esc(sg.rs.join(' · '))+'</div></div></div>'+
       '<div class="glass sentiment-card" id="sentCard"><div class="ai-loading"><div class="ai-spinner"><svg width="16" height="16" viewBox="0 0 100 100"><polyline points="10,80 35,55 55,65 90,15" fill="none" stroke="'+cssVar('--accent')+'" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" pathLength="100" style="stroke-dasharray:100;stroke-dashoffset:100;animation:drawLine 1.2s ease-in-out infinite"/></svg></div>טוען נתוני אנליסטים...</div></div>'+
       '<div class="metrics">'+
-      '<div class="glass metric"><div class="metric-label">RSI (14)</div><div class="metric-value '+(rv_>70?'down':rv_<30?'up':'')+'">'+(rv_!=null&&!isNaN(rv_)?esc(rv_):'—')+'</div><div class="metric-sub">'+(rv_==null||isNaN(rv_)?'אין מספיק נתונים':rv_>70?'Overbought':rv_<30?'Oversold':'Neutral')+'</div></div>'+
+      '<div class="glass metric"><div class="metric-label">RSI (14)</div><div class="metric-value '+(rv_>RSI_OVERBOUGHT?'down':rv_<RSI_OVERSOLD?'up':'')+'">'+(rv_!=null&&!isNaN(rv_)?esc(rv_):'—')+'</div><div class="metric-sub">'+(rv_==null||isNaN(rv_)?'אין מספיק נתונים':rv_>RSI_OVERBOUGHT?'Overbought':rv_<RSI_OVERSOLD?'Oversold':'Neutral')+'</div></div>'+
       '<div class="glass metric"><div class="metric-label">MA9 / MA20</div><div class="metric-value" style="font-size:16px">$'+(lm9?.toFixed(2)||'—')+'</div><div class="metric-sub">/ $'+(lm20?.toFixed(2)||'—')+'</div></div>'+
       '<div class="glass metric"><div class="metric-label">MA200</div><div class="metric-value" style="font-size:16px">'+(lm200?'$'+lm200.toFixed(2):'—')+'</div></div>'+
       '</div>'+
@@ -2534,7 +2559,7 @@ async function analyze(){
     if(battleBtn)battleBtn.addEventListener('click',openAIBattle);
 
     getSentiment(t).then(sentData=>{
-      getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows,sector:json.sector,weekHigh:json.week_high,weekLow:json.week_low,change5dPct,relVolume,daysToEarnings:json.days_to_earnings}).then(res=>{
+      getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows,sector:json.sector,weekHigh:json.week_high,weekLow:json.week_low,change5dPct,relVolume,daysToEarnings:json.days_to_earnings,twinStats}).then(res=>{
         const el=document.getElementById('aiText');
         if(el){el.className='ai-text';el.textContent=res.text||'לא ניתן לטעון ניתוח AI.';}
       });
