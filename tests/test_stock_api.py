@@ -959,6 +959,45 @@ class TestSentimentEndpoint:
         assert r.status_code == 502
 
 
+class TestExtractStockFacts:
+    """שלב 2 של שיפור ה-AI: העשרת התוכן ב-2 עובדות חדשות — שינוי מחיר ב-5
+    ימי מסחר ונפח מסחר יחסי. שתיהן אופציונליות כדי לא לשבור בקשות ישנות
+    שעדיין לא שולחות את השדות האלה (למשל אם הפרונטאנד לא התעדכן עדיין)."""
+
+    BASE = {"ticker": "AAPL", "trend": "עולה", "rsiTxt": "נייטרלי", "rsiNum": 55,
+            "bullPct": 60, "bearPct": 10}
+
+    def test_change_5d_and_rel_volume_included_when_present(self):
+        body = dict(self.BASE, change5dPct=3.4, relVolume=1.8)
+        ticker, facts, cache_fields = api._extract_stock_facts(body)
+        joined = " ".join(facts)
+        assert "עלייה של 3.4%" in joined
+        assert "פי 1.8" in joined
+        assert 3.4 in cache_fields
+        assert 1.8 in cache_fields
+
+    def test_negative_change_5d_shown_as_decline_with_absolute_value(self):
+        body = dict(self.BASE, change5dPct=-2.7)
+        _, facts, _ = api._extract_stock_facts(body)
+        joined = " ".join(facts)
+        assert "ירידה של 2.7%" in joined
+        assert "-2.7" not in joined
+
+    def test_fields_omitted_when_absent(self):
+        """בקשה ישנה בלי השדות החדשים לא אמורה לקרוס ולא להזכיר נפח/שינוי-5-ימים."""
+        ticker, facts, cache_fields = api._extract_stock_facts(dict(self.BASE))
+        joined = " ".join(facts)
+        assert "ימי מסחר" not in joined
+        assert "נפח מסחר יחסי" not in joined
+        assert cache_fields[-2] is None and cache_fields[-1] is None
+
+    def test_cache_fields_rounded_to_one_decimal(self):
+        body = dict(self.BASE, change5dPct=3.456, relVolume=1.849)
+        _, _, cache_fields = api._extract_stock_facts(body)
+        assert cache_fields[-2] == 3.5
+        assert cache_fields[-1] == 1.8
+
+
 class TestAIEndpoint:
     def setup_method(self):
         _clear_cache()
