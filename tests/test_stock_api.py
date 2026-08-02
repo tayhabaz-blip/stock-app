@@ -1004,6 +1004,120 @@ class TestAIEndpoint:
         # Groq was called only once (second hit the cache)
         assert mock_r.post.call_count == 1
 
+    def test_recovers_after_one_transient_failure(self):
+        """ניסיון ראשון נכשל באופן זמני (שגיאת רשת), הניסיון השני מצליח —
+        המשתמש עדיין מקבל טקסט ולא מסך ריק."""
+        good_resp = MagicMock()
+        good_resp.status_code = 200
+        good_resp.json.return_value = {
+            "choices": [{"message": {"content": "ניתוח אחרי נפילה זמנית"}}]
+        }
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r, \
+             patch("stock_api.time.sleep"):
+            mock_r.post.side_effect = [Exception("timeout"), good_resp]
+            r = client.post("/ai", json={"ticker": "NVDA", "trend": "up",
+                                          "rsiTxt": "neutral", "rsiNum": 50,
+                                          "bullPct": 70, "bearPct": 5})
+        assert r.status_code == 200
+        assert r.json().get("text") == "ניתוח אחרי נפילה זמנית"
+        assert mock_r.post.call_count == 2
+
+
+class TestCallGroq:
+    """בדיקות ישירות ל-_call_groq: ניסיון חוזר יחיד רק על כשלים זמניים
+    (חריגת רשת/timeout, או סטטוס 429/5xx), ולא על כשל לוגי (תשובה תקינה
+    בלי choices, או תשובה שאינה JSON תקין)."""
+
+    def test_retries_once_on_exception_then_succeeds(self):
+        good_resp = MagicMock()
+        good_resp.status_code = 200
+        good_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r, \
+             patch("stock_api.time.sleep") as mock_sleep:
+            mock_r.post.side_effect = [Exception("boom"), good_resp]
+            result = api._call_groq({"model": "x", "messages": []})
+        assert result == {"choices": [{"message": {"content": "ok"}}]}
+        assert mock_r.post.call_count == 2
+        mock_sleep.assert_called_once()
+
+    def test_retries_once_on_5xx_then_succeeds(self):
+        bad_resp = MagicMock()
+        bad_resp.status_code = 503
+        good_resp = MagicMock()
+        good_resp.status_code = 200
+        good_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r, \
+             patch("stock_api.time.sleep"):
+            mock_r.post.side_effect = [bad_resp, good_resp]
+            result = api._call_groq({"model": "x", "messages": []})
+        assert result == {"choices": [{"message": {"content": "ok"}}]}
+        assert mock_r.post.call_count == 2
+
+    def test_retries_once_on_429_then_succeeds(self):
+        bad_resp = MagicMock()
+        bad_resp.status_code = 429
+        good_resp = MagicMock()
+        good_resp.status_code = 200
+        good_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r, \
+             patch("stock_api.time.sleep"):
+            mock_r.post.side_effect = [bad_resp, good_resp]
+            result = api._call_groq({"model": "x", "messages": []})
+        assert result == {"choices": [{"message": {"content": "ok"}}]}
+        assert mock_r.post.call_count == 2
+
+    def test_both_attempts_fail_with_exception_returns_none(self):
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r, \
+             patch("stock_api.time.sleep"):
+            mock_r.post.side_effect = Exception("still down")
+            result = api._call_groq({"model": "x", "messages": []})
+        assert result is None
+        assert mock_r.post.call_count == 2
+
+    def test_both_attempts_5xx_returns_none(self):
+        bad_resp = MagicMock()
+        bad_resp.status_code = 500
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r, \
+             patch("stock_api.time.sleep"):
+            mock_r.post.return_value = bad_resp
+            result = api._call_groq({"model": "x", "messages": []})
+        assert result is None
+        assert mock_r.post.call_count == 2
+
+    def test_no_retry_on_response_missing_choices(self):
+        """כשל לוגי (תשובה תקינה בלי choices) לא חוזר על עצמו — ניסיון נוסף
+        לא יתקן תשובה שגויה מהמודל."""
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"unexpected": "format"}
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r, \
+             patch("stock_api.time.sleep") as mock_sleep:
+            mock_r.post.return_value = resp
+            result = api._call_groq({"model": "x", "messages": []})
+        assert result == {"unexpected": "format"}
+        assert mock_r.post.call_count == 1
+        mock_sleep.assert_not_called()
+
+    def test_no_retry_on_invalid_json_response(self):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.side_effect = ValueError("not json")
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r, \
+             patch("stock_api.time.sleep") as mock_sleep:
+            mock_r.post.return_value = resp
+            result = api._call_groq({"model": "x", "messages": []})
+        assert result is None
+        assert mock_r.post.call_count == 1
+        mock_sleep.assert_not_called()
+
 
 class TestSplitBattle:
     def test_both_sections_present(self):
@@ -1154,6 +1268,26 @@ class TestAIBattleEndpoint:
         j = r.json()
         assert j.get("bull") == "" and j.get("bear") == ""
         mock_r.post.assert_not_called()
+
+    def test_recovers_after_one_transient_failure(self):
+        """ניסיון ראשון נכשל באופן זמני (סטטוס 502), הניסיון השני מצליח."""
+        good_resp = MagicMock()
+        good_resp.status_code = 200
+        good_resp.json.return_value = {
+            "choices": [{"message": {"content": "BULL:\nטיעון שורי.\nBEAR:\nטיעון דובי."}}]
+        }
+        bad_resp = MagicMock()
+        bad_resp.status_code = 502
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r, \
+             patch("stock_api.time.sleep"):
+            mock_r.post.side_effect = [bad_resp, good_resp]
+            r = client.post("/ai/battle", json={"ticker": "AMD", "trend": "up"})
+        assert r.status_code == 200
+        j = r.json()
+        assert j.get("bull") == "טיעון שורי."
+        assert j.get("bear") == "טיעון דובי."
+        assert mock_r.post.call_count == 2
 
 
 class TestNewsEndpoint:
