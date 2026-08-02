@@ -1163,6 +1163,17 @@ class TestGroqPayload:
         assert "קניית יתר" in sys_msg
         assert "RSI אינו מדד לתנודתיות" in sys_msg
 
+    def test_system_message_forbids_reclassifying_rsi(self):
+        """המודל קיבל 'נייטרלי' וכתב בכל זאת 'מכירת יתר' — סתירה למה
+        שהאפליקציה עצמה מציגה. ההנחיה אוסרת עליו לסווג מחדש."""
+        sys_msg = api._groq_payload("x", 600)["messages"][0]["content"]
+        assert "אל תסווג אותו מחדש" in sys_msg
+
+    def test_system_message_has_style_example(self):
+        """דוגמת סגנון קצרה משפרת היצמדות להנחיות הרבה מעבר לרשימת איסורים."""
+        sys_msg = api._groq_payload("x", 600)["messages"][0]["content"]
+        assert "חקה את הסגנון" in sys_msg
+
     def test_max_tokens_passed_through(self):
         assert api._groq_payload("x", 900)["max_completion_tokens"] == 900
 
