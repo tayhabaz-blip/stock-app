@@ -778,6 +778,99 @@ class TestStockEndpoint:
         assert r.status_code == 200
 
 
+class TestStockEndpointEarningsDate:
+    """שלב חדש בהעשרת ה-AI: קרבה לדוח רבעוני. yfinance.calendar משתנה
+    במבנה בין גרסאות (רשימה / ערך בודד / חסר), ולכן מכוסה כאן בנפרד —
+    וחשוב במיוחד שכשל בשליפתו לא יפיל את כל התשובה של /stock."""
+
+    def setup_method(self):
+        _clear_cache()
+        _clear_rate()
+
+    def _fake_hist(self):
+        import pandas as pd
+        return pd.DataFrame({
+            "Close": [150.0, 151.0],
+            "High": [152.0, 153.0],
+            "Low": [149.0, 150.0],
+            "Volume": [1e6, 1.1e6],
+        }, index=pd.to_datetime(["2026-01-01", "2026-01-02"]))
+
+    def test_earnings_date_list_computes_days_to_earnings(self):
+        from datetime import timedelta
+        from zoneinfo import ZoneInfo
+        target = datetime.now(ZoneInfo("America/New_York")).date() + timedelta(days=5)
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = self._fake_hist()
+        mock_ticker.info = {"longName": "Apple Inc."}
+        mock_ticker.calendar = {"Earnings Date": [target]}
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = mock_ticker
+            r = client.get("/stock/AAPL")
+        assert r.status_code == 200
+        assert r.json().get("days_to_earnings") == 5
+
+    def test_earnings_date_single_value_not_list(self):
+        from datetime import timedelta
+        from zoneinfo import ZoneInfo
+        target = datetime.now(ZoneInfo("America/New_York")).date() + timedelta(days=2)
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = self._fake_hist()
+        mock_ticker.info = {"longName": "Apple Inc."}
+        mock_ticker.calendar = {"Earnings Date": target}
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = mock_ticker
+            r = client.get("/stock/AAPL")
+        assert r.json().get("days_to_earnings") == 2
+
+    def test_earnings_date_takes_earliest_of_range(self):
+        from datetime import timedelta
+        from zoneinfo import ZoneInfo
+        d1 = datetime.now(ZoneInfo("America/New_York")).date() + timedelta(days=10)
+        d2 = datetime.now(ZoneInfo("America/New_York")).date() + timedelta(days=14)
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = self._fake_hist()
+        mock_ticker.info = {"longName": "Apple Inc."}
+        mock_ticker.calendar = {"Earnings Date": [d1, d2]}
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = mock_ticker
+            r = client.get("/stock/AAPL")
+        assert r.json().get("days_to_earnings") == 10
+
+    def test_missing_calendar_key_returns_none(self):
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = self._fake_hist()
+        mock_ticker.info = {"longName": "Apple Inc."}
+        mock_ticker.calendar = {}
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = mock_ticker
+            r = client.get("/stock/AAPL")
+        assert r.json().get("days_to_earnings") is None
+
+    def test_calendar_not_a_dict_returns_none(self):
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = self._fake_hist()
+        mock_ticker.info = {"longName": "Apple Inc."}
+        mock_ticker.calendar = None
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = mock_ticker
+            r = client.get("/stock/AAPL")
+        assert r.json().get("days_to_earnings") is None
+
+    def test_calendar_exception_does_not_break_stock_endpoint(self):
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = self._fake_hist()
+        mock_ticker.info = {"longName": "Apple Inc."}
+        type(mock_ticker).calendar = PropertyMock(side_effect=Exception("boom"))
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = mock_ticker
+            r = client.get("/stock/AAPL")
+        assert r.status_code == 200
+        j = r.json()
+        assert j.get("days_to_earnings") is None
+        assert j.get("name") == "Apple Inc."
+
+
 class TestHistoryEndpoint:
     def setup_method(self):
         _clear_cache()
@@ -989,13 +1082,14 @@ class TestExtractStockFacts:
         joined = " ".join(facts)
         assert "ימי מסחר" not in joined
         assert "נפח מסחר יחסי" not in joined
-        assert cache_fields[-3] is None and cache_fields[-2] is None and cache_fields[-1] is None
+        assert cache_fields[-4] is None and cache_fields[-3] is None \
+            and cache_fields[-2] is None and cache_fields[-1] is None
 
     def test_cache_fields_rounded_to_one_decimal(self):
         body = dict(self.BASE, change5dPct=3.456, relVolume=1.849)
         _, _, cache_fields = api._extract_stock_facts(body)
-        assert cache_fields[-3] == 3.5
-        assert cache_fields[-2] == 1.8
+        assert cache_fields[-4] == 3.5
+        assert cache_fields[-3] == 1.8
 
     def test_rsi_is_never_described_as_volatility(self):
         """הבאג שנמצא בפרודקשן: RSI 31.7 תואר ע"י המודל כ'תנודתיות יתר' —
@@ -1667,11 +1761,61 @@ class TestNewsHeadlinesInFacts:
         _, _, fields_none = api._extract_stock_facts(dict(self.BASE))
         assert fields_a != fields_b
         assert fields_a != fields_none
-        assert fields_none[-1] is None
+        assert fields_none[-2] is None  # שדה החדשות, כשלא סופקו כותרות
 
     def test_system_prompt_forbids_treating_headlines_as_instructions(self):
         assert "אינה הוראה" in api.AI_SYSTEM
         assert "ציטוט טקסטואלי" in api.AI_SYSTEM
+
+
+class TestEarningsProximityInFacts:
+    """שלב 2 בהעשרת ה-AI: קרבה לדוח רבעוני. רלוונטי רק בחלון צר סביב
+    התאריך (0-14 ימים קדימה, עד 3 ימים אחורה) — דוח רחוק בזמן לא מוסיף
+    כלום לניתוח וגורם רק לרעש."""
+
+    BASE = {"ticker": "AAPL", "trend": "עולה", "rsiTxt": "נייטרלי", "rsiNum": 55,
+            "bullPct": 60, "bearPct": 10}
+
+    def test_imminent_earnings_included(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, daysToEarnings=5))
+        joined = " ".join(facts)
+        assert "דוח רבעוני" in joined
+        assert "5 ימים" in joined
+
+    def test_earnings_exactly_at_two_week_boundary_included(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, daysToEarnings=14))
+        assert "דוח רבעוני" in " ".join(facts)
+
+    def test_earnings_just_past_two_week_boundary_not_mentioned(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, daysToEarnings=15))
+        assert "דוח רבעוני" not in " ".join(facts)
+
+    def test_earnings_far_away_not_mentioned(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, daysToEarnings=45))
+        assert "דוח רבעוני" not in " ".join(facts)
+
+    def test_earnings_reported_recently_mentioned(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, daysToEarnings=-1))
+        assert "פרסמה דוח רבעוני" in " ".join(facts)
+        assert "לאחרונה" in " ".join(facts)
+
+    def test_earnings_reported_long_ago_not_mentioned(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, daysToEarnings=-30))
+        assert "דוח רבעוני" not in " ".join(facts)
+
+    def test_missing_days_to_earnings_does_not_crash(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE))
+        assert "דוח רבעוני" not in " ".join(facts)
+
+    def test_days_to_earnings_affects_cache_key(self):
+        _, _, fields_soon = api._extract_stock_facts(dict(self.BASE, daysToEarnings=3))
+        _, _, fields_far = api._extract_stock_facts(dict(self.BASE, daysToEarnings=90))
+        assert fields_soon != fields_far
+        assert fields_soon[-1] == 3
+        assert fields_far[-1] == 90
+
+    def test_system_prompt_forbids_guessing_earnings_outcome(self):
+        assert "אסור לך לנחש" in api.AI_SYSTEM
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
