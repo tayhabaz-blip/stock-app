@@ -1404,7 +1404,7 @@ function fmt(n){
 
 // ── AI — כניסה על פריצה, שרשרת יעדים עם אחוז ממחיר הפריצה. JavaScript מחשב, AI רק מנסח ──
 async function getAI(data){
-  const {ticker,price,rsiVal,m9,m20,sg,zs,bullPct,bearPct,pe,lows,sector,weekHigh,weekLow}=data;
+  const {ticker,price,rsiVal,m9,m20,sg,zs,bullPct,bearPct,pe,lows,sector,weekHigh,weekLow,change5dPct,relVolume}=data;
   const priceNum=parseFloat(price);
   const rnd=v=>parseFloat(v.toFixed(priceNum<1?4:2));
 
@@ -1486,7 +1486,9 @@ async function getAI(data){
     sector:sector||null,
     peRatio:pe||null,
     weekPos,
-    distToBreakPct
+    distToBreakPct,
+    change5dPct:change5dPct!=null?change5dPct:null,
+    relVolume:relVolume!=null?relVolume:null
   };
   window.__aiFacts=aiFacts;
   try{
@@ -2365,6 +2367,18 @@ async function analyze(){
     const price=(live&&live.price!=null)?live.price:histLast;
     const prev=(live&&live.prev!=null)?live.prev:histPrev;
     window.__lastTick=price;
+    // ── שינוי מחיר ב-5 ימי מסחר אחרונים, ונפח מסחר יחסי לממוצע 20 הימים —
+    // שני נתונים חדשים שמוזנים ל-AI (שלב 2 בשיפור כלי ה-AI). מחושבים כאן כי
+    // הנתונים הגולמים (סגירות/נפחים) כבר בזיכרון מתשובת /stock, בלי בקשת רשת נוספת. ──
+    const change5dPct=closes_clean.length>5?parseFloat(((price-closes_clean[closes_clean.length-6])/closes_clean[closes_clean.length-6]*100).toFixed(2)):null;
+    const vols_clean=(json.volumes||[]).filter(v=>v!=null);
+    let relVolume=null;
+    if(vols_clean.length>20){
+      const latestVol=vols_clean[vols_clean.length-1];
+      const prevVols=vols_clean.slice(-21,-1); // 20 ימי המסחר הקודמים, בלי היום האחרון
+      const avgVol=prevVols.reduce((a,b)=>a+b,0)/prevVols.length;
+      if(avgVol>0)relVolume=parseFloat((latestVol/avgVol).toFixed(2));
+    }
     const ch=((price-prev)/prev*100).toFixed(2);const isUp=parseFloat(ch)>=0;
     const rv_=rv.filter(v=>v!==null).pop();
     const lm9=m9v.filter(v=>v!==null).pop(),lm20=m20v.filter(v=>v!==null).pop();
@@ -2487,7 +2501,7 @@ async function analyze(){
     if(battleBtn)battleBtn.addEventListener('click',openAIBattle);
 
     getSentiment(t).then(sentData=>{
-      getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows,sector:json.sector,weekHigh:json.week_high,weekLow:json.week_low}).then(res=>{
+      getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows,sector:json.sector,weekHigh:json.week_high,weekLow:json.week_low,change5dPct,relVolume}).then(res=>{
         const el=document.getElementById('aiText');
         if(el){el.className='ai-text';el.textContent=res.text||'לא ניתן לטעון ניתוח AI.';}
       });
