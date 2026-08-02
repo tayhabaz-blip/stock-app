@@ -786,6 +786,11 @@ function esc(s){
   if(s==null)return'';
   return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+// ── שורת "טוען..." מאוחדת עם ספינר ה-SVG המצויר — אותו ויזואל בדיוק בכל
+// מקום שמחכים לתשובת AI או לנתונים, כדי שהמתנה תיראה עקבית בכל הכלים ──
+function spinnerRow(label){
+  return '<div class="ai-loading" style="justify-content:center"><div class="ai-spinner"><svg width="16" height="16" viewBox="0 0 100 100"><polyline points="10,80 35,55 55,65 90,15" fill="none" stroke="'+cssVar('--accent')+'" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" pathLength="100" style="stroke-dasharray:100;stroke-dashoffset:100;animation:drawLine 1.2s ease-in-out infinite"/></svg></div>'+esc(label)+'</div>';
+}
 // כתובת בטוחה לפתיחה: רק http/https, כדי לחסום javascript: וכדומה
 function safeUrl(u){
   try{const p=new URL(u,location.href);return(p.protocol==='http:'||p.protocol==='https:')?p.href:null;}
@@ -2169,7 +2174,7 @@ async function openTimeMachine(){
       const btn=e.target.closest('.tf-btn');
       if(!btn||btn.dataset.r===curRange)return;
       const newRange=btn.dataset.r;
-      body.innerHTML='<div class="tm-loading">טוען היסטוריה ארוכה...</div>';
+      body.innerHTML='<div class="tm-loading">'+spinnerRow('טוען היסטוריה ארוכה...')+'</div>';
       const j=await loadRange(newRange);
       if(!j){
         body.innerHTML='<div class="tm-loading">שגיאה בטעינת ההיסטוריה. נסה שוב מאוחר יותר.</div>';
@@ -2258,7 +2263,7 @@ async function openAIBattle(){
     '<div class="dna-modal battle-modal">'+
       '<div class="dna-modal-head"><div class="dna-modal-title">⚔️ קרב AI — '+esc(tkr)+'</div>'+
       '<button class="dna-close" id="battleCloseBtn">✕</button></div>'+
-      '<div class="tm-loading" id="battleBody">שני הצדדים בונים טיעונים...</div>'+
+      '<div class="tm-loading" id="battleBody">'+spinnerRow('שני הצדדים בונים טיעונים...')+'</div>'+
     '</div>';
   document.body.appendChild(overlay);
   const close=()=>{
