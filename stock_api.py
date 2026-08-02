@@ -809,6 +809,8 @@ def _extract_stock_facts(body: dict):
     pe = body.get("peRatio")
     week_pos = body.get("weekPos")       # 0-100: מיקום המחיר בטווח 52 השבועות
     dist_break = body.get("distToBreakPct")
+    change_5d = body.get("change5dPct")  # % שינוי מחיר ב-5 ימי המסחר האחרונים
+    rel_volume = body.get("relVolume")   # נפח מסחר יחסי לממוצע 20 הימים האחרונים (1.0 = ממוצע)
 
     facts = ["מניית " + str(ticker) + (" בסקטור " + str(sector) if sector else "") + "."]
     facts.append("מגמה טכנית (ממוצעים נעים): " + str(trend) + ".")
@@ -819,6 +821,11 @@ def _extract_stock_facts(body: dict):
         facts.append("מיקום המחיר בטווח 52 השבועות: " + str(week_pos) + "% (100% = שיא שנתי, 0% = שפל שנתי).")
     if dist_break is not None:
         facts.append("מרחק מההתנגדות הקרובה ביותר: " + str(dist_break) + "%.")
+    if change_5d is not None:
+        direction = "עלייה" if change_5d >= 0 else "ירידה"
+        facts.append("שינוי מחיר ב-5 ימי המסחר האחרונים: " + direction + " של " + str(abs(change_5d)) + "%.")
+    if rel_volume is not None:
+        facts.append("נפח מסחר יחסי לממוצע 20 הימים האחרונים: פי " + str(rel_volume) + ".")
     facts.append("סנטימנט אנליסטים: " + str(bull_pct) + "% שוריים, " + str(bear_pct) + "% דוביים.")
 
     cache_fields = [
@@ -826,6 +833,8 @@ def _extract_stock_facts(body: dict):
         round(rsi_num) if isinstance(rsi_num, (int, float)) else rsi_num,
         bull_pct, bear_pct, sector, pe, week_pos,
         round(dist_break) if isinstance(dist_break, (int, float)) else dist_break,
+        round(change_5d, 1) if isinstance(change_5d, (int, float)) else change_5d,
+        round(rel_volume, 1) if isinstance(rel_volume, (int, float)) else rel_volume,
     ]
     return ticker, facts, cache_fields
 
