@@ -846,7 +846,7 @@ async def ai_analysis(req: Request):
     if not rate_ok(req, "ai", 12, 60):
         return err(429, "יותר מדי בקשות ניתוח — נסה שוב בעוד רגע")
     if not GROQ_KEY:
-        return {"text": ""}
+        return {"text": "", "reason": "unavailable"}
     try:
         body = await req.json()
     except Exception:
@@ -865,7 +865,7 @@ async def ai_analysis(req: Request):
     # ממשיכה לעבוד, במקום להציג שגיאה או להמשיך לחייב.
     if not ai_budget_ok():
         log.warning("AI daily budget of %s reached; serving empty text", AI_DAILY_MAX)
-        return {"text": ""}
+        return {"text": "", "reason": "budget"}
 
     prompt = (
         "אתה אנליסט מניות מנוסה. הנה נתונים עובדתיים בלבד על מניה:\n"
@@ -888,14 +888,14 @@ async def ai_analysis(req: Request):
         })
         if not d or "choices" not in d or not d["choices"]:
             log.warning("groq returned no usable choices: %s", str(d)[:400] if d else "None (both attempts failed)")
-            return {"text": ""}
+            return {"text": "", "reason": "transient"}
         text = (d["choices"][0]["message"].get("content") or "").strip()
         if not text:
-            return {"text": ""}
+            return {"text": "", "reason": "transient"}
         return cache_set(ai_key, {"text": text})
     except Exception:
         log.exception("ai_analysis failed for %s", ticker)
-        return {"text": ""}
+        return {"text": "", "reason": "transient"}
 
 
 # ── מסיר עיטופי Markdown שוליים שהמודל לפעמים מוסיף סביב פסקה שלמה
@@ -930,7 +930,7 @@ async def ai_battle(req: Request):
     if not rate_ok(req, "ai_battle", 12, 60):
         return err(429, "יותר מדי בקשות ניתוח — נסה שוב בעוד רגע")
     if not GROQ_KEY:
-        return {"bull": "", "bear": ""}
+        return {"bull": "", "bear": "", "reason": "unavailable"}
     try:
         body = await req.json()
     except Exception:
@@ -944,7 +944,7 @@ async def ai_battle(req: Request):
 
     if not ai_budget_ok():
         log.warning("AI daily budget of %s reached; serving empty battle", AI_DAILY_MAX)
-        return {"bull": "", "bear": ""}
+        return {"bull": "", "bear": "", "reason": "budget"}
 
     prompt = (
         "אתה מנחה דיון משפטי על מניה, ומייצג את שני הצדדים המתמודדים בנפרד ובכנות. "
@@ -966,15 +966,15 @@ async def ai_battle(req: Request):
         })
         if not d or "choices" not in d or not d["choices"]:
             log.warning("groq returned no usable choices for battle: %s", str(d)[:400] if d else "None (both attempts failed)")
-            return {"bull": "", "bear": ""}
+            return {"bull": "", "bear": "", "reason": "transient"}
         text = (d["choices"][0]["message"].get("content") or "").strip()
         bull, bear = _split_battle(text)
         if not bull and not bear:
-            return {"bull": "", "bear": ""}
+            return {"bull": "", "bear": "", "reason": "transient"}
         return cache_set(battle_key, {"bull": bull, "bear": bear})
     except Exception:
         log.exception("ai_battle failed for %s", ticker)
-        return {"bull": "", "bear": ""}
+        return {"bull": "", "bear": "", "reason": "transient"}
 
 
 def _translate(txt: str, budget_left: float):
