@@ -755,6 +755,81 @@ def get_sentiment(ticker: str, request: Request):
 
 
 # ── פרוקסי ל-Groq: המפתח נשאר בשרת, המודל כותב רק ניסוח מגמה ──
+# ── קריאה ל-Groq עם ניסיון חוזר יחיד, אבל רק על כשלים זמניים: שגיאת רשת/
+# timeout, או תגובת 429/5xx מ-Groq עצמו. כשל לוגי (למשל תשובה תקינה בלי
+# choices) לא חוזר על עצמו בניסיון נוסף — זה לא יתקן את עצמו. שני הניסיונות
+# ביחד לא חורגים בהרבה מה-timeout המקורי (20s) כדי לא להאריך את ההמתנה
+# למשתמש מעבר לסביר, גם כשגם הניסיון השני נכשל. ──
+def _call_groq(payload: dict, first_timeout: int = 12, retry_timeout: int = 8):
+    for attempt, timeout in enumerate((first_timeout, retry_timeout)):
+        try:
+            r = crequests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": "Bearer " + GROQ_KEY,
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                impersonate="chrome",
+                timeout=timeout,
+            )
+        except Exception as e:
+            log.warning("groq request failed (attempt %s): %s", attempt + 1, e)
+            if attempt == 0:
+                time.sleep(0.3)
+                continue
+            return None
+        if r.status_code in (429, 500, 502, 503, 504):
+            log.warning("groq returned status %s (attempt %s)", r.status_code, attempt + 1)
+            if attempt == 0:
+                time.sleep(0.3)
+                continue
+            return None
+        try:
+            return r.json()
+        except Exception:
+            log.warning("groq response was not valid JSON (attempt %s)", attempt + 1)
+            return None
+    return None
+
+
+# ── שולפת מגוף הבקשה את התמונה הטכנית ובונה ממנה רשימת "עובדות" למודל,
+# משותפת ל-/ai ול-/ai/battle כדי ששתי התכונות תמיד יראו בדיוק אותם נתונים —
+# הוספת אינדיקטור חדש נעשית פעם אחת כאן ומשפיעה מיד על שתיהן. cache_fields
+# הוא אותה רשימת שדות ששימשה בעבר לבניית מפתח המטמון בכל endpoint בנפרד,
+# כך שמפתחות מטמון קיימים ממשיכים להיות תקפים אחרי הריפקטור הזה. ──
+def _extract_stock_facts(body: dict):
+    ticker = body.get("ticker", "")
+    trend = body.get("trend", "")
+    rsi_txt = body.get("rsiTxt", "")
+    rsi_num = body.get("rsiNum")
+    bull_pct = body.get("bullPct", "N/A")
+    bear_pct = body.get("bearPct", "N/A")
+    sector = body.get("sector")
+    pe = body.get("peRatio")
+    week_pos = body.get("weekPos")       # 0-100: מיקום המחיר בטווח 52 השבועות
+    dist_break = body.get("distToBreakPct")
+
+    facts = ["מניית " + str(ticker) + (" בסקטור " + str(sector) if sector else "") + "."]
+    facts.append("מגמה טכנית (ממוצעים נעים): " + str(trend) + ".")
+    facts.append("RSI: " + (str(rsi_num) if rsi_num is not None else "לא זמין") + " (" + str(rsi_txt) + ").")
+    if pe:
+        facts.append("מכפיל רווח P/E: " + str(pe) + ".")
+    if week_pos is not None:
+        facts.append("מיקום המחיר בטווח 52 השבועות: " + str(week_pos) + "% (100% = שיא שנתי, 0% = שפל שנתי).")
+    if dist_break is not None:
+        facts.append("מרחק מההתנגדות הקרובה ביותר: " + str(dist_break) + "%.")
+    facts.append("סנטימנט אנליסטים: " + str(bull_pct) + "% שוריים, " + str(bear_pct) + "% דוביים.")
+
+    cache_fields = [
+        ticker, trend, rsi_txt,
+        round(rsi_num) if isinstance(rsi_num, (int, float)) else rsi_num,
+        bull_pct, bear_pct, sector, pe, week_pos,
+        round(dist_break) if isinstance(dist_break, (int, float)) else dist_break,
+    ]
+    return ticker, facts, cache_fields
+
+
 @app.post("/ai")
 async def ai_analysis(req: Request):
     # ── הגבלה הדוקה קודם כל: זו הנקודה היחידה שעולה לנו כסף אמיתי בכל
@@ -767,37 +842,11 @@ async def ai_analysis(req: Request):
         body = await req.json()
     except Exception:
         body = {}
-    ticker = body.get("ticker", "")
-    trend = body.get("trend", "")
-    rsi_txt = body.get("rsiTxt", "")
-    rsi_num = body.get("rsiNum")
-    bull = body.get("bullPct", "N/A")
-    bear = body.get("bearPct", "N/A")
-    sector = body.get("sector")
-    pe = body.get("peRatio")
-    week_pos = body.get("weekPos")       # 0-100: מיקום המחיר בטווח 52 השבועות
-    dist_break = body.get("distToBreakPct")
-
-    # ── בניית רשימת עובדות מדויקות — ככל שיש יותר נתונים אמיתיים, הניתוח פחות כללי ──
-    facts = ["מניית " + str(ticker) + (" בסקטור " + str(sector) if sector else "") + "."]
-    facts.append("מגמה טכנית (ממוצעים נעים): " + str(trend) + ".")
-    facts.append("RSI: " + (str(rsi_num) if rsi_num is not None else "לא זמין") + " (" + str(rsi_txt) + ").")
-    if pe:
-        facts.append("מכפיל רווח P/E: " + str(pe) + ".")
-    if week_pos is not None:
-        facts.append("מיקום המחיר בטווח 52 השבועות: " + str(week_pos) + "% (100% = שיא שנתי, 0% = שפל שנתי).")
-    if dist_break is not None:
-        facts.append("מרחק מההתנגדות הקרובה ביותר: " + str(dist_break) + "%.")
-    facts.append("סנטימנט אנליסטים: " + str(bull) + "% שוריים, " + str(bear) + "% דוביים.")
+    ticker, facts, cache_fields = _extract_stock_facts(body)
 
     # ── מטמון: אותה מניה עם אותה תמונה טכנית מחזירה את אותו ניתוח.
     # בלי זה כל צפייה חוזרת היא קריאה נוספת בתשלום ל-Groq. ──
-    ai_key = "ai:" + "|".join(str(x) for x in [
-        ticker, trend, rsi_txt,
-        round(rsi_num) if isinstance(rsi_num, (int, float)) else rsi_num,
-        bull, bear, sector, pe, week_pos,
-        round(dist_break) if isinstance(dist_break, (int, float)) else dist_break,
-    ])
+    ai_key = "ai:" + "|".join(str(x) for x in cache_fields)
     cached = cache_get(ai_key, 3600)
     if cached:
         return cached
@@ -819,27 +868,17 @@ async def ai_analysis(req: Request):
         "אל תמליץ לקנות או למכור, ואל תשתמש במילים כמו 'כדאי' או 'מומלץ' — רק תאר את התמונה במאוזן."
     )
     try:
-        r = crequests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Authorization": "Bearer " + GROQ_KEY,
-                "Content-Type": "application/json",
-            },
-            json={
-                # gpt-oss-120b הוא מודל reasoning ודורש max_completion_tokens.
-                # השם max_tokens נדחה על ידיו, ובלי reasoning_effort נמוך
-                # טוקני החשיבה בולעים את התקציב והתוכן חוזר ריק.
-                "model": "openai/gpt-oss-120b",
-                "max_completion_tokens": 600,
-                "reasoning_effort": "low",
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            impersonate="chrome",
-            timeout=20,
-        )
-        d = r.json()
-        if "choices" not in d:
-            log.warning("groq returned no choices: %s", str(d)[:400])
+        # gpt-oss-120b הוא מודל reasoning ודורש max_completion_tokens.
+        # השם max_tokens נדחה על ידיו, ובלי reasoning_effort נמוך
+        # טוקני החשיבה בולעים את התקציב והתוכן חוזר ריק.
+        d = _call_groq({
+            "model": "openai/gpt-oss-120b",
+            "max_completion_tokens": 600,
+            "reasoning_effort": "low",
+            "messages": [{"role": "user", "content": prompt}],
+        })
+        if not d or "choices" not in d or not d["choices"]:
+            log.warning("groq returned no usable choices: %s", str(d)[:400] if d else "None (both attempts failed)")
             return {"text": ""}
         text = (d["choices"][0]["message"].get("content") or "").strip()
         if not text:
@@ -887,34 +926,9 @@ async def ai_battle(req: Request):
         body = await req.json()
     except Exception:
         body = {}
-    ticker = body.get("ticker", "")
-    trend = body.get("trend", "")
-    rsi_txt = body.get("rsiTxt", "")
-    rsi_num = body.get("rsiNum")
-    bull_pct = body.get("bullPct", "N/A")
-    bear_pct = body.get("bearPct", "N/A")
-    sector = body.get("sector")
-    pe = body.get("peRatio")
-    week_pos = body.get("weekPos")
-    dist_break = body.get("distToBreakPct")
+    ticker, facts, cache_fields = _extract_stock_facts(body)
 
-    facts = ["מניית " + str(ticker) + (" בסקטור " + str(sector) if sector else "") + "."]
-    facts.append("מגמה טכנית (ממוצעים נעים): " + str(trend) + ".")
-    facts.append("RSI: " + (str(rsi_num) if rsi_num is not None else "לא זמין") + " (" + str(rsi_txt) + ").")
-    if pe:
-        facts.append("מכפיל רווח P/E: " + str(pe) + ".")
-    if week_pos is not None:
-        facts.append("מיקום המחיר בטווח 52 השבועות: " + str(week_pos) + "% (100% = שיא שנתי, 0% = שפל שנתי).")
-    if dist_break is not None:
-        facts.append("מרחק מההתנגדות הקרובה ביותר: " + str(dist_break) + "%.")
-    facts.append("סנטימנט אנליסטים: " + str(bull_pct) + "% שוריים, " + str(bear_pct) + "% דוביים.")
-
-    battle_key = "aibattle:" + "|".join(str(x) for x in [
-        ticker, trend, rsi_txt,
-        round(rsi_num) if isinstance(rsi_num, (int, float)) else rsi_num,
-        bull_pct, bear_pct, sector, pe, week_pos,
-        round(dist_break) if isinstance(dist_break, (int, float)) else dist_break,
-    ])
+    battle_key = "aibattle:" + "|".join(str(x) for x in cache_fields)
     cached = cache_get(battle_key, 3600)
     if cached:
         return cached
@@ -935,24 +949,14 @@ async def ai_battle(req: Request):
         "כתוב טקסט רגיל בלבד — בלי כוכביות, בלי הדגשות Markdown ובלי כותרות משנה."
     )
     try:
-        r = crequests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Authorization": "Bearer " + GROQ_KEY,
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "openai/gpt-oss-120b",
-                "max_completion_tokens": 900,
-                "reasoning_effort": "low",
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            impersonate="chrome",
-            timeout=20,
-        )
-        d = r.json()
-        if "choices" not in d:
-            log.warning("groq returned no choices for battle: %s", str(d)[:400])
+        d = _call_groq({
+            "model": "openai/gpt-oss-120b",
+            "max_completion_tokens": 900,
+            "reasoning_effort": "low",
+            "messages": [{"role": "user", "content": prompt}],
+        })
+        if not d or "choices" not in d or not d["choices"]:
+            log.warning("groq returned no usable choices for battle: %s", str(d)[:400] if d else "None (both attempts failed)")
             return {"bull": "", "bear": ""}
         text = (d["choices"][0]["message"].get("content") or "").strip()
         bull, bear = _split_battle(text)
