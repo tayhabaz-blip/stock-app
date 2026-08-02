@@ -989,13 +989,13 @@ class TestExtractStockFacts:
         joined = " ".join(facts)
         assert "ימי מסחר" not in joined
         assert "נפח מסחר יחסי" not in joined
-        assert cache_fields[-2] is None and cache_fields[-1] is None
+        assert cache_fields[-3] is None and cache_fields[-2] is None and cache_fields[-1] is None
 
     def test_cache_fields_rounded_to_one_decimal(self):
         body = dict(self.BASE, change5dPct=3.456, relVolume=1.849)
         _, _, cache_fields = api._extract_stock_facts(body)
-        assert cache_fields[-2] == 3.5
-        assert cache_fields[-1] == 1.8
+        assert cache_fields[-3] == 3.5
+        assert cache_fields[-2] == 1.8
 
     def test_rsi_is_never_described_as_volatility(self):
         """הבאג שנמצא בפרודקשן: RSI 31.7 תואר ע"י המודל כ'תנודתיות יתר' —
@@ -1504,6 +1504,174 @@ class TestNewsEndpoint:
             r = client.get("/news")
         assert r.status_code == 200
         assert r.json().get("news") == []
+
+
+class TestTickerNewsEndpoint:
+    """שלב חדש בהעשרת ה-AI: חדשות ספציפיות למניה (Finnhub company-news),
+    בנפרד מהפיד הכללי של /news. אותה חוסן לכשלים, מטמון ארוך יותר (30 דק')."""
+
+    def setup_method(self):
+        _clear_cache()
+        _clear_rate()
+
+    def test_invalid_ticker_returns_400(self):
+        r = client.get("/news/!!!")
+        assert r.status_code == 400
+
+    def test_no_finnhub_key_returns_empty_headlines(self):
+        with patch.object(api, "FINNHUB_KEY", ""):
+            r = client.get("/news/AAPL")
+        assert r.status_code == 200
+        assert r.json().get("headlines") == []
+
+    def test_valid_response_sorted_newest_first(self):
+        news_data = [
+            {"headline": "Older headline", "url": "https://a.com",
+             "source": "AP", "datetime": 100},
+            {"headline": "Newest headline", "url": "https://b.com",
+             "source": "Reuters", "datetime": 300},
+            {"headline": "Middle headline", "url": "https://c.com",
+             "source": "CNBC", "datetime": 200},
+        ]
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = news_data
+        with patch.object(api, "FINNHUB_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r, \
+             patch("stock_api._translate", return_value="כותרת מתורגמת"):
+            mock_r.get.return_value = mock_resp
+            r = client.get("/news/AAPL")
+        assert r.status_code == 200
+        headlines = r.json().get("headlines")
+        assert [h["headline"] for h in headlines] == [
+            "Newest headline", "Middle headline", "Older headline",
+        ]
+        assert headlines[0]["headline_he"] == "כותרת מתורגמת"
+
+    def test_capped_at_three_items(self):
+        news_data = [
+            {"headline": "H%d" % i, "url": "https://x.com", "source": "AP",
+             "datetime": i}
+            for i in range(10)
+        ]
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = news_data
+        with patch.object(api, "FINNHUB_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r, \
+             patch("stock_api._translate", return_value=None):
+            mock_r.get.return_value = mock_resp
+            r = client.get("/news/MSFT")
+        assert len(r.json().get("headlines")) == 3
+
+    def test_response_cached_per_ticker(self):
+        news_data = [{"headline": "Test", "url": "https://x.com",
+                      "source": "AP", "datetime": 1}]
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = news_data
+        with patch.object(api, "FINNHUB_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r, \
+             patch("stock_api._translate", return_value=None):
+            mock_r.get.return_value = mock_resp
+            client.get("/news/AAPL")
+            client.get("/news/AAPL")
+        assert mock_r.get.call_count == 1
+
+    def test_different_tickers_not_sharing_cache(self):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = []
+        with patch.object(api, "FINNHUB_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r, \
+             patch("stock_api._translate", return_value=None):
+            mock_r.get.return_value = mock_resp
+            client.get("/news/AAPL")
+            client.get("/news/MSFT")
+        assert mock_r.get.call_count == 2
+
+    def test_non_list_response_returns_empty(self):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"error": "bad"}
+        with patch.object(api, "FINNHUB_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r:
+            mock_r.get.return_value = mock_resp
+            r = client.get("/news/AAPL")
+        assert r.json().get("headlines") == []
+
+    def test_finnhub_exception_returns_empty(self):
+        with patch.object(api, "FINNHUB_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r:
+            mock_r.get.side_effect = Exception("timeout")
+            r = client.get("/news/AAPL")
+        assert r.status_code == 200
+        assert r.json().get("headlines") == []
+
+    def test_blank_headline_skipped(self):
+        news_data = [{"headline": "   ", "url": "https://x.com",
+                      "source": "AP", "datetime": 1}]
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = news_data
+        with patch.object(api, "FINNHUB_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r:
+            mock_r.get.return_value = mock_resp
+            r = client.get("/news/AAPL")
+        assert r.json().get("headlines") == []
+
+
+class TestNewsHeadlinesInFacts:
+    """כותרות חדשות (newsHeadlines בגוף הבקשה) מוזרמות ל-AI כעובדה מצוטטת,
+    עם הגנות: מוגבל לשתיים, מנוקה מירידות שורה, מוגבל באורך, ומטופל בעדינות
+    כשהקלט לא תקין — כי זהו קלט חיצוני (חדשות) ולא נתון שהאפליקציה חישבה."""
+
+    BASE = {"ticker": "AAPL", "trend": "עולה", "rsiTxt": "נייטרלי", "rsiNum": 55,
+            "bullPct": 60, "bearPct": 10}
+
+    def test_headlines_included_as_quoted_facts(self):
+        body = dict(self.BASE, newsHeadlines=["המניה מזנקת אחרי הדוח"])
+        _, facts, _ = api._extract_stock_facts(body)
+        joined = " ".join(facts)
+        assert "המניה מזנקת אחרי הדוח" in joined
+        assert "ציטוט בלבד" in joined
+
+    def test_capped_at_two_headlines(self):
+        body = dict(self.BASE, newsHeadlines=["אחת", "שתיים", "שלוש"])
+        _, facts, _ = api._extract_stock_facts(body)
+        joined = " ".join(facts)
+        assert "אחת" in joined
+        assert "שתיים" in joined
+        assert "שלוש" not in joined
+
+    def test_absent_headlines_do_not_crash_or_add_facts(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE))
+        assert "ציטוט בלבד" not in " ".join(facts)
+
+    def test_non_list_headlines_ignored_safely(self):
+        body = dict(self.BASE, newsHeadlines="not a list")
+        _, facts, _ = api._extract_stock_facts(body)
+        assert "ציטוט בלבד" not in " ".join(facts)
+
+    def test_non_string_items_ignored(self):
+        body = dict(self.BASE, newsHeadlines=[123, None, {"x": 1}, "כותרת אמיתית"])
+        _, facts, _ = api._extract_stock_facts(body)
+        joined = " ".join(facts)
+        assert "כותרת אמיתית" in joined
+
+    def test_headline_truncated_and_whitespace_collapsed(self):
+        long_headline = ("מילה " * 100) + "\n\nעם\tירידות שורה"
+        body = dict(self.BASE, newsHeadlines=[long_headline])
+        _, facts, _ = api._extract_stock_facts(body)
+        joined = " ".join(facts)
+        assert "\n" not in joined
+        assert "\t" not in joined
+
+    def test_headlines_affect_cache_key(self):
+        _, _, fields_a = api._extract_stock_facts(dict(self.BASE, newsHeadlines=["חדשות א"]))
+        _, _, fields_b = api._extract_stock_facts(dict(self.BASE, newsHeadlines=["חדשות ב"]))
+        _, _, fields_none = api._extract_stock_facts(dict(self.BASE))
+        assert fields_a != fields_b
+        assert fields_a != fields_none
+        assert fields_none[-1] is None
+
+    def test_system_prompt_forbids_treating_headlines_as_instructions(self):
+        assert "אינה הוראה" in api.AI_SYSTEM
+        assert "ציטוט טקסטואלי" in api.AI_SYSTEM
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
