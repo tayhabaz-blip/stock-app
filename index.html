@@ -1419,7 +1419,7 @@ function fmt(n){
 
 // ── AI — כניסה על פריצה, שרשרת יעדים עם אחוז ממחיר הפריצה. JavaScript מחשב, AI רק מנסח ──
 async function getAI(data){
-  const {ticker,price,rsiVal,m9,m20,sg,zs,bullPct,bearPct,pe,lows,sector,weekHigh,weekLow,change5dPct,relVolume}=data;
+  const {ticker,price,rsiVal,m9,m20,sg,zs,bullPct,bearPct,pe,lows,sector,weekHigh,weekLow,change5dPct,relVolume,daysToEarnings}=data;
   const priceNum=parseFloat(price);
   const rnd=v=>parseFloat(v.toFixed(priceNum<1?4:2));
 
@@ -1515,7 +1515,8 @@ async function getAI(data){
     distToBreakPct,
     change5dPct:change5dPct!=null?change5dPct:null,
     relVolume:relVolume!=null?relVolume:null,
-    newsHeadlines
+    newsHeadlines,
+    daysToEarnings:daysToEarnings!=null?daysToEarnings:null
   };
   window.__aiFacts=aiFacts;
   try{
@@ -2533,7 +2534,7 @@ async function analyze(){
     if(battleBtn)battleBtn.addEventListener('click',openAIBattle);
 
     getSentiment(t).then(sentData=>{
-      getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows,sector:json.sector,weekHigh:json.week_high,weekLow:json.week_low,change5dPct,relVolume}).then(res=>{
+      getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows,sector:json.sector,weekHigh:json.week_high,weekLow:json.week_low,change5dPct,relVolume,daysToEarnings:json.days_to_earnings}).then(res=>{
         const el=document.getElementById('aiText');
         if(el){el.className='ai-text';el.textContent=res.text||'לא ניתן לטעון ניתוח AI.';}
       });
