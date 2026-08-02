@@ -1082,14 +1082,21 @@ class TestExtractStockFacts:
         joined = " ".join(facts)
         assert "ימי מסחר" not in joined
         assert "נפח מסחר יחסי" not in joined
-        assert cache_fields[-4] is None and cache_fields[-3] is None \
-            and cache_fields[-2] is None and cache_fields[-1] is None
+        # השדות האופציונליים נשארים None, ולכן מפתח המטמון שונה מזה של בקשה
+        # שכן נשלחו בה — נבדק בהשוואה ולא לפי מיקום באינדקס.
+        _, _, with_fields = api._extract_stock_facts(
+            dict(self.BASE, change5dPct=3.4, relVolume=1.8))
+        assert cache_fields != with_fields
 
     def test_cache_fields_rounded_to_one_decimal(self):
+        # נבדק לפי ערך ולא לפי מיקום: הוספת שדה חדש ל-cache_fields לא אמורה
+        # להפיל טסט שכל עניינו הוא העיגול.
         body = dict(self.BASE, change5dPct=3.456, relVolume=1.849)
         _, _, cache_fields = api._extract_stock_facts(body)
-        assert cache_fields[-4] == 3.5
-        assert cache_fields[-3] == 1.8
+        assert 3.5 in cache_fields
+        assert 1.8 in cache_fields
+        assert 3.456 not in cache_fields
+        assert 1.849 not in cache_fields
 
     def test_rsi_is_never_described_as_volatility(self):
         """הבאג שנמצא בפרודקשן: RSI 31.7 תואר ע"י המודל כ'תנודתיות יתר' —
@@ -1761,7 +1768,7 @@ class TestNewsHeadlinesInFacts:
         _, _, fields_none = api._extract_stock_facts(dict(self.BASE))
         assert fields_a != fields_b
         assert fields_a != fields_none
-        assert fields_none[-2] is None  # שדה החדשות, כשלא סופקו כותרות
+        assert "חדשות א" in fields_a
 
     def test_system_prompt_forbids_treating_headlines_as_instructions(self):
         assert "אינה הוראה" in api.AI_SYSTEM
@@ -1811,11 +1818,131 @@ class TestEarningsProximityInFacts:
         _, _, fields_soon = api._extract_stock_facts(dict(self.BASE, daysToEarnings=3))
         _, _, fields_far = api._extract_stock_facts(dict(self.BASE, daysToEarnings=90))
         assert fields_soon != fields_far
-        assert fields_soon[-1] == 3
-        assert fields_far[-1] == 90
+        assert 3 in fields_soon
+        assert 90 in fields_far
 
     def test_system_prompt_forbids_guessing_earnings_outcome(self):
         assert "אסור לך לנחש" in api.AI_SYSTEM
+
+
+class TestHistoricalPrecedentInFacts:
+    """התקדים ההיסטורי ("תאום מוזר בזמן") מוזרם ל-AI. זהו מדגם קטן במכוון
+    (3 תקדימים, אותם פרמטרים כמו החלון שהמשתמש רואה), ולכן הוא חייב להימסר
+    עם גודל המדגם ועם הסתייגות מפורשת — אסור שהמודל יציג אותו כתחזית."""
+
+    BASE = {"ticker": "AAPL", "trend": "עולה", "rsiTxt": "נייטרלי", "rsiNum": 55,
+            "bullPct": 60, "bearPct": 10}
+
+    TWIN = {"twinAvgFwd": 4.23, "twinWinRate": 67, "twinSamples": 3, "twinForwardLen": 10}
+
+    def test_precedent_included_with_all_numbers(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, **self.TWIN))
+        joined = " ".join(facts)
+        assert "תקדים היסטורי" in joined
+        assert "4.2%" in joined
+        assert "67%" in joined
+        assert "10 ימי המסחר" in joined
+
+    def test_precedent_states_sample_size(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, **self.TWIN))
+        joined = " ".join(facts)
+        assert "ב-3 התקופות" in joined
+
+    def test_precedent_carries_explicit_disclaimer(self):
+        """בלי המשפט הזה המודל עלול להציג שלושה מקרים כהסתברות לעתיד."""
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, **self.TWIN))
+        joined = " ".join(facts)
+        assert "מדגם קטן" in joined
+        assert "אינו תחזית" in joined
+
+    def test_negative_precedent_shown_as_decline_with_absolute_value(self):
+        body = dict(self.BASE, twinAvgFwd=-3.7, twinWinRate=33,
+                    twinSamples=3, twinForwardLen=10)
+        _, facts, _ = api._extract_stock_facts(body)
+        joined = " ".join(facts)
+        assert "ירידה של 3.7%" in joined
+        assert "-3.7" not in joined
+
+    def test_absent_precedent_does_not_crash_or_add_facts(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE))
+        assert "תקדים היסטורי" not in " ".join(facts)
+
+    def test_too_few_samples_is_ignored(self):
+        """פחות משלושה תקדימים אינו בסיס — עדיף לשתוק מאשר למסור רעש."""
+        body = dict(self.BASE, twinAvgFwd=9.9, twinWinRate=100, twinSamples=1)
+        _, facts, _ = api._extract_stock_facts(body)
+        assert "תקדים היסטורי" not in " ".join(facts)
+
+    def test_non_numeric_precedent_ignored_safely(self):
+        body = dict(self.BASE, twinAvgFwd="לא מספר", twinSamples=3)
+        _, facts, _ = api._extract_stock_facts(body)
+        assert "תקדים היסטורי" not in " ".join(facts)
+
+    def test_missing_forward_len_falls_back_without_crashing(self):
+        body = dict(self.BASE, twinAvgFwd=2.0, twinWinRate=67, twinSamples=3)
+        _, facts, _ = api._extract_stock_facts(body)
+        assert "תקדים היסטורי" in " ".join(facts)
+
+    def test_precedent_affects_cache_key(self):
+        _, _, up = api._extract_stock_facts(dict(self.BASE, **self.TWIN))
+        _, _, down = api._extract_stock_facts(
+            dict(self.BASE, twinAvgFwd=-4.23, twinWinRate=33,
+                 twinSamples=3, twinForwardLen=10))
+        _, _, none = api._extract_stock_facts(dict(self.BASE))
+        assert up != down
+        assert up != none
+
+    def test_system_prompt_forbids_presenting_precedent_as_forecast(self):
+        assert "חל איסור מוחלט לנסח אותו כתחזית" in api.AI_SYSTEM
+
+
+class TestRSIThresholdConsistency:
+    """הבאג שנמצא בסריקה של הפרודקשן: הסורק סימן "RSI נמוך" מתחת ל-35 בעוד
+    כרטיס המדד באפליקציה הציג "Neutral" עד 30 — אותה מניה, שני תיאורים
+    סותרים באותו מסך. הספים מוגדרים עכשיו במקום אחד, והטסטים כאן נועדו
+    למנוע מהם להיפרד שוב."""
+
+    def test_thresholds_are_the_standard_values(self):
+        assert api.RSI_OVERSOLD == 30
+        assert api.RSI_OVERBOUGHT == 70
+
+    def test_ai_classification_uses_the_shared_thresholds(self):
+        """RSI 32 אינו מכירת יתר — וכרטיס המדד אכן מציג עבורו Neutral."""
+        base = {"ticker": "AAPL", "trend": "עולה", "bullPct": 60, "bearPct": 10}
+        _, facts, _ = api._extract_stock_facts(dict(base, rsiNum=32))
+        assert "מכירת יתר" not in " ".join(facts)
+
+    def test_scanner_and_ai_agree_on_oversold_boundary(self):
+        """אותו מספר בדיוק חייב לקבל אותו סיווג בסורק וב-AI."""
+        import pandas as pd
+        base = {"ticker": "AAPL", "trend": "עולה", "bullPct": 60, "bearPct": 10}
+        for rsi_val in (25, 32, 55, 68, 75):
+            _, facts, _ = api._extract_stock_facts(dict(base, rsiNum=rsi_val))
+            joined = " ".join(facts)
+            ai_says_oversold = "מכירת יתר" in joined
+            ai_says_overbought = "קניית יתר" in joined
+            scanner_says_oversold = rsi_val < api.RSI_OVERSOLD
+            scanner_says_overbought = rsi_val > api.RSI_OVERBOUGHT
+            assert ai_says_oversold == scanner_says_oversold, \
+                "סתירה בסף מכירת היתר עבור RSI " + str(rsi_val)
+            assert ai_says_overbought == scanner_says_overbought, \
+                "סתירה בסף קניית היתר עבור RSI " + str(rsi_val)
+
+    def test_scanner_does_not_flag_rsi_32_as_low(self):
+        """רגרסיה ישירה על הבאג: 32 סומן בעבר כ"RSI נמוך" בסורק."""
+        import pandas as pd
+        n = 60
+        closes = [100.0 + (i % 3) * 0.5 for i in range(n)]
+        hist = pd.DataFrame({
+            "Close": closes,
+            "High": [c * 1.01 for c in closes],
+            "Low": [c * 0.99 for c in closes],
+        }, index=pd.to_datetime(pd.date_range("2026-01-01", periods=n)))
+        row = api._scan_one("TEST", hist)
+        if row is not None and row["rsi"] is not None:
+            r = row["rsi"]
+            low_flagged = any("RSI נמוך" in s for s in row["signals"])
+            assert low_flagged == (r < api.RSI_OVERSOLD)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
