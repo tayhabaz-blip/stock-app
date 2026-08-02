@@ -1492,6 +1492,17 @@ async function getAI(data){
   }
 
   let trendText='',aiFailInfo=null;
+
+  // ── חדשות ספציפיות למניה: מוזרמות ל-AI כדי שהניתוח יתייחס למה שקרה
+  // בפועל סביב המניה, לא רק לאינדיקטורים הטכניים. כישלון כאן לא אמור
+  // לעכב את הניתוח הטכני — נכשל בשקט לרשימה ריקה. ──
+  let newsHeadlines=[];
+  try{
+    const rn=await fetch(API+'/news/'+ticker);
+    const dn=await rn.json();
+    newsHeadlines=(dn.headlines||[]).map(h=>h.headline_he||h.headline).filter(Boolean).slice(0,2);
+  }catch(e){}
+
   // אותם נתונים בדיוק שנשלחים ל-/ai נשמרים כאן — קרב ה-AI (⚔️) קורא אותם
   // משם כדי לא לחשב את כל התמונה הטכנית פעם נוספת ("מקור אמת" יחיד לשני הפיצ'רים)
   const aiFacts={
@@ -1503,7 +1514,8 @@ async function getAI(data){
     weekPos,
     distToBreakPct,
     change5dPct:change5dPct!=null?change5dPct:null,
-    relVolume:relVolume!=null?relVolume:null
+    relVolume:relVolume!=null?relVolume:null,
+    newsHeadlines
   };
   window.__aiFacts=aiFacts;
   try{
