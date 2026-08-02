@@ -1007,7 +1007,33 @@ class TestAIEndpoint:
         with patch.object(api, "GROQ_KEY", ""):
             r = client.post("/ai", json={"ticker": "AAPL", "trend": "bullish"})
         assert r.status_code == 200
-        assert r.json().get("text") == ""
+        j = r.json()
+        assert j.get("text") == ""
+        # שלב 4: כל תשובה ריקה נושאת "reason" כדי שהפרונטאנד יציג סיבה ידידותית
+        # במקום מסך ריק שקט — כאן השירות לא מוגדר בכלל.
+        assert j.get("reason") == "unavailable"
+
+    def test_budget_exhausted_returns_budget_reason(self):
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch.object(api, "ai_budget_ok", return_value=False), \
+             patch("stock_api.crequests") as mock_r:
+            r = client.post("/ai", json={"ticker": "AAPL", "trend": "unique-uncached-ai"})
+        assert r.status_code == 200
+        j = r.json()
+        assert j.get("text") == ""
+        assert j.get("reason") == "budget"
+        mock_r.post.assert_not_called()
+
+    def test_both_groq_attempts_fail_returns_transient_reason(self):
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r, \
+             patch("stock_api.time.sleep"):
+            mock_r.post.side_effect = Exception("down")
+            r = client.post("/ai", json={"ticker": "AAPL", "trend": "unique-transient-ai"})
+        assert r.status_code == 200
+        j = r.json()
+        assert j.get("text") == ""
+        assert j.get("reason") == "transient"
 
     def test_rate_limit_returns_429(self):
         """Exhaust the /ai rate bucket (12 per 60s) and expect 429."""
@@ -1231,6 +1257,7 @@ class TestAIBattleEndpoint:
         assert r.status_code == 200
         j = r.json()
         assert j.get("bull") == "" and j.get("bear") == ""
+        assert j.get("reason") == "unavailable"
 
     def test_rate_limit_returns_429(self):
         """Exhaust the /ai/battle rate bucket (12 per 60s) and expect 429."""
@@ -1288,6 +1315,7 @@ class TestAIBattleEndpoint:
         assert r.status_code == 200
         j = r.json()
         assert j.get("bull") == "" and j.get("bear") == ""
+        assert j.get("reason") == "transient"
 
     def test_groq_exception_returns_empty(self):
         with patch.object(api, "GROQ_KEY", "fake-key"), \
@@ -1297,6 +1325,7 @@ class TestAIBattleEndpoint:
         assert r.status_code == 200
         j = r.json()
         assert j.get("bull") == "" and j.get("bear") == ""
+        assert j.get("reason") == "transient"
 
     def test_daily_budget_exhausted_returns_empty(self):
         with patch.object(api, "GROQ_KEY", "fake-key"), \
@@ -1306,6 +1335,7 @@ class TestAIBattleEndpoint:
         assert r.status_code == 200
         j = r.json()
         assert j.get("bull") == "" and j.get("bear") == ""
+        assert j.get("reason") == "budget"
         mock_r.post.assert_not_called()
 
     def test_recovers_after_one_transient_failure(self):
