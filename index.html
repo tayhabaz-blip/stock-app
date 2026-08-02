@@ -786,6 +786,16 @@ function esc(s){
   if(s==null)return'';
   return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+// ── הודעת כשל ידידותית ל-AI, במקום מסך ריק שקט. הבקאנד מחזיר "reason"
+// (budget/transient/unavailable) בכל תשובה ריקה, וב-429 מחזיר "error" עם
+// משפט עברי מוכן — פשוט מציגים אותו כמו שהוא. ──
+function aiFailureText(d){
+  if(d&&d.error)return d.error;
+  const reason=d&&d.reason;
+  if(reason==='budget')return '🙌 הניתוח החכם הגיע למכסת השימוש היומית שלו — נסו שוב מחר.';
+  if(reason==='transient')return '⏳ עומס רגעי בשרתי ה-AI — נסו שוב בעוד רגע.';
+  return '🤖 ניתוח AI לא זמין כרגע.';
+}
 // ── שורת "טוען..." מאוחדת עם ספינר ה-SVG המצויר — אותו ויזואל בדיוק בכל
 // מקום שמחכים לתשובת AI או לנתונים, כדי שהמתנה תיראה עקבית בכל הכלים ──
 function spinnerRow(label){
@@ -1481,7 +1491,7 @@ async function getAI(data){
     weekPos=Math.round(((priceNum-weekLow)/(weekHigh-weekLow))*100);
   }
 
-  let trendText='';
+  let trendText='',aiFailInfo=null;
   // אותם נתונים בדיוק שנשלחים ל-/ai נשמרים כאן — קרב ה-AI (⚔️) קורא אותם
   // משם כדי לא לחשב את כל התמונה הטכנית פעם נוספת ("מקור אמת" יחיד לשני הפיצ'רים)
   const aiFacts={
@@ -1504,11 +1514,16 @@ async function getAI(data){
     });
     const d=await r.json();
     trendText=(d.text||'').trim();
-  }catch(e){}
+    // ── שקיפות למשתמש: כשאין טקסט, לא משאירים שקט — שומרים סיבה ידידותית
+    // (עומס יומי / עומס רגעי / הגבלת קצב) כדי להציג אותה במקום מסך ריק ──
+    if(!trendText)aiFailInfo=d;
+  }catch(e){aiFailInfo={reason:'transient'};}
 
   // בניית הטקסט להצגה
   const riskPct=entry>0?parseFloat(((entry-stop)/entry*100).toFixed(2)):null;
-  let out='מגמה: '+(trendText||trend)+'\n\n';
+  let out='מגמה: '+(trendText||trend)+'\n';
+  if(!trendText)out+=aiFailureText(aiFailInfo)+'\n';
+  out+='\n';
   out+='כניסה: $'+entry+(openField?' (מחיר נוכחי)':' (מעל הפריצה $'+breakLevel+')')+'\n';
   out+='סטופ: $'+stop+(riskPct!=null?' (סיכון '+riskPct+'%)':'')+(stopCapped?' — נחסם ב-12%, התמיכה הקרובה רחוקה מדי':'')+'\n';
   if(distToBreakPct!==null){
@@ -2286,7 +2301,7 @@ async function openAIBattle(){
     const bullTxt=(d.bull||'').trim();
     const bearTxt=(d.bear||'').trim();
     if(!bullTxt&&!bearTxt){
-      body.innerHTML='<div class="tm-loading">קרב ה-AI לא זמין כרגע — נסה שוב מאוחר יותר.</div>';
+      body.innerHTML='<div class="tm-loading">'+esc(aiFailureText(d))+'</div>';
       return;
     }
     const score=computeBattleScore(facts);
@@ -2312,7 +2327,7 @@ async function openAIBattle(){
     if(bullEl)bullEl.textContent=bullTxt||'לא זמין הפעם.';
     if(bearEl)bearEl.textContent=bearTxt||'לא זמין הפעם.';
   }catch(e){
-    body.innerHTML='<div class="tm-loading">שגיאה בטעינת קרב ה-AI. נסה שוב מאוחר יותר.</div>';
+    body.innerHTML='<div class="tm-loading">'+esc(aiFailureText({reason:'transient'}))+'</div>';
   }
 }
 // ── AUTO PRICE UPDATE ──
