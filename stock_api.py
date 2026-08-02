@@ -755,6 +755,55 @@ def get_sentiment(ticker: str, request: Request):
 
 
 # ── פרוקסי ל-Groq: המפתח נשאר בשרת, המודל כותב רק ניסוח מגמה ──
+# ── בחירת המודל נבדקה בפועל מול שלושה מודלים על הפרומפט האמיתי של האפליקציה.
+# gpt-oss-120b (המודל הקודם) "חושב" באנגלית ואז מתרגם, ולכן ייצר עברית שבורה
+# ואפילו אותיות לטיניות בתוך מילה עברית. llama-3.3-70b כותב עברית ישירות
+# ויצא נקי בהרבה. שים לב: הוא אינו מודל reasoning — אסור לשלוח לו
+# reasoning_effort, זה יוחזר כשגיאה. ──
+AI_MODEL = "llama-3.3-70b-versatile"
+
+# ── temperature נמוך הוא התיקון הקריטי: ברירת המחדל של Groq היא 1.0, וזה
+# מה שגרם למודל "להחליק" באמצע מילה בעברית ולהמציא מילים שלא קיימות
+# ("מפולס", "קניין"). ב-0.3 התופעה נעלמה לחלוטין בבדיקות. ──
+AI_TEMPERATURE = 0.3
+
+# ── הנחיות המערכת. שני חלקים: מינוח פיננסי מחייב (כי המודל תיאר RSI נמוך
+# כ"תנודתיות יתר" — טעות מקצועית ממש, לא ניסוח), וכללי כתיבה שמונעים
+# ג'יבריש, מספרים עם שבר עשרוני ארוך, וביטויי מילוי חסרי תוכן. ──
+AI_SYSTEM = "\n".join([
+    "אתה אנליסט שוק הון ותיק, שכותב בעברית תקנית וחדה לקוראים ישראלים.",
+    "",
+    "מינוח מחייב — אל תסטה ממנו:",
+    "- RSI מתחת ל-30 = מכירת יתר. RSI מעל 70 = קניית יתר. באמצע = נייטרלי. RSI אינו מדד לתנודתיות.",
+    "- נפח מסחר יחסי מתחת ל-1 = מחזור דל מהרגיל, כלומר התנועה נעשית בעניין דל.",
+    "- מיקום נמוך בטווח 52 השבועות = המניה נסחרת קרוב לשפל השנתי.",
+    "- מכפיל רווח גבוה = תמחור שמגלם ציפיות צמיחה גבוהות, ולכן רגיש לאכזבה.",
+    "",
+    "כללי כתיבה מחייבים:",
+    "- עברית תקנית בלבד. חל איסור מוחלט לשלב אותיות לטיניות בתוך מילה עברית או להמציא מילים.",
+    "- כתוב מספרים בספרות ומעוגלים (31, 285), לעולם לא במילים ולא עם שבר עשרוני ארוך.",
+    "- בסס כל משפט על נתון קונקרטי שקיבלת, והזכר לפחות שלושה נתונים שונים.",
+    "- אסורים לחלוטין ביטויי המילוי: 'תמונה מורכבת', 'תמונה מעורבת', 'מצב מורכב', 'יש לזכור',",
+    "  'מחייב ניתוח מעמיק', 'חשוב לציין', 'כל משקיע', 'דורש זהירות'.",
+    "- טקסט רץ בלבד: בלי כותרות, בלי כוכביות, בלי Markdown, בלי רשימות.",
+    "- אל תמציא נתון שלא נמסר לך.",
+])
+
+
+# ── בונה את גוף הבקשה ל-Groq במקום אחד, כדי ששני ה-endpoints ישתמשו תמיד
+# באותו מודל, אותו temperature ואותן הנחיות מערכת. ──
+def _groq_payload(prompt: str, max_tokens: int) -> dict:
+    return {
+        "model": AI_MODEL,
+        "max_completion_tokens": max_tokens,
+        "temperature": AI_TEMPERATURE,
+        "messages": [
+            {"role": "system", "content": AI_SYSTEM},
+            {"role": "user", "content": prompt},
+        ],
+    }
+
+
 # ── קריאה ל-Groq עם ניסיון חוזר יחיד, אבל רק על כשלים זמניים: שגיאת רשת/
 # timeout, או תגובת 429/5xx מ-Groq עצמו. כשל לוגי (למשל תשובה תקינה בלי
 # choices) לא חוזר על עצמו בניסיון נוסף — זה לא יתקן את עצמו. שני הניסיונות
@@ -814,9 +863,27 @@ def _extract_stock_facts(body: dict):
 
     facts = ["מניית " + str(ticker) + (" בסקטור " + str(sector) if sector else "") + "."]
     facts.append("מגמה טכנית (ממוצעים נעים): " + str(trend) + ".")
-    facts.append("RSI: " + (str(rsi_num) if rsi_num is not None else "לא זמין") + " (" + str(rsi_txt) + ").")
+    # ── המצב נגזר מהמספר בצד השרת ולא מהטקסט שהגיע מהדפדפן. המודל תיאר בעבר
+    # RSI נמוך כ"תנודתיות יתר" — טעות מקצועית — ולכן אומרים לו במפורש. ──
+    # הספים הם 30/70 התקניים — אותם ספים שכרטיס המדד באפליקציה כבר מציג,
+    # כך שה-AI לא יסתור את מה שהמשתמש רואה במסך ממש לידו.
+    if isinstance(rsi_num, (int, float)):
+        if rsi_num < 30:
+            rsi_state = "מכירת יתר"
+        elif rsi_num > 70:
+            rsi_state = "קניית יתר"
+        elif rsi_num < 40:
+            rsi_state = "נייטרלי, בחלק התחתון של הטווח"
+        elif rsi_num > 60:
+            rsi_state = "נייטרלי, בחלק העליון של הטווח"
+        else:
+            rsi_state = "נייטרלי"
+        facts.append("RSI: " + str(round(rsi_num, 1)) + " — " + rsi_state + ".")
+    else:
+        facts.append("RSI: לא זמין.")
     if pe:
-        facts.append("מכפיל רווח P/E: " + str(pe) + ".")
+        # מעוגל: המודל חוזר על המספר כלשונו, ו-285.51373 נראה שבור בטקסט
+        facts.append("מכפיל רווח P/E: " + str(round(pe, 1) if isinstance(pe, (int, float)) else pe) + ".")
     if week_pos is not None:
         facts.append("מיקום המחיר בטווח 52 השבועות: " + str(week_pos) + "% (100% = שיא שנתי, 0% = שפל שנתי).")
     if dist_break is not None:
@@ -855,7 +922,9 @@ async def ai_analysis(req: Request):
 
     # ── מטמון: אותה מניה עם אותה תמונה טכנית מחזירה את אותו ניתוח.
     # בלי זה כל צפייה חוזרת היא קריאה נוספת בתשלום ל-Groq. ──
-    ai_key = "ai:" + "|".join(str(x) for x in cache_fields)
+    # הקידומת עלתה ל-v2 יחד עם החלפת המודל: תשובות שנשמרו מהמודל הישן
+    # מנוסחות בעברית שבורה, ואסור להמשיך להגיש אותן מהמטמון.
+    ai_key = "ai2:" + "|".join(str(x) for x in cache_fields)
     cached = cache_get(ai_key, 3600)
     if cached:
         return cached
@@ -877,15 +946,7 @@ async def ai_analysis(req: Request):
         "אל תמליץ לקנות או למכור, ואל תשתמש במילים כמו 'כדאי' או 'מומלץ' — רק תאר את התמונה במאוזן."
     )
     try:
-        # gpt-oss-120b הוא מודל reasoning ודורש max_completion_tokens.
-        # השם max_tokens נדחה על ידיו, ובלי reasoning_effort נמוך
-        # טוקני החשיבה בולעים את התקציב והתוכן חוזר ריק.
-        d = _call_groq({
-            "model": "openai/gpt-oss-120b",
-            "max_completion_tokens": 600,
-            "reasoning_effort": "low",
-            "messages": [{"role": "user", "content": prompt}],
-        })
+        d = _call_groq(_groq_payload(prompt, 600))
         if not d or "choices" not in d or not d["choices"]:
             log.warning("groq returned no usable choices: %s", str(d)[:400] if d else "None (both attempts failed)")
             return {"text": "", "reason": "transient"}
@@ -937,7 +998,7 @@ async def ai_battle(req: Request):
         body = {}
     ticker, facts, cache_fields = _extract_stock_facts(body)
 
-    battle_key = "aibattle:" + "|".join(str(x) for x in cache_fields)
+    battle_key = "aibattle2:" + "|".join(str(x) for x in cache_fields)
     cached = cache_get(battle_key, 3600)
     if cached:
         return cached
@@ -958,12 +1019,7 @@ async def ai_battle(req: Request):
         "כתוב טקסט רגיל בלבד — בלי כוכביות, בלי הדגשות Markdown ובלי כותרות משנה."
     )
     try:
-        d = _call_groq({
-            "model": "openai/gpt-oss-120b",
-            "max_completion_tokens": 900,
-            "reasoning_effort": "low",
-            "messages": [{"role": "user", "content": prompt}],
-        })
+        d = _call_groq(_groq_payload(prompt, 900))
         if not d or "choices" not in d or not d["choices"]:
             log.warning("groq returned no usable choices for battle: %s", str(d)[:400] if d else "None (both attempts failed)")
             return {"bull": "", "bear": "", "reason": "transient"}
