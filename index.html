@@ -1825,7 +1825,12 @@ async function openMonteCarlo(){
         'אין מספיק נתוני מחיר היסטוריים כדי להריץ סימולציה אמינה עבור המניה הזו.</div>'+
       '</div>';
     document.body.appendChild(overlay);
-    const close0=()=>overlay.remove();
+    const close0=()=>{
+      overlay.remove();
+      document.removeEventListener('keydown',onKey0);
+    };
+    const onKey0=e=>{if(e.key==='Escape')close0();};
+    document.addEventListener('keydown',onKey0);
     overlay.addEventListener('click',e=>{if(e.target===overlay)close0();});
     document.getElementById('mcCloseBtn').addEventListener('click',close0);
     return;
@@ -1953,7 +1958,12 @@ async function openTwinFinder(){
         'אין מספיק היסטוריה מחירים כדי לחפש תבניות דומות עבור המניה הזו.</div>'+
       '</div>';
     document.body.appendChild(overlay);
-    const close0=()=>overlay.remove();
+    const close0=()=>{
+      overlay.remove();
+      document.removeEventListener('keydown',onKey0);
+    };
+    const onKey0=e=>{if(e.key==='Escape')close0();};
+    document.addEventListener('keydown',onKey0);
     overlay.addEventListener('click',e=>{if(e.target===overlay)close0();});
     document.getElementById('twinCloseBtn').addEventListener('click',close0);
     return;
