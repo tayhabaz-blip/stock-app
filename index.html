@@ -1484,6 +1484,10 @@ async function getAI(data){
   const resists =planZones.filter(z=>z.t==='התנגדות'&&z.p>priceNum).sort((a,b)=>a.p-b.p);
   const supports=planZones.filter(z=>z.t==='תמיכה'&&z.p<priceNum).sort((a,b)=>b.p-a.p);
   const mergedResists=(zs||[]).filter(z=>z.t==='התנגדות'&&z.p>priceNum).sort((a,b)=>a.p-b.p);
+  // ── רמת ביטול התרחיש נלקחת דווקא מכל הרזולוציות יחד: השאלה "איפה
+  // התמונה נשברת" היא שאלה מבנית, לא שאלה של טווח קצר. ב-INTC למשל
+  // התמיכה השבועית ב-51.48 קרובה ורלוונטית יותר מהיומית ב-42.32. ──
+  const mergedSupports=(zs||[]).filter(z=>z.t==='תמיכה'&&z.p<priceNum).sort((a,b)=>b.p-a.p);
 
   let entry,stop,breakLevel,distToBreakPct,targets=[],headline,openField=false,stopCapped=false;
 
@@ -1584,8 +1588,9 @@ async function getAI(data){
   // צפוי לחפש תמיכה אחריה. שתי הרמות נלקחות מאזורים שחושבו בפועל
   // (יומי + שבועי), אף מספר כאן אינו מומצא. תיאורי בלבד, לא המלצה. ──
   let invalidation=null;
-  if(supports.length){
-    const s1=supports[0],s2=supports.length>1?supports[1]:null;
+  const invSrc=mergedSupports.length?mergedSupports:supports;
+  if(invSrc.length){
+    const s1=invSrc[0],s2=invSrc.length>1?invSrc[1]:null;
     invalidation={
       level:rnd(s1.p),
       pct:parseFloat(((priceNum-s1.p)/priceNum*100).toFixed(2)),
