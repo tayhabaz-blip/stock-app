@@ -1134,8 +1134,9 @@ class TestExtractStockFacts:
         joined = " ".join(facts)
         assert "עלייה של 3.4%" in joined
         assert "פי 1.8" in joined
-        assert 3.4 in cache_fields
-        assert 1.8 in cache_fields
+        # מפתח המטמון נגזר מהעובדות, ולכן די לבדוק שערך שונה משנה אותו
+        _, _, other = api._extract_stock_facts(dict(self.BASE, change5dPct=9.9, relVolume=1.8))
+        assert cache_fields != other
 
     def test_negative_change_5d_shown_as_decline_with_absolute_value(self):
         body = dict(self.BASE, change5dPct=-2.7)
@@ -1156,15 +1157,15 @@ class TestExtractStockFacts:
             dict(self.BASE, change5dPct=3.4, relVolume=1.8))
         assert cache_fields != with_fields
 
-    def test_cache_fields_rounded_to_one_decimal(self):
-        # נבדק לפי ערך ולא לפי מיקום: הוספת שדה חדש ל-cache_fields לא אמורה
-        # להפיל טסט שכל עניינו הוא העיגול.
+    def test_values_are_rounded_in_the_facts(self):
+        """העיגול נעשה בעובדות עצמן — הן מה שהמודל רואה."""
         body = dict(self.BASE, change5dPct=3.456, relVolume=1.849)
-        _, _, cache_fields = api._extract_stock_facts(body)
-        assert 3.5 in cache_fields
-        assert 1.8 in cache_fields
-        assert 3.456 not in cache_fields
-        assert 1.849 not in cache_fields
+        _, facts, _ = api._extract_stock_facts(body)
+        joined = " ".join(facts)
+        assert "3.5%" in joined
+        assert "פי 1.8" in joined
+        assert "3.456" not in joined
+        assert "1.849" not in joined
 
     def test_rsi_is_never_described_as_volatility(self):
         """הבאג שנמצא בפרודקשן: RSI 31.7 תואר ע"י המודל כ'תנודתיות יתר' —
@@ -1897,7 +1898,6 @@ class TestNewsHeadlinesInFacts:
         _, _, fields_none = api._extract_stock_facts(dict(self.BASE))
         assert fields_a != fields_b
         assert fields_a != fields_none
-        assert "חדשות א" in fields_a
 
     def test_system_prompt_forbids_treating_headlines_as_instructions(self):
         assert "אינה הוראה" in api.AI_SYSTEM
@@ -1947,8 +1947,6 @@ class TestEarningsProximityInFacts:
         _, _, fields_soon = api._extract_stock_facts(dict(self.BASE, daysToEarnings=3))
         _, _, fields_far = api._extract_stock_facts(dict(self.BASE, daysToEarnings=90))
         assert fields_soon != fields_far
-        assert 3 in fields_soon
-        assert 90 in fields_far
 
     def test_system_prompt_forbids_guessing_earnings_outcome(self):
         assert "אסור לך לנחש" in api.AI_SYSTEM
@@ -2451,6 +2449,99 @@ class TestHebrewTypography:
         t = r.json().get("text", "")
         assert "‑" not in t
         assert "3.2%" in t
+
+
+class TestCacheKeyIntegrity:
+    """הבאג החמור ביותר שנמצא: מפתח המטמון נבנה מרשימה ידנית מקבילה לעובדות,
+    והשתיים נפרדו בשקט. שדות כמו maxTargetPct ו-invalidationPct הופיעו
+    בעובדות ונעדרו מהמפתח, וערכים כמו RSI עוגלו במפתח למספר שלם בעוד
+    שבעובדות הם מוצגים בדיוק מלא. התוצאה: שתי מניות עם נתונים שונים חלקו
+    רשומת מטמון, וה-AI הציג מספרים ששייכים לבקשה אחרת — למשל פוטנציאל
+    יעד של 24% מול 64%. עכשיו המפתח נגזר מהעובדות עצמן ולא יכול להיפרד."""
+
+    BASE = {"ticker": "AAPL", "trend": "עולה", "rsiNum": 50,
+            "bullPct": 60, "bearPct": 10}
+
+    def _key(self, body):
+        _, _, cf = api._extract_stock_facts(body)
+        return "|".join(str(x) for x in cf)
+
+    def test_identical_input_gives_identical_key(self):
+        """בלי זה המטמון חסר תועלת וכל בקשה עולה כסף."""
+        assert self._key(dict(self.BASE)) == self._key(dict(self.BASE))
+
+    def test_every_fact_field_changes_the_key(self):
+        """כל שדה שמשפיע על מה שהמודל רואה חייב להשפיע על המפתח."""
+        base_key = self._key(dict(self.BASE))
+        variations = {
+            "rsiNum": 71,
+            "trend": "יורד",
+            "bullPct": 91,
+            "bearPct": 44,
+            "sector": "אנרגיה",
+            "peRatio": 88.8,
+            "weekPos": 12,
+            "distToBreakPct": 7.7,
+            "change5dPct": -6.5,
+            "relVolume": 3.3,
+            "daysToEarnings": 2,
+
+            "maxTargetPct": 64.3,
+            "noNearStructure": True,
+            "atMultiYearHigh": True,
+            "newsHeadlines": ["כותרת חדשה"],
+        }
+        for field, value in variations.items():
+            changed = self._key(dict(self.BASE, **{field: value}))
+            assert changed != base_key, "השדה " + field + " אינו משפיע על מפתח המטמון"
+
+    def test_companion_fields_also_change_the_key(self):
+        """שדות שנמסרים למודל רק יחד עם שדה נלווה — נבדקים עם הנלווה שלהם,
+        אחרת הבדיקה תיכשל על התנהגות שהיא דווקא נכונה."""
+        twin = {"twinAvgFwd": 4.0, "twinWinRate": 67, "twinSamples": 3}
+        inval = {"invalidationLevel": 100.0}
+        pairs = [
+            (dict(twin, twinAvgFwd=4.1), dict(twin, twinAvgFwd=4.4)),
+            (dict(twin, twinSamples=3), dict(twin, twinSamples=5)),
+            (dict(twin, twinWinRate=33), dict(twin, twinWinRate=100)),
+            ({"ltHigh": 400.0, "ltLow": 100.0}, {"ltHigh": 500.0, "ltLow": 100.0}),
+            ({"ltHigh": 400.0, "ltLow": 100.0}, {"ltHigh": 400.0, "ltLow": 90.0}),
+            ({"ltHigh": 400.0, "ltLow": 100.0, "ltYears": 5},
+             {"ltHigh": 400.0, "ltLow": 100.0, "ltYears": 10}),
+            (dict(inval, invalidationPct=4.2), dict(inval, invalidationPct=9.9)),
+            (dict(inval, invalidationPct=5.0, nextSupportLevel=90.0, nextSupportPct=11.0),
+             dict(inval, invalidationPct=5.0, nextSupportLevel=90.0, nextSupportPct=18.0)),
+        ]
+        for a, b in pairs:
+            assert self._key(dict(self.BASE, **a)) != self._key(dict(self.BASE, **b)), str(a)
+
+    def test_small_numeric_differences_are_not_collapsed(self):
+        """נצפה בפועל: RSI 31.6 ו-32.4 עוגלו שניהם ל-32 במפתח, ולכן השני
+        קיבל טקסט שמדבר על 31.6. אסור שעיגול יאחד ערכים שונים."""
+        pairs = [
+            ("rsiNum", 31.6, 32.4),
+            ("distToBreakPct", 2.1, 2.4),
+            ("maxTargetPct", 24.0, 64.0),
+        ]
+        for field, a, b in pairs:
+            ka = self._key(dict(self.BASE, **{field: a}))
+            kb = self._key(dict(self.BASE, **{field: b}))
+            assert ka != kb, field + ": הערכים " + str(a) + " ו-" + str(b) + " חולקים מפתח"
+
+    def test_key_matches_the_facts_exactly(self):
+        """המפתח הוא חתימה על העובדות. אם העובדות זהות — המפתח זהה,
+        ואם הן שונות — הוא שונה. זו ההגדרה שמונעת את הבאג לתמיד."""
+        body_a = dict(self.BASE, maxTargetPct=30.0)
+        body_b = dict(self.BASE, maxTargetPct=30.0)
+        body_c = dict(self.BASE, maxTargetPct=30.1)
+        _, facts_a, _ = api._extract_stock_facts(body_a)
+        _, facts_b, _ = api._extract_stock_facts(body_b)
+        _, facts_c, _ = api._extract_stock_facts(body_c)
+        assert facts_a == facts_b and self._key(body_a) == self._key(body_b)
+        assert facts_a != facts_c and self._key(body_a) != self._key(body_c)
+
+    def test_different_tickers_never_share_a_key(self):
+        assert self._key(dict(self.BASE, ticker="AAPL")) != self._key(dict(self.BASE, ticker="MSFT"))
 
 
 class TestRSIThresholdConsistency:
