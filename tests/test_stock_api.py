@@ -1303,20 +1303,34 @@ class TestGroqPayload:
     ישירות, temperature נמוך, והנחיות מערכת. temperature=1 (ברירת המחדל של
     Groq) הוא מה שגרם למודל להמציא מילים כמו 'מפולס' באמצע משפט."""
 
-    def test_uses_hebrew_capable_model(self):
+    def test_uses_a_supported_non_deprecated_model(self):
+        """llama-3.3-70b נסגר ב-16.08.2026. המודל חייב להיות נתמך והיום."""
         p = api._groq_payload("שלום", 600)
-        assert p["model"] == "llama-3.3-70b-versatile"
-        assert "gpt-oss" not in p["model"]
+        assert p["model"] == "openai/gpt-oss-120b"
+        assert "llama-3.3" not in p["model"]
 
     def test_temperature_is_low(self):
         p = api._groq_payload("שלום", 600)
         assert "temperature" in p, "בלי temperature מפורש Groq משתמש ב-1.0 והעברית נשברת"
         assert p["temperature"] <= 0.5
 
-    def test_never_sends_reasoning_effort(self):
-        """llama-3.3-70b אינו מודל reasoning — הפרמטר הזה יחזיר שגיאה."""
+    def test_sends_low_reasoning_effort(self):
+        """gpt-oss הוא מודל reasoning. effort נמוך מצמצם חשיבה באנגלית
+        לפני הכתיבה בעברית, וגם חוסך טוקנים מהמכסה."""
         p = api._groq_payload("שלום", 600)
-        assert "reasoning_effort" not in p
+        assert p["reasoning_effort"] == "low"
+
+    def test_does_not_request_the_reasoning_text_back(self):
+        """איננו משתמשים ב-reasoning; אין סיבה להעביר אותו ברשת."""
+        p = api._groq_payload("שלום", 600)
+        assert p["include_reasoning"] is False
+
+    def test_reasoning_headroom_prevents_truncation(self):
+        """טוקני החשיבה נגרעים מאותו תקציב. בלי מרווח, תשובה בת 4-5 משפטים
+        בעברית נחתכת באמצע המשפט האחרון."""
+        p = api._groq_payload("x", 600)
+        assert p["max_completion_tokens"] > 600
+        assert p["max_completion_tokens"] == 600 + api.AI_REASONING_HEADROOM
 
     def test_has_system_message_before_user(self):
         p = api._groq_payload("שאלת המשתמש", 600)
@@ -1343,8 +1357,10 @@ class TestGroqPayload:
         sys_msg = api._groq_payload("x", 600)["messages"][0]["content"]
         assert "חקה את הסגנון" in sys_msg
 
-    def test_max_tokens_passed_through(self):
-        assert api._groq_payload("x", 900)["max_completion_tokens"] == 900
+    def test_max_tokens_scales_with_request(self):
+        small = api._groq_payload("x", 600)["max_completion_tokens"]
+        large = api._groq_payload("x", 900)["max_completion_tokens"]
+        assert large - small == 300
 
 
 class TestCallGroq:
