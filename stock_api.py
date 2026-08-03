@@ -798,12 +798,30 @@ def get_sentiment(ticker: str, request: Request):
 
 
 # ── פרוקסי ל-Groq: המפתח נשאר בשרת, המודל כותב רק ניסוח מגמה ──
-# ── בחירת המודל נבדקה בפועל מול שלושה מודלים על הפרומפט האמיתי של האפליקציה.
-# gpt-oss-120b (המודל הקודם) "חושב" באנגלית ואז מתרגם, ולכן ייצר עברית שבורה
-# ואפילו אותיות לטיניות בתוך מילה עברית. llama-3.3-70b כותב עברית ישירות
-# ויצא נקי בהרבה. שים לב: הוא אינו מודל reasoning — אסור לשלוח לו
-# reasoning_effort, זה יוחזר כשגיאה. ──
-AI_MODEL = "llama-3.3-70b-versatile"
+# ── בחירת המודל.
+#
+# gpt-oss-120b הוא המודל החזק יותר, והוא גם התחליף הרשמי ש-Groq ממליצה עליו:
+# llama-3.3-70b סומן כמיושן עם תאריך סגירה 16.08.2026, כלומר הישארות עליו
+# הייתה מפילה את ה-AI לגמרי בתוך שבועיים.
+#
+# בעבר הוא ייצר אצלנו עברית שבורה, אבל התנאים היום שונים לחלוטין: אז הוא רץ
+# עם temperature של 1.0 (ברירת המחדל) ובלי הנחיות מערכת בעברית. היום יש
+# temperature 0.3, מינוח מחייב, איסור על אותיות לטיניות בתוך מילה עברית,
+# וסינון משפטי מילוי בצד השרת. ──
+AI_MODEL = "openai/gpt-oss-120b"
+
+# ── gpt-oss הוא מודל reasoning. שני דברים חשובים שנבדקו מול התיעוד:
+# 1. ה-reasoning מוחזר בשדה נפרד (message.reasoning) ולא בתוך content, ולכן
+#    הוא אינו "דולף" לטקסט העברי. אנחנו קוראים רק content — וזה נכון.
+# 2. אנחנו לא משתמשים ב-reasoning בכלל, ולכן מבקשים לא להחזיר אותו.
+# reasoning_effort נמוך מצמצם את כמות החשיבה באנגלית לפני הכתיבה בעברית,
+# וגם חוסך טוקנים — משמעותי במיוחד כשמכסה היא משאב מוגבל. ──
+AI_IS_REASONING_MODEL = True
+AI_REASONING_EFFORT = "low"
+
+# ── טוקני החשיבה נגרעים מתקציב ההשלמה. בלי תוספת ייעודית תשובה בת 4-5
+# משפטים בעברית עלולה להיחתך באמצע המשפט. ──
+AI_REASONING_HEADROOM = 700
 
 # ── temperature נמוך הוא התיקון הקריטי: ברירת המחדל של Groq היא 1.0, וזה
 # מה שגרם למודל "להחליק" באמצע מילה בעברית ולהמציא מילים שלא קיימות
@@ -860,7 +878,7 @@ AI_SYSTEM = "\n".join([
 # ── בונה את גוף הבקשה ל-Groq במקום אחד, כדי ששני ה-endpoints ישתמשו תמיד
 # באותו מודל, אותו temperature ואותן הנחיות מערכת. ──
 def _groq_payload(prompt: str, max_tokens: int) -> dict:
-    return {
+    payload = {
         "model": AI_MODEL,
         "max_completion_tokens": max_tokens,
         "temperature": AI_TEMPERATURE,
@@ -869,6 +887,14 @@ def _groq_payload(prompt: str, max_tokens: int) -> dict:
             {"role": "user", "content": prompt},
         ],
     }
+    if AI_IS_REASONING_MODEL:
+        # טוקני החשיבה נגרעים מאותו תקציב, ולכן מוסיפים מרווח ייעודי —
+        # אחרת התשובה בעברית נחתכת באמצע המשפט האחרון.
+        payload["max_completion_tokens"] = max_tokens + AI_REASONING_HEADROOM
+        payload["reasoning_effort"] = AI_REASONING_EFFORT
+        # ה-reasoning מוחזר בשדה נפרד ואיננו משתמשים בו — אין טעם להעביר אותו
+        payload["include_reasoning"] = False
+    return payload
 
 
 # ── קריאה ל-Groq עם ניסיון חוזר יחיד, אבל רק על כשלים זמניים: שגיאת רשת/
