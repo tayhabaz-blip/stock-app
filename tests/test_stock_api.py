@@ -2343,6 +2343,54 @@ class TestLongRangeContext:
         assert isinstance(facts, list) and len(facts) >= 2
 
 
+class TestHebrewTypography:
+    """נצפה בפועל בתשובות gpt-oss-120b: מקף חסין-שבירה במקום מקף רגיל,
+    ורווח לפני סימן אחוז. שניהם טיפוגרפיה בלבד ולכן מנורמלים בשרת."""
+
+    def test_non_breaking_hyphen_becomes_regular(self):
+        out = api._normalize_hebrew_typography("ה‑RSI עומד על 32")
+        assert "‑" not in out
+        assert "ה-RSI" in out
+
+    def test_space_before_percent_removed(self):
+        out = api._normalize_hebrew_typography("עלייה של 4.6 % בעשרה ימים")
+        assert "4.6%" in out
+        assert "4.6 %" not in out
+
+    def test_handles_several_occurrences(self):
+        out = api._normalize_hebrew_typography("ו‑67 % מהמקרים, ו‑4.2 % מתחת")
+        assert "‑" not in out
+        assert "67%" in out and "4.2%" in out
+
+    def test_clean_text_unchanged(self):
+        clean = "המניה עלתה 3.2% השבוע והנפח גבוה פי 1.4."
+        assert api._normalize_hebrew_typography(clean) == clean
+
+    def test_percent_without_number_is_untouched(self):
+        """לא נוגעים באחוז שאינו צמוד למספר — שם הרווח לגיטימי."""
+        txt = "אחוז המשקיעים גבוה"
+        assert api._normalize_hebrew_typography(txt) == txt
+
+    def test_empty_and_none_safe(self):
+        assert api._normalize_hebrew_typography("") == ""
+        assert api._normalize_hebrew_typography(None) is None
+
+    def test_ai_endpoint_applies_normalization(self):
+        _clear_cache()
+        _clear_rate()
+        dirty = "המניה עלתה 3.2 % השבוע. ה‑RSI עומד על 32. הנפח גבוה פי 1.4."
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"choices": [{"message": {"content": dirty}}]}
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r:
+            mock_r.post.return_value = mock_resp
+            r = client.post("/ai", json={"ticker": "TYPO", "trend": "עולה"})
+        t = r.json().get("text", "")
+        assert "‑" not in t
+        assert "3.2%" in t
+
+
 class TestRSIThresholdConsistency:
     """הבאג שנמצא בסריקה של הפרודקשן: הסורק סימן "RSI נמוך" מתחת ל-35 בעוד
     כרטיס המדד באפליקציה הציג "Neutral" עד 30 — אותה מניה, שני תיאורים
