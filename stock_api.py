@@ -1232,7 +1232,7 @@ async def ai_analysis(req: Request):
         text = (d["choices"][0]["message"].get("content") or "").strip()
         if not text:
             return {"text": "", "reason": "transient"}
-        text = _strip_filler_sentences(text)
+        text = _normalize_hebrew_typography(_strip_filler_sentences(text))
         return cache_set(ai_key, {"text": text})
     except Exception:
         log.exception("ai_analysis failed for %s", ticker)
@@ -1246,6 +1246,20 @@ async def ai_analysis(req: Request):
 # הניסוח שלו רך — עדיף ניסוח רך מאשר לאבד מידע. בנוסף, אם המחיקה תשאיר
 # פחות משני משפטים מחזירים את הטקסט המקורי כמו שהוא: תשובה קצרה וקטועה
 # גרועה יותר מתשובה עם משפט מילוי אחד. ──
+# -- תיקוני טיפוגרפיה על תשובת המודל. שני דברים שנצפו בפועל מ-gpt-oss:
+# 1. מקף חסין-שבירה (U+2011) במקום מקף רגיל: "ו\u2011RSI" במקום "ו-RSI".
+#    נראה כמעט זהה אבל שונה מכל שאר הטקסט באפליקציה.
+# 2. רווח לפני סימן אחוז: "4.6 %" במקום "4.6%". בעברית פיננסית אין רווח שם.
+# שניהם טיפוגרפיה טהורה — אפס שינוי במשמעות, ולכן בטוח לנרמל בצד השרת
+# במקום לבקש מהמודל יפה ולקוות. --
+def _normalize_hebrew_typography(text: str) -> str:
+    if not text:
+        return text
+    text = text.replace("\u2011", "-").replace("\u2010", "-")
+    text = re.sub(r"(\d)\s+%", r"\1%", text)
+    return text
+
+
 def _strip_filler_sentences(text: str) -> str:
     if not text:
         return text
@@ -1331,8 +1345,8 @@ async def ai_battle(req: Request):
         bull, bear = _split_battle(text)
         if not bull and not bear:
             return {"bull": "", "bear": "", "reason": "transient"}
-        bull = _strip_filler_sentences(bull)
-        bear = _strip_filler_sentences(bear)
+        bull = _normalize_hebrew_typography(_strip_filler_sentences(bull))
+        bear = _normalize_hebrew_typography(_strip_filler_sentences(bear))
         return cache_set(battle_key, {"bull": bull, "bear": bear})
     except Exception:
         log.exception("ai_battle failed for %s", ticker)
