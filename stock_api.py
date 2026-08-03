@@ -954,6 +954,13 @@ def _extract_stock_facts(body: dict):
     at_multi_year_high = bool(body.get("atMultiYearHigh"))
     max_target_pct = body.get("maxTargetPct")
 
+    # ── "אין מבנה קרוב": כשהרמה הקרובה ביותר רחוקה עשרות אחוזים, מספרי
+    # הכניסה והסטופ נכונים מתמטית אך חסרי משמעות מעשית. חובה למסור זאת
+    # למודל, אחרת הוא מתאר פריצה שרחוקה 57% כאילו היא ממש מעבר לפינה. ──
+    no_near_structure = bool(body.get("noNearStructure"))
+    far_break_pct = body.get("farBreakPct")
+    far_support_pct = body.get("farSupportPct")
+
     # ── כותרות חדשות ספציפיות למניה (עד 2). קלט חיצוני לא-מהימן, ולכן:
     # מסוננות לרשימת מחרוזות בלבד, רווחים/ירידות שורה מכווצים, ואורך מוגבל —
     # לא רק מטעמי אורך פרומפט אלא גם כדי לצמצם משטח להזרקת הוראות מוסתרות.
@@ -1047,6 +1054,17 @@ def _extract_stock_facts(body: dict):
             "% מעל מחיר הכניסה — פוטנציאל חריג בהיקפו, המבוסס על רמה שהמחיר "
             "נגע בה בפועל בעבר ולא על הערכה.")
 
+    if no_near_structure:
+        bits = []
+        if isinstance(far_break_pct, (int, float)):
+            bits.append("ההתנגדות הקרובה ביותר רחוקה " + str(round(far_break_pct, 1)) + "% מעל המחיר")
+        if isinstance(far_support_pct, (int, float)):
+            bits.append("התמיכה הקרובה ביותר רחוקה " + str(round(far_support_pct, 1)) + "% מתחת למחיר")
+        facts.append(
+            "אין מבנה טכני קרוב: " + ", ו".join(bits) +
+            ". המניה נעה בטווח רחב בלי אזור צפוף ליד המחיר, ולכן אין כאן נקודת כניסה "
+            "או פריצה מעשית. אל תתאר את הרמות האלה כקרובות, כמתקרבות או כפריצה מתקרבת.")
+
     if isinstance(inval_level, (int, float)) and isinstance(inval_pct, (int, float)):
         line = (INVALIDATION_PREFIX + ": " + str(round(inval_level, 2)) + " דולר, " +
                 str(round(inval_pct, 1)) + "% מתחת למחיר הנוכחי")
@@ -1078,6 +1096,7 @@ def _extract_stock_facts(body: dict):
         round(next_support, 2) if isinstance(next_support, (int, float)) else next_support,
         round(lt_high, 2) if isinstance(lt_high, (int, float)) else lt_high,
         at_multi_year_high,
+        no_near_structure,
     ]
     return ticker, facts, cache_fields
 
