@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    # gh-pages נכלל בכוונה: עד היום הפרונטאנד נפרס בלי שום בדיקה אוטומטית,
+    # וכל אימות נעשה בעיניים מול צילום מסך.
+    branches: [ main, gh-pages ]
   pull_request:
     branches: [ main ]
 
@@ -10,6 +12,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # בדיקות השרת רצות על קוד השרת בלבד
+    if: github.ref != 'refs/heads/gh-pages'
 
     steps:
       - uses: actions/checkout@v4
@@ -42,3 +46,31 @@ jobs:
           name: pytest-results
           path: .pytest_cache/
           retention-days: 7
+
+  # ── בדיקות הפרונטאנד. הלוגיקה שהמשתמש רואה בפועל — זיהוי אזורים, מיזוג
+  # בין רזולוציות, התקדים ההיסטורי, ספי RSI — חיה ב-index.html שבענף
+  # gh-pages. המשימה מושכת את שני הענפים כדי שאפשר יהיה גם להשוות ביניהם:
+  # הבדיקה החשובה ביותר כאן מוודאת שספי ה-RSI בדפדפן ובשרת לא נפרדים. ──
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout backend and tests (main)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Checkout frontend (gh-pages)
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: site
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run frontend tests
+        run: node tests/frontend/run.js
