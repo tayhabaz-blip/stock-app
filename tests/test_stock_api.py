@@ -2343,6 +2343,68 @@ class TestLongRangeContext:
         assert isinstance(facts, list) and len(facts) >= 2
 
 
+class TestHebrewAccuracyRules:
+    """שגיאות שנצפו בתשובה אמיתית של gpt-oss-120b בפרודקשן:
+    "תתמוך תמיכה חזקה באיזור 262.5 דולר, והמחיר יפנה לתמיכה הבאה באותו רמה".
+    שלוש שגיאות במשפט אחד: כפל שורש, כתיב, והתאמת מין — ועוד אי-קוהרנטיות
+    לוגית (התמיכה הבאה אינה יכולה להיות באותה רמה). ההנחיות מכסות את כולן."""
+
+    def test_gender_agreement_rule_present(self):
+        assert "באותה רמה" in api.AI_SYSTEM
+        assert "ולא 'באותו רמה'" in api.AI_SYSTEM
+
+    def test_no_same_root_repetition_rule(self):
+        assert "תתמוך תמיכה" in api.AI_SYSTEM
+
+    def test_spelling_rule_for_azor(self):
+        assert "'אזור', לא 'איזור'" in api.AI_SYSTEM
+
+    def test_percent_spacing_rule(self):
+        assert "אל תכתוב רווח לפני סימן אחוז" in api.AI_SYSTEM
+
+    def test_hyphen_rule(self):
+        assert "מקף רגיל" in api.AI_SYSTEM
+
+
+class TestInvalidationSentenceStructure:
+    """המשפט על התרחיש השלילי יצא לא קוהרנטי בפרודקשן. ההנחיה מפרקת אותו
+    עכשיו לשלושה חלקים מפורשים ואוסרת במפורש את הניסוח השגוי שנצפה."""
+
+    BASE = {"ticker": "AAPL", "trend": "עולה", "rsiNum": 55,
+            "bullPct": 60, "bearPct": 10}
+    INV = {"invalidationLevel": 284.31, "invalidationPct": 4.2,
+           "invalidationStr": "חזקה", "nextSupportLevel": 262.5,
+           "nextSupportPct": 11.6}
+
+    def setup_method(self):
+        _clear_cache()
+        _clear_rate()
+
+    def _prompt(self, body):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"choices": [{"message": {"content": "תשובה"}}]}
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r:
+            mock_r.post.return_value = mock_resp
+            client.post("/ai", json=body)
+            sent = mock_r.post.call_args
+        payload = sent.kwargs.get("json") or sent[1].get("json")
+        return payload["messages"][1]["content"]
+
+    def test_three_parts_are_spelled_out(self):
+        p = self._prompt(dict(self.BASE, ticker="INV3", **self.INV))
+        assert "(א)" in p and "(ב)" in p and "(ג)" in p
+
+    def test_forbids_the_observed_incoherent_phrasing(self):
+        p = self._prompt(dict(self.BASE, ticker="INVBAD", **self.INV))
+        assert "אסור לכתוב שהתמיכה הבאה נמצאת באותה רמה" in p
+
+    def test_states_next_support_is_always_lower(self):
+        p = self._prompt(dict(self.BASE, ticker="INVLOW", **self.INV))
+        assert "היא תמיד נמוכה יותר" in p
+
+
 class TestHebrewTypography:
     """נצפה בפועל בתשובות gpt-oss-120b: מקף חסין-שבירה במקום מקף רגיל,
     ורווח לפני סימן אחוז. שניהם טיפוגרפיה בלבד ולכן מנורמלים בשרת."""
