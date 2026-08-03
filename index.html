@@ -1470,13 +1470,20 @@ function fmt(n){
 
 // ── AI — כניסה על פריצה, שרשרת יעדים עם אחוז ממחיר הפריצה. JavaScript מחשב, AI רק מנסח ──
 async function getAI(data){
-  const {ticker,price,rsiVal,m9,m20,sg,zs,bullPct,bearPct,pe,lows,sector,weekHigh,weekLow,change5dPct,relVolume,daysToEarnings,twinStats}=data;
+  const {ticker,price,rsiVal,m9,m20,sg,zs,zsDaily,bullPct,bearPct,pe,lows,sector,weekHigh,weekLow,change5dPct,relVolume,daysToEarnings,twinStats}=data;
   const priceNum=parseFloat(price);
   const rnd=v=>parseFloat(v.toFixed(priceNum<1?4:2));
 
   // מפרידים את האזורים: התנגדויות מעל המחיר, תמיכות מתחת
-  const resists =(zs||[]).filter(z=>z.t==='התנגדות'&&z.p>priceNum).sort((a,b)=>a.p-b.p);
-  const supports=(zs||[]).filter(z=>z.t==='תמיכה'&&z.p<priceNum).sort((a,b)=>b.p-a.p);
+  // ── התוכנית עצמה (כניסה, סטופ, נקודת פריצה) נגזרת מהאזורים היומיים בלבד.
+  // זה קריטי: מיזוג רמות שבועיות בנות שנים לתוך הבחירה של "ההתנגדות הקרובה"
+  // שבר את זיהוי "שדה פתוח" — מניה בשיא שנתי חטפה כנקודת פריצה רמה ישנה
+  // מלפני שנים, והתוצאה הייתה כניסה של 57% מעל המחיר הנוכחי (נתפס ב-INTC).
+  // הרמות הארוכות משמשות להארכת שרשרת היעדים ולהקשר — לא לבחירת הכניסה. ──
+  const planZones=(zsDaily&&zsDaily.length)?zsDaily:(zs||[]);
+  const resists =planZones.filter(z=>z.t==='התנגדות'&&z.p>priceNum).sort((a,b)=>a.p-b.p);
+  const supports=planZones.filter(z=>z.t==='תמיכה'&&z.p<priceNum).sort((a,b)=>b.p-a.p);
+  const mergedResists=(zs||[]).filter(z=>z.t==='התנגדות'&&z.p>priceNum).sort((a,b)=>a.p-b.p);
 
   let entry,stop,breakLevel,distToBreakPct,targets=[],headline,openField=false,stopCapped=false;
 
@@ -1513,8 +1520,13 @@ async function getAI(data){
         tf:z.tf||null,
         confirmed:!!z.confirmed
       }));
-      // אם כל הרמות הידועות קרובות, אבל יש שיא רב-שנתי גבוה יותר — הוא
-      // היעד האמיתי שמעליהן, וקודם הוא פשוט לא היה בתמונה.
+      // הארכה מהרמות הארוכות: רמה שבועית שמעל היעד היומי האחרון היא יעד
+      // לגיטימי נוסף — המחיר נגע בה בפועל, רק מוקדם יותר בהיסטוריה.
+      const lastP=targets[targets.length-1].p;
+      mergedResists.filter(z=>z.p>lastP*1.02).slice(0,2).forEach(z=>{
+        targets.push({p:rnd(z.p),pct:parseFloat(((z.p-entry)/entry*100).toFixed(2)),
+          str:z.str,tf:z.tf||null,confirmed:!!z.confirmed});
+      });
       const lt=window.__ltContext;
       if(lt&&lt.ltHigh&&lt.ltHigh>targets[targets.length-1].p*1.02){
         targets.push({
@@ -1538,6 +1550,20 @@ async function getAI(data){
     const capped=capStop(rawStop,entry);stop=capped.v;stopCapped=capped.capped;
     distToBreakPct=null;
     headline='שדה פתוח — אין התנגדות קרובה מעל';
+    // ── גם בשדה פתוח יש לאן ללכת: רמות שבועיות מעל המחיר, ואחריהן השיא
+    // הרב-שנתי. זה בדיוק המקרה של מניה שפרצה את כל רמות השנה האחרונה אבל
+    // עדיין רחוקה מהשיא ההיסטורי שלה — קודם הכלי לא ראה אותו בכלל. ──
+    const ltOpen=window.__ltContext;
+    mergedResists.filter(z=>z.p>priceNum*1.02).slice(0,3).forEach(z=>{
+      targets.push({p:rnd(z.p),pct:parseFloat(((z.p-entry)/entry*100).toFixed(2)),
+        str:z.str,tf:z.tf||null,confirmed:!!z.confirmed});
+    });
+    if(ltOpen&&ltOpen.ltHigh&&ltOpen.ltHigh>priceNum*1.02&&
+       (!targets.length||ltOpen.ltHigh>targets[targets.length-1].p*1.02)){
+      targets.push({p:rnd(ltOpen.ltHigh),
+        pct:parseFloat(((ltOpen.ltHigh-entry)/entry*100).toFixed(2)),
+        str:'שיא '+(ltOpen.ltYears||5)+' שנים',tf:'שבועי',confirmed:false});
+    }
   }
 
   // הפוטנציאל הגדול = היעד הרחוק ביותר בשרשרת
@@ -2677,7 +2703,7 @@ async function analyze(){
     if(battleBtn)battleBtn.addEventListener('click',openAIBattle);
 
     getSentiment(t).then(sentData=>{
-      getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows,sector:json.sector,weekHigh:json.week_high,weekLow:json.week_low,change5dPct,relVolume,daysToEarnings:json.days_to_earnings,twinStats}).then(res=>{
+      getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,zsDaily:dailyZones,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows,sector:json.sector,weekHigh:json.week_high,weekLow:json.week_low,change5dPct,relVolume,daysToEarnings:json.days_to_earnings,twinStats}).then(res=>{
         const el=document.getElementById('aiText');
         if(el){el.className='ai-text';el.textContent=res.text||'לא ניתן לטעון ניתוח AI.';}
         // ── התרחיש השלילי בשורה נפרדת ובולטת, מתחת לניתוח. במכוון לא בתוך
