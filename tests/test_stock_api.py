@@ -2181,6 +2181,62 @@ class TestInvalidationScenario:
         assert "לא הנחיה לפעולה" in p
 
 
+class TestNoNearStructure:
+    """התגלה מבדיקה חיה על INTC: המניה נסחרה ב-90 דולר בעוד ההתנגדות
+    הקרובה ביותר הייתה ב-141.90 (57% מעל) והתמיכה 43% מתחת. המספרים נכונים
+    — היא רצה מ-19 ל-142 וירדה בחזרה בלי לעצור — אבל הצגתם כתוכנית מסחר
+    מטעה. המודל חייב לדעת שאין כאן setup, אחרת הוא מתאר פריצה רחוקה כקרובה."""
+
+    BASE = {"ticker": "INTC", "trend": "עולה", "rsiNum": 55,
+            "bullPct": 60, "bearPct": 10}
+
+    def test_flag_adds_explicit_fact(self):
+        body = dict(self.BASE, noNearStructure=True,
+                    farBreakPct=57.3, farSupportPct=42.9)
+        _, facts, _ = api._extract_stock_facts(body)
+        joined = " ".join(facts)
+        assert "אין מבנה טכני קרוב" in joined
+        assert "57.3%" in joined
+        assert "42.9%" in joined
+
+    def test_model_is_told_not_to_call_it_close(self):
+        body = dict(self.BASE, noNearStructure=True, farBreakPct=57.3)
+        _, facts, _ = api._extract_stock_facts(body)
+        joined = " ".join(facts)
+        assert "אל תתאר את הרמות האלה כקרובות" in joined
+
+    def test_absent_flag_adds_nothing(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE))
+        assert "אין מבנה טכני קרוב" not in " ".join(facts)
+
+    def test_only_far_break_is_described_alone(self):
+        body = dict(self.BASE, noNearStructure=True, farBreakPct=31.0)
+        _, facts, _ = api._extract_stock_facts(body)
+        joined = " ".join(facts)
+        assert "31.0%" in joined
+        assert "התמיכה הקרובה ביותר רחוקה" not in joined
+
+    def test_only_far_support_is_described_alone(self):
+        body = dict(self.BASE, noNearStructure=True, farSupportPct=28.4)
+        _, facts, _ = api._extract_stock_facts(body)
+        joined = " ".join(facts)
+        assert "28.4%" in joined
+        assert "ההתנגדות הקרובה ביותר רחוקה" not in joined
+
+    def test_flag_affects_cache_key(self):
+        _, _, with_flag = api._extract_stock_facts(
+            dict(self.BASE, noNearStructure=True, farBreakPct=57.3))
+        _, _, without = api._extract_stock_facts(dict(self.BASE))
+        assert with_flag != without
+
+    def test_normal_stock_is_unaffected(self):
+        """מניה עם מבנה תקין לא אמורה לקבל את האזהרה בשום צורה."""
+        body = dict(self.BASE, distToBreakPct=2.1,
+                    invalidationLevel=195.71, invalidationPct=2.5)
+        _, facts, _ = api._extract_stock_facts(body)
+        assert "אין מבנה טכני קרוב" not in " ".join(facts)
+
+
 class TestLongRangeContext:
     """הקשר ארוך טווח מהגרף השבועי. זו הסיבה שהאנלייזר יכול עכשיו להצביע
     על יעדים רחוקים: קודם הוא ראה שנה אחת בלבד ולכן לא ידע שהם קיימים."""
