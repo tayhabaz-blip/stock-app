@@ -152,6 +152,15 @@
   .signal-title.green{color:var(--up)}.signal-title.yellow{color:var(--warn)}.signal-title.red{color:var(--dn)}
   .signal-reasons{font-size:12px;color:var(--txt2);margin-top:4px}
 
+  /* התרחיש השלילי — בולט בכוונה. גוון אזהרה ופס צד אדום, כדי שהנקודה
+     שבה התמונה מתבטלת לא תיבלע בתוך שאר הטקסט. */
+  .invalidation-box{border-radius:var(--r);padding:1.1rem 1.3rem;margin-bottom:1.25rem;
+    background:rgba(248,113,113,0.07);border:1px solid rgba(248,113,113,0.28);
+    border-inline-start:3px solid var(--dn)}
+  .invalidation-title{font-size:13px;font-weight:700;color:var(--dn);margin-bottom:6px}
+  .invalidation-body{font-size:13px;line-height:1.75;color:var(--txt2)}
+  .invalidation-body b{color:var(--txt);font-weight:700}
+
   .ai-card{border-radius:var(--r);padding:1.4rem;margin-bottom:1.25rem;position:relative;overflow:hidden;
     background:var(--surface);border:1px solid var(--line)}
   .ai-card::before{content:'';position:absolute;top:0;inset-inline-start:0;width:3px;height:100%;background:var(--accent)}
@@ -1350,6 +1359,43 @@ function zones(closes,highs,lows,livePrice){
     touches:c.touches
   }));
 }
+
+// ── מיזוג אזורים משתי רזולוציות (יומי של שנה + שבועי של 5 שנים).
+//
+// הרעיון המרכזי: רמה שמופיעה גם בגרף היומי וגם בשבועי היא רמה חזקה הרבה
+// יותר מרמה שמופיעה רק באחד מהם — היא החזיקה גם בטווח הקצר וגם לאורך שנים.
+// לכן מיזוג של שתי רמות קרובות אינו "כפילות שצריך למחוק" אלא אישור הדדי,
+// והוא מקבל דירוג גבוה יותר. זו הסיבה שהאנלייזר יכול עכשיו להצביע על
+// יעדים רחוקים בביטחון: הוא יודע אילו רמות באמת משמעותיות היסטורית. ──
+function mergeZones(daily,long,price){
+  const tol=0.02;
+  const out=[];
+  // מתחילים מהשבועי — הוא נושא את המשקל ההיסטורי
+  (long||[]).forEach(z=>out.push({p:z.p,touches:z.touches,tf:'שבועי',confirmed:false}));
+  (daily||[]).forEach(dz=>{
+    const hit=out.find(z=>Math.abs(z.p-dz.p)/z.p<=tol);
+    if(hit){
+      hit.confirmed=true;                    // אותה רמה בשתי הרזולוציות
+      hit.touches+=dz.touches;
+      hit.p=parseFloat(((hit.p+dz.p)/2).toFixed(2));
+    }else{
+      out.push({p:dz.p,touches:dz.touches,tf:'יומי',confirmed:false});
+    }
+  });
+  return out.map(z=>{
+    // אישור בשתי רזולוציות שווה נגיעות נוספות בדירוג העוצמה
+    const eff=z.touches+(z.confirmed?2:0)+(z.tf==='שבועי'?1:0);
+    return{
+      p:z.p,
+      t:z.p<price?'תמיכה':'התנגדות',
+      str:eff>=6?'חזקה מאוד':eff>=4?'חזקה':'בינונית',
+      touches:z.touches,
+      tf:z.tf,
+      confirmed:z.confirmed,
+      eff:eff
+    };
+  }).sort((a,b)=>b.eff-a.eff);
+}
 // ── מכפילים חציוניים משוערים לפי סקטור. מכפיל 18 בחברת תוכנה ומכפיל 18
 // בבנק אומרים דברים הפוכים, ולכן סף אחיד של 20 מטעה. ──
 const SECTOR_PE={
@@ -1454,18 +1500,35 @@ async function getAI(data){
     // שרשרת יעדים = כל ההתנגדויות שמעל נקודת הפריצה.
     // האחוז נמדד ממחיר הכניסה בפועל — קודם הוא נמדד ממחיר הפריצה, בזמן
     // שיחס הסיכוי/סיכון לידו חושב מהכניסה, ושני המספרים לא דיברו באותה שפה.
+    // ── עד 5 יעדים ולא 3. הגבלה ל-3 על נתוני שנה אחת הייתה חותכת את
+    // השרשרת בדיוק לפני הרמות הרחוקות והמעניינות. עכשיו, כשיש רמות
+    // שבועיות של 5 שנים, השרשרת יכולה להגיע ליעד גבוה באמת כשהוא קיים
+    // באמת — לא יעד מומצא, אלא רמה שהמחיר נגע בה בפועל בעבר. ──
     const above=resists.filter(z=>z.p>breakLevel).sort((a,b)=>a.p-b.p);
     if(above.length){
-      targets=above.slice(0,3).map(z=>({
+      targets=above.slice(0,5).map(z=>({
         p:rnd(z.p),
         pct:parseFloat(((z.p-entry)/entry*100).toFixed(2)),
-        str:z.str
+        str:z.str,
+        tf:z.tf||null,
+        confirmed:!!z.confirmed
       }));
+      // אם כל הרמות הידועות קרובות, אבל יש שיא רב-שנתי גבוה יותר — הוא
+      // היעד האמיתי שמעליהן, וקודם הוא פשוט לא היה בתמונה.
+      const lt=window.__ltContext;
+      if(lt&&lt.ltHigh&&lt.ltHigh>targets[targets.length-1].p*1.02){
+        targets.push({
+          p:rnd(lt.ltHigh),
+          pct:parseFloat(((lt.ltHigh-entry)/entry*100).toFixed(2)),
+          str:'שיא '+(lt.ltYears||5)+' שנים',
+          tf:'שבועי',confirmed:false
+        });
+      }
     }else{
       // אין התנגדות נוספת → יעד מדוד (Measured Move) ממחיר הפריצה
       const rangeBottom=supports.length?supports[0].p:breakLevel*0.92;
       const mt=rnd(breakLevel+(breakLevel-rangeBottom));
-      targets=[{p:mt,pct:parseFloat(((mt-entry)/entry*100).toFixed(2)),str:'יעד מדוד'}];
+      targets=[{p:mt,pct:parseFloat(((mt-entry)/entry*100).toFixed(2)),str:'יעד מדוד',tf:null,confirmed:false}];
     }
     headline=distToBreakPct<=0.3?'נוגע בפריצה':'נדרשת פריצה מעל $'+breakLevel;
   }else{
@@ -1488,6 +1551,27 @@ async function getAI(data){
 
   const trend=m9&&m20&&parseFloat(m9)>parseFloat(m20)?'עולה':'יורד';
   const rsiTxt=rsiVal<RSI_OVERSOLD?'נמוך — אזור קנייה':rsiVal>RSI_OVERBOUGHT?'גבוה — אזור מכירה':'נייטרלי';
+
+  const ltCtx=window.__ltContext||null;
+
+  // ── התרחיש השלילי: איזו רמה, אם תישבר, מבטלת את התמונה — ולאן המחיר
+  // צפוי לחפש תמיכה אחריה. שתי הרמות נלקחות מאזורים שחושבו בפועל
+  // (יומי + שבועי), אף מספר כאן אינו מומצא. תיאורי בלבד, לא המלצה. ──
+  let invalidation=null;
+  if(supports.length){
+    const s1=supports[0],s2=supports.length>1?supports[1]:null;
+    invalidation={
+      level:rnd(s1.p),
+      pct:parseFloat(((priceNum-s1.p)/priceNum*100).toFixed(2)),
+      str:s1.str,
+      touches:s1.touches,
+      tf:s1.tf||null,
+      confirmed:!!s1.confirmed,
+      next:s2?rnd(s2.p):null,
+      nextPct:s2?parseFloat(((priceNum-s2.p)/priceNum*100).toFixed(2)):null,
+      nextStr:s2?s2.str:null
+    };
+  }
 
   // AI — משפט ניסוח בלבד, דרך הבקאנד
   // מיקום המחיר בטווח 52 השבועות (0% = שפל שנתי, 100% = שיא שנתי)
@@ -1525,7 +1609,19 @@ async function getAI(data){
     twinAvgFwd:twinStats?twinStats.avgFwd:null,
     twinWinRate:twinStats?twinStats.winRate:null,
     twinSamples:twinStats?twinStats.samples:null,
-    twinForwardLen:twinStats?twinStats.forwardLen:null
+    twinForwardLen:twinStats?twinStats.forwardLen:null,
+    // התרחיש השלילי — רמות אמיתיות שחושבו, כדי שה-AI לא ימציא מספרים
+    invalidationLevel:invalidation?invalidation.level:null,
+    invalidationPct:invalidation?invalidation.pct:null,
+    invalidationStr:invalidation?invalidation.str:null,
+    nextSupportLevel:invalidation?invalidation.next:null,
+    nextSupportPct:invalidation?invalidation.nextPct:null,
+    // הקשר ארוך טווח — מה שמאפשר לדבר על פריצות גדולות ומצבים לא שגרתיים
+    ltHigh:ltCtx?ltCtx.ltHigh:null,
+    ltLow:ltCtx?ltCtx.ltLow:null,
+    ltYears:ltCtx?ltCtx.ltYears:null,
+    atMultiYearHigh:ltCtx?!!ltCtx.atMultiYearHigh:false,
+    maxTargetPct:maxPot
   };
   window.__aiFacts=aiFacts;
   try{
@@ -1563,7 +1659,7 @@ async function getAI(data){
     out+='יעד: '+headline+'\n';
   }
   out+='\nסיכום: '+sg.l;
-  return {text:out,entry,stop,breakLevel,targets,maxPot,rr,distToBreakPct,openField};
+  return {text:out,entry,stop,breakLevel,targets,maxPot,rr,distToBreakPct,openField,invalidation,ltCtx};
 }
 
 // ── SENTIMENT ──
@@ -2445,7 +2541,28 @@ async function analyze(){
     const prevM200=m200clean.length>1?m200clean[m200clean.length-2]:null;
     const eventBadges=computeEventBadges(price,json.week_high,json.week_low,histPrev,prevM200,lm200,rv_);
     const eventBadgesHtml=eventBadges.length?'<div class="event-badges">'+eventBadges.map(b=>'<span class="event-badge '+b.dir+'">'+b.icon+' '+b.text+'</span>').join('')+'</div>':'';
-    const zs=zones(d,highs,lows,price);
+    // ── רזולוציה שבועית של 5 שנים. זה מה שמאפשר לאנלייזר לראות רמות
+    // שנוצרו לפני שנים ולא נכנסות לחלון של שנה אחת — בדיוק הרמות שקובעות
+    // לאן מגיעה פריצה גדולה. נכשל בשקט: אם המשיכה נופלת, ממשיכים עם
+    // הניתוח היומי בלבד בדיוק כמו קודם. ──
+    let longZones=[],ltHigh=null,ltLow=null,ltYears=null,atMultiYearHigh=false;
+    try{
+      const rh=await fetch(API+'/history/'+t+'?range=5y&interval=1wk');
+      const dh=await rh.json();
+      if(dh&&Array.isArray(dh.closes)&&dh.closes.length>30&&Array.isArray(dh.highs)&&dh.highs.length){
+        longZones=zones(dh.closes,dh.highs,dh.lows,price);
+        const hs=dh.highs.filter(v=>v!=null),ls=dh.lows.filter(v=>v!=null);
+        if(hs.length)ltHigh=parseFloat(Math.max.apply(null,hs).toFixed(2));
+        if(ls.length)ltLow=parseFloat(Math.min.apply(null,ls).toFixed(2));
+        ltYears=Math.round(dh.closes.length/52*10)/10;
+        // "דבר לא שגרתי": המניה מעל כל מה שהיא עשתה בחמש השנים האחרונות
+        if(ltHigh!=null&&price>=ltHigh*0.999)atMultiYearHigh=true;
+      }
+    }catch(e){}
+    const dailyZones=zones(d,highs,lows,price);
+    const zs=longZones.length?mergeZones(dailyZones,longZones,price):dailyZones;
+    window.__ltContext={ltHigh,ltLow,ltYears,atMultiYearHigh,
+      weeklyZoneCount:longZones.length,mergedZoneCount:zs.length};
     const sg=assess(price,lm9,lm20,lm150,lm200,rv_,json.pe_ratio,json.sector);
     const gradeData=sg;  // אותו ניקוד בדיוק — הבאנר והאות לא יכולים לסתור
     const growthVal=(json.earnings_growth!=null?json.earnings_growth:json.revenue_growth);
@@ -2495,6 +2612,7 @@ async function analyze(){
       '</div>'+
       '<div class="ai-card"><div class="ai-card-header"><span class="ai-badge">AI</span><span class="ai-card-title">ניתוח חכם — '+esc(t)+'</span></div>'+
       '<div id="aiText" class="ai-loading"><div class="ai-spinner"><svg width="16" height="16" viewBox="0 0 100 100"><polyline points="10,80 35,55 55,65 90,15" fill="none" stroke="'+cssVar('--accent')+'" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" pathLength="100" style="stroke-dasharray:100;stroke-dashoffset:100;animation:drawLine 1.2s ease-in-out infinite"/></svg></div>מנתח...</div></div>'+
+      '<div id="invalidationBox" class="invalidation-box" style="display:none"></div>'+
       '<div class="signal-banner '+sg.c+'"><div class="signal-dot dot-'+sg.c+'"></div><div><div class="signal-title '+sg.c+'">ניתוח טכני — '+esc(sg.l)+'</div><div class="signal-reasons">'+esc(sg.rs.join(' · '))+'</div></div></div>'+
       '<div class="glass sentiment-card" id="sentCard"><div class="ai-loading"><div class="ai-spinner"><svg width="16" height="16" viewBox="0 0 100 100"><polyline points="10,80 35,55 55,65 90,15" fill="none" stroke="'+cssVar('--accent')+'" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" pathLength="100" style="stroke-dasharray:100;stroke-dashoffset:100;animation:drawLine 1.2s ease-in-out infinite"/></svg></div>טוען נתוני אנליסטים...</div></div>'+
       '<div class="metrics">'+
@@ -2562,6 +2680,23 @@ async function analyze(){
       getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows,sector:json.sector,weekHigh:json.week_high,weekLow:json.week_low,change5dPct,relVolume,daysToEarnings:json.days_to_earnings,twinStats}).then(res=>{
         const el=document.getElementById('aiText');
         if(el){el.className='ai-text';el.textContent=res.text||'לא ניתן לטעון ניתוח AI.';}
+        // ── התרחיש השלילי בשורה נפרדת ובולטת, מתחת לניתוח. במכוון לא בתוך
+        // הפסקה: זו הנקודה שבה התמונה מתבטלת, והיא לא אמורה להיבלע בטקסט. ──
+        const inv=res.invalidation;
+        const box=document.getElementById('invalidationBox');
+        if(box&&inv){
+          const tfTxt=inv.confirmed?' · מאושרת ביומי ובשבועי':(inv.tf?' · '+inv.tf:'');
+          box.innerHTML=
+            '<div class="invalidation-title">⚠️ מתי התמונה מתבטלת</div>'+
+            '<div class="invalidation-body">'+
+              'שבירה מתחת ל-<b>$'+esc(inv.level)+'</b> ('+esc(inv.pct)+'% מתחת למחיר הנוכחי) '+
+              'מבטלת את התרחיש החיובי. זו תמיכה '+esc(inv.str)+' עם '+esc(inv.touches)+' נגיעות'+esc(tfTxt)+'.'+
+              (inv.next!=null
+                ? ' מתחתיה, אזור התמיכה הבא נמצא ב-<b>$'+esc(inv.next)+'</b> ('+esc(inv.nextPct)+'% מתחת למחיר).'
+                : ' מתחתיה לא זוהה אזור תמיכה נוסף בטווח שנבדק.')+
+            '</div>';
+          box.style.display='block';
+        }
       });
     });
 
