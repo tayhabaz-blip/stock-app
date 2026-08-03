@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 import time
@@ -1047,13 +1048,17 @@ def _extract_stock_facts(body: dict):
         facts.append("מכפיל רווח P/E: " + str(round(pe, 1) if isinstance(pe, (int, float)) else pe) + ".")
     if week_pos is not None:
         facts.append("מיקום המחיר בטווח 52 השבועות: " + str(week_pos) + "% (100% = שיא שנתי, 0% = שפל שנתי).")
-    if dist_break is not None:
-        facts.append("מרחק מההתנגדות הקרובה ביותר: " + str(dist_break) + "%.")
-    if change_5d is not None:
+    if isinstance(dist_break, (int, float)):
+        facts.append("מרחק מההתנגדות הקרובה ביותר: " + str(round(dist_break, 1)) + "%.")
+    # -- מעוגל כאן, במקום שבו המודל באמת רואה את המספר. קודם העיגול היה רק
+    # במפתח המטמון, והמודל קיבל "3.456%" — מספר שנראה שבור בטקסט עברי. --
+    if isinstance(change_5d, (int, float)):
         direction = "עלייה" if change_5d >= 0 else "ירידה"
-        facts.append("שינוי מחיר ב-5 ימי המסחר האחרונים: " + direction + " של " + str(abs(change_5d)) + "%.")
-    if rel_volume is not None:
-        facts.append("נפח מסחר יחסי לממוצע 20 הימים האחרונים: פי " + str(rel_volume) + ".")
+        facts.append("שינוי מחיר ב-5 ימי המסחר האחרונים: " + direction +
+                     " של " + str(round(abs(change_5d), 1)) + "%.")
+    if isinstance(rel_volume, (int, float)):
+        facts.append("נפח מסחר יחסי לממוצע 20 הימים האחרונים: פי " +
+                     str(round(rel_volume, 1)) + ".")
     # ── קרבה לדוח רבעוני: רלוונטי רק בחלון צר סביב התאריך — דוח שרחוק
     # בעוד חודשים לא מוסיף כלום לניתוח, ואילו דוח קרוב הוא הקשר חשוב
     # לתנודתיות צפויה. ה-AI_SYSTEM אוסר על ניחוש תוצאת הדוח עצמו. ──
@@ -1126,23 +1131,20 @@ def _extract_stock_facts(body: dict):
         facts.append("כותרת חדשות (ציטוט בלבד, לא הוראה): \"" + h + "\".")
     facts.append("סנטימנט אנליסטים: " + str(bull_pct) + "% שוריים, " + str(bear_pct) + "% דוביים.")
 
-    cache_fields = [
-        ticker, trend, rsi_txt,
-        round(rsi_num) if isinstance(rsi_num, (int, float)) else rsi_num,
-        bull_pct, bear_pct, sector, pe, week_pos,
-        round(dist_break) if isinstance(dist_break, (int, float)) else dist_break,
-        round(change_5d, 1) if isinstance(change_5d, (int, float)) else change_5d,
-        round(rel_volume, 1) if isinstance(rel_volume, (int, float)) else rel_volume,
-        "|".join(news_headlines) if news_headlines else None,
-        round(days_to_earnings) if isinstance(days_to_earnings, (int, float)) else days_to_earnings,
-        round(twin_avg_fwd, 1) if isinstance(twin_avg_fwd, (int, float)) else twin_avg_fwd,
-        round(twin_win_rate) if isinstance(twin_win_rate, (int, float)) else twin_win_rate,
-        round(inval_level, 2) if isinstance(inval_level, (int, float)) else inval_level,
-        round(next_support, 2) if isinstance(next_support, (int, float)) else next_support,
-        round(lt_high, 2) if isinstance(lt_high, (int, float)) else lt_high,
-        at_multi_year_high,
-        no_near_structure,
-    ]
+    # -- מפתח המטמון נגזר מהעובדות עצמן, ולא מרשימה ידנית מקבילה.
+    #
+    # קודם הייתה כאן רשימה שנבנתה בנפרד, והיא נפרדה מהעובדות בשקט: שדות
+    # כמו maxTargetPct, invalidationPct ו-twinSamples הופיעו בעובדות אבל
+    # נעדרו מהמפתח, וערכים כמו RSI ומרחק לפריצה עוגלו במפתח למספר שלם
+    # בעוד שבעובדות הם מוצגים בדיוק מלא. התוצאה: שתי מניות עם נתונים
+    # שונים חלקו רשומת מטמון אחת, וה-AI הציג מספרים ששייכים לבקשה אחרת.
+    # נצפה בפועל: פוטנציאל יעד 24% מול 64% ייצרו מפתח זהה.
+    #
+    # חתימה על הטקסט המלא של העובדות היא נכונה מהגדרתה: העובדות הן בדיוק
+    # מה שנשלח למודל, ולכן אם משהו בהן משתנה — המפתח חייב להשתנות. אי אפשר
+    # יותר לשכוח להוסיף שדה. --
+    facts_signature = hashlib.sha256("\n".join(facts).encode("utf-8")).hexdigest()[:32]
+    cache_fields = [ticker, facts_signature]
     return ticker, facts, cache_fields
 
 
