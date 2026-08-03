@@ -1379,7 +1379,10 @@ class TestCallGroq:
         assert result == {"choices": [{"message": {"content": "ok"}}]}
         assert mock_r.post.call_count == 2
 
-    def test_retries_once_on_429_then_succeeds(self):
+    def test_does_not_retry_on_429(self):
+        """נצפה בפרודקשן ביומני Groq: כל 429 הופיע כזוג בקשות באותה שנייה
+        בדיוק — הניסיון החוזר שלנו. הוא לא יכול להצליח, כי מכסה לא מתאפסת
+        בתוך 0.3 שניות, והוא רק מכפיל את הפגיעות במכסה שכבר מוצתה."""
         bad_resp = MagicMock()
         bad_resp.status_code = 429
         good_resp = MagicMock()
@@ -1390,8 +1393,50 @@ class TestCallGroq:
              patch("stock_api.time.sleep"):
             mock_r.post.side_effect = [bad_resp, good_resp]
             result = api._call_groq({"model": "x", "messages": []})
+        assert result is api.RATE_LIMITED
+        assert mock_r.post.call_count == 1
+
+    def test_still_retries_on_server_errors(self):
+        """503 הוא כן כשל זמני אמיתי — שם הניסיון החוזר נשאר נכון."""
+        bad_resp = MagicMock()
+        bad_resp.status_code = 503
+        good_resp = MagicMock()
+        good_resp.status_code = 200
+        good_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r, \
+             patch("stock_api.time.sleep"):
+            mock_r.post.side_effect = [bad_resp, good_resp]
+            result = api._call_groq({"model": "x", "messages": []})
         assert result == {"choices": [{"message": {"content": "ok"}}]}
         assert mock_r.post.call_count == 2
+
+    def test_ai_endpoint_reports_rate_limited_distinctly(self):
+        _clear_cache()
+        _clear_rate()
+        bad_resp = MagicMock()
+        bad_resp.status_code = 429
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r, \
+             patch("stock_api.time.sleep"):
+            mock_r.post.return_value = bad_resp
+            r = client.post("/ai", json={"ticker": "RL1", "trend": "עולה"})
+        j = r.json()
+        assert j.get("text") == ""
+        assert j.get("reason") == "rate_limited"
+
+    def test_battle_endpoint_reports_rate_limited_distinctly(self):
+        _clear_cache()
+        _clear_rate()
+        bad_resp = MagicMock()
+        bad_resp.status_code = 429
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r, \
+             patch("stock_api.time.sleep"):
+            mock_r.post.return_value = bad_resp
+            r = client.post("/ai/battle", json={"ticker": "RL2", "trend": "עולה"})
+        j = r.json()
+        assert j.get("reason") == "rate_limited"
 
     def test_both_attempts_fail_with_exception_returns_none(self):
         with patch.object(api, "GROQ_KEY", "fake-key"), \
