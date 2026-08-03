@@ -154,6 +154,12 @@
 
   /* התרחיש השלילי — בולט בכוונה. גוון אזהרה ופס צד אדום, כדי שהנקודה
      שבה התמונה מתבטלת לא תיבלע בתוך שאר הטקסט. */
+  .structure-box{border-radius:var(--r);padding:1.1rem 1.3rem;margin-bottom:1.25rem;
+    background:rgba(251,191,36,0.07);border:1px solid rgba(251,191,36,0.3);
+    border-inline-start:3px solid var(--warn)}
+  .structure-title{font-size:13px;font-weight:700;color:var(--warn);margin-bottom:6px}
+  .structure-body{font-size:13px;line-height:1.75;color:var(--txt2)}
+  .structure-body b{color:var(--txt);font-weight:700}
   .invalidation-box{border-radius:var(--r);padding:1.1rem 1.3rem;margin-bottom:1.25rem;
     background:rgba(248,113,113,0.07);border:1px solid rgba(248,113,113,0.28);
     border-inline-start:3px solid var(--dn)}
@@ -601,6 +607,13 @@ const API='https://stock-app-1-dbrs.onrender.com';
 // מתחת ל-35 בזמן שכרטיס המדד ממש לידו הציג "Neutral" עד 30 — אותה מניה,
 // שני תיאורים סותרים באותו מסך. אותם ערכים בדיוק מוגדרים גם בשרת. ──
 const RSI_OVERSOLD=30, RSI_OVERBOUGHT=70;
+
+// ── מתי אין מבנה טכני קרוב.
+// מניה שרצה מ-19 ל-142 וירדה ל-90 בלי לעצור בדרך לא משאירה אף רמה בין
+// המחיר לרמה הבאה. במצב כזה "כניסה מעל 141.90" ו"סטופ 43% מתחת" הם
+// מספרים נכונים מתמטית וחסרי משמעות מעשית — והצגתם כתוכנית מסחר רגילה
+// מטעה. מעל הספים האלה מציגים הסבר במקום להעמיד פנים שיש כאן setup. ──
+const FAR_BREAK_PCT=20, FAR_SUPPORT_PCT=20;
 
 // ── ערכת צבעים. ברירת המחדל נגזרת מהגדרת המערכת, ובחירה מפורשת
 // נשמרת ומנצחת אותה. אותו מנגנון אחסון של רשימת המעקב. ──
@@ -1583,6 +1596,8 @@ async function getAI(data){
   const rsiTxt=rsiVal<RSI_OVERSOLD?'נמוך — אזור קנייה':rsiVal>RSI_OVERBOUGHT?'גבוה — אזור מכירה':'נייטרלי';
 
   const ltCtx=window.__ltContext||null;
+  // מחושב אחרי invalidation למטה — מוצהר כאן כדי שיהיה זמין ל-aiFacts
+  let structure=null;
 
   // ── התרחיש השלילי: איזו רמה, אם תישבר, מבטלת את התמונה — ולאן המחיר
   // צפוי לחפש תמיכה אחריה. שתי הרמות נלקחות מאזורים שחושבו בפועל
@@ -1601,6 +1616,19 @@ async function getAI(data){
       next:s2?rnd(s2.p):null,
       nextPct:s2?parseFloat(((priceNum-s2.p)/priceNum*100).toFixed(2)):null,
       nextStr:s2?s2.str:null
+    };
+  }
+
+  // ── האם יש כאן בכלל מבנה שאפשר לסחור לפיו ──
+  const farBreak = (distToBreakPct!=null && distToBreakPct>FAR_BREAK_PCT);
+  const farSupport = (invalidation!=null && invalidation.pct>FAR_SUPPORT_PCT);
+  if(farBreak||farSupport){
+    structure={
+      farBreak, farSupport,
+      breakPct: distToBreakPct!=null?distToBreakPct:null,
+      supportPct: invalidation?invalidation.pct:null,
+      // הסטופ נחסם ב-12% כי התמיכה רחוקה — כלומר הוא לא נגזר ממבנה אמיתי
+      stopIsArbitrary: !!stopCapped
     };
   }
 
@@ -1652,7 +1680,10 @@ async function getAI(data){
     ltLow:ltCtx?ltCtx.ltLow:null,
     ltYears:ltCtx?ltCtx.ltYears:null,
     atMultiYearHigh:ltCtx?!!ltCtx.atMultiYearHigh:false,
-    maxTargetPct:maxPot
+    maxTargetPct:maxPot,
+    noNearStructure: structure?true:false,
+    farBreakPct: structure&&structure.farBreak?structure.breakPct:null,
+    farSupportPct: structure&&structure.farSupport?structure.supportPct:null
   };
   window.__aiFacts=aiFacts;
   try{
@@ -1690,7 +1721,7 @@ async function getAI(data){
     out+='יעד: '+headline+'\n';
   }
   out+='\nסיכום: '+sg.l;
-  return {text:out,entry,stop,breakLevel,targets,maxPot,rr,distToBreakPct,openField,invalidation,ltCtx};
+  return {text:out,entry,stop,breakLevel,targets,maxPot,rr,distToBreakPct,openField,invalidation,ltCtx,structure};
 }
 
 // ── SENTIMENT ──
@@ -2643,6 +2674,7 @@ async function analyze(){
       '</div>'+
       '<div class="ai-card"><div class="ai-card-header"><span class="ai-badge">AI</span><span class="ai-card-title">ניתוח חכם — '+esc(t)+'</span></div>'+
       '<div id="aiText" class="ai-loading"><div class="ai-spinner"><svg width="16" height="16" viewBox="0 0 100 100"><polyline points="10,80 35,55 55,65 90,15" fill="none" stroke="'+cssVar('--accent')+'" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" pathLength="100" style="stroke-dasharray:100;stroke-dashoffset:100;animation:drawLine 1.2s ease-in-out infinite"/></svg></div>מנתח...</div></div>'+
+      '<div id="structureBox" class="structure-box" style="display:none"></div>'+
       '<div id="invalidationBox" class="invalidation-box" style="display:none"></div>'+
       '<div class="signal-banner '+sg.c+'"><div class="signal-dot dot-'+sg.c+'"></div><div><div class="signal-title '+sg.c+'">ניתוח טכני — '+esc(sg.l)+'</div><div class="signal-reasons">'+esc(sg.rs.join(' · '))+'</div></div></div>'+
       '<div class="glass sentiment-card" id="sentCard"><div class="ai-loading"><div class="ai-spinner"><svg width="16" height="16" viewBox="0 0 100 100"><polyline points="10,80 35,55 55,65 90,15" fill="none" stroke="'+cssVar('--accent')+'" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" pathLength="100" style="stroke-dasharray:100;stroke-dashoffset:100;animation:drawLine 1.2s ease-in-out infinite"/></svg></div>טוען נתוני אנליסטים...</div></div>'+
@@ -2713,6 +2745,24 @@ async function analyze(){
         if(el){el.className='ai-text';el.textContent=res.text||'לא ניתן לטעון ניתוח AI.';}
         // ── התרחיש השלילי בשורה נפרדת ובולטת, מתחת לניתוח. במכוון לא בתוך
         // הפסקה: זו הנקודה שבה התמונה מתבטלת, והיא לא אמורה להיבלע בטקסט. ──
+        // ── הודעת "אין מבנה קרוב" ממסגרת את כל התוכנית שמתחתיה ──
+        const st=res.structure;
+        const sBox=document.getElementById('structureBox');
+        if(sBox&&st){
+          const parts=[];
+          if(st.farBreak)parts.push('ההתנגדות המשמעותית הקרובה ביותר נמצאת <b>'+esc(st.breakPct)+'% מעל</b> המחיר הנוכחי');
+          if(st.farSupport)parts.push('התמיכה הקרובה ביותר נמצאת <b>'+esc(st.supportPct)+'% מתחת</b>');
+          sBox.innerHTML=
+            '<div class="structure-title">\u26A0\uFE0F אין כאן מבנה טכני קרוב</div>'+
+            '<div class="structure-body">'+
+              parts.join(', ו')+'. '+
+              'המניה נעה בטווח רחב בלי אזור צפוף בקרבת המחיר, ולכן מספרי הכניסה והיעד '+
+              'שלמטה הם רמות היסטוריות רחוקות ולא נקודות כניסה מעשיות'+
+              (st.stopIsArbitrary?', והסטופ נקבע לפי תקרת סיכון של 12% ולא לפי תמיכה אמיתית':'')+
+              '. שווה להתייחס לניתוח כאן כתמונת מצב, לא כתוכנית מסחר.'+
+            '</div>';
+          sBox.style.display='block';
+        }
         const inv=res.invalidation;
         const box=document.getElementById('invalidationBox');
         if(box&&inv){
