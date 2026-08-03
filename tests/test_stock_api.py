@@ -2363,6 +2363,13 @@ class TestHebrewAccuracyRules:
     def test_hyphen_rule(self):
         assert "מקף רגיל" in api.AI_SYSTEM
 
+    def test_rsi_is_never_tied_to_volatility(self):
+        """נצפה בפרודקשן: "RSI של 37.4, המצביע על תנודתיות אפשרית".
+        הכלל הכללי כבר היה קיים והמודל הפר אותו, ולכן נוסף ניסוח שגוי
+        מפורש — אותה שיטה שעבדה על שאר שגיאות העברית."""
+        assert "אסור בתכלית לקשור RSI לתנודתיות" in api.AI_SYSTEM
+        assert "RSI מודד תאוצת מחיר" in api.AI_SYSTEM
+
 
 class TestInvalidationSentenceStructure:
     """המשפט על התרחיש השלילי יצא לא קוהרנטי בפרודקשן. ההנחיה מפרקת אותו
