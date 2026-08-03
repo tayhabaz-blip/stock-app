@@ -876,6 +876,11 @@ def _groq_payload(prompt: str, max_tokens: int) -> dict:
 # choices) לא חוזר על עצמו בניסיון נוסף — זה לא יתקן את עצמו. שני הניסיונות
 # ביחד לא חורגים בהרבה מה-timeout המקורי (20s) כדי לא להאריך את ההמתנה
 # למשתמש מעבר לסביר, גם כשגם הניסיון השני נכשל. ──
+# -- סימון ייחודי לחריגת מכסה, להבדיל מכשל זמני. אובייקט ולא מחרוזת כדי
+# שלא יתנגש לעולם בתשובה תקינה של Groq. --
+RATE_LIMITED = object()
+
+
 def _call_groq(payload: dict, first_timeout: int = 12, retry_timeout: int = 8):
     for attempt, timeout in enumerate((first_timeout, retry_timeout)):
         try:
@@ -895,7 +900,14 @@ def _call_groq(payload: dict, first_timeout: int = 12, retry_timeout: int = 8):
                 time.sleep(0.3)
                 continue
             return None
-        if r.status_code in (429, 500, 502, 503, 504):
+        # -- 429 = חריגה ממכסת Groq. ניסיון חוזר מיידי כאן היה טעות: הוא לא
+        # יכול להצליח (המכסה לא מתאפסת בתוך 0.3 שניות) והוא מכפיל את הפגיעות
+        # במכסה שכבר מוצתה. נצפה ביומני Groq כזוגות בקשות באותה שנייה בדיוק.
+        # מוחזר סימון נפרד כדי שהמשתמש יקבל הודעה נכונה ולא "עומס רגעי". --
+        if r.status_code == 429:
+            log.warning("groq rate limit hit (attempt %s) - not retrying", attempt + 1)
+            return RATE_LIMITED
+        if r.status_code in (500, 502, 503, 504):
             log.warning("groq returned status %s (attempt %s)", r.status_code, attempt + 1)
             if attempt == 0:
                 time.sleep(0.3)
@@ -1186,6 +1198,8 @@ async def ai_analysis(req: Request):
     )
     try:
         d = _call_groq(_groq_payload(prompt, 600))
+        if d is RATE_LIMITED:
+            return {"text": "", "reason": "rate_limited"}
         if not d or "choices" not in d or not d["choices"]:
             log.warning("groq returned no usable choices: %s", str(d)[:400] if d else "None (both attempts failed)")
             return {"text": "", "reason": "transient"}
@@ -1282,6 +1296,8 @@ async def ai_battle(req: Request):
     )
     try:
         d = _call_groq(_groq_payload(prompt, 900))
+        if d is RATE_LIMITED:
+            return {"bull": "", "bear": "", "reason": "rate_limited"}
         if not d or "choices" not in d or not d["choices"]:
             log.warning("groq returned no usable choices for battle: %s", str(d)[:400] if d else "None (both attempts failed)")
             return {"bull": "", "bear": "", "reason": "transient"}
