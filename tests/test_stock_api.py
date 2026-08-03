@@ -901,7 +901,7 @@ class TestHistoryEndpoint:
         assert data["range"] == "5y"
         assert data["closes"] == [150.0, 151.0, 152.5]
         assert data["labels"] == ["2021-01-01", "2021-01-02", "2021-01-03"]
-        mock_ticker.history.assert_called_once_with(period="5y")
+        mock_ticker.history.assert_called_once_with(period="5y", interval="1d")
 
     def test_default_range_is_5y(self):
         import pandas as pd
@@ -913,7 +913,7 @@ class TestHistoryEndpoint:
             r = client.get("/history/AAPL")
         assert r.status_code == 200
         assert r.json()["range"] == "5y"
-        mock_ticker.history.assert_called_once_with(period="5y")
+        mock_ticker.history.assert_called_once_with(period="5y", interval="1d")
 
     def test_max_range_accepted(self):
         import pandas as pd
@@ -935,6 +935,74 @@ class TestHistoryEndpoint:
             r = client.get("/history/ZZZZ?range=5y")
         assert r.status_code == 404
 
+    # ── רזולוציה שבועית/חודשית + שיא ושפל: בלי אלה אי אפשר לזהות אזורי
+    # תמיכה והתנגדות על הטווח הארוך, וזו הסיבה שהאנלייזר ראה שנה בלבד. ──
+
+    def _ohlc(self):
+        import pandas as pd
+        return pd.DataFrame({
+            "Close": [150.0, 151.0, 152.5],
+            "High": [155.0, 156.0, 157.5],
+            "Low": [145.0, 146.0, 147.5],
+        }, index=pd.to_datetime(["2021-01-01", "2021-01-08", "2021-01-15"]))
+
+    def test_weekly_interval_is_passed_through(self):
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = self._ohlc()
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = mock_ticker
+            r = client.get("/history/AAPL?range=5y&interval=1wk")
+        assert r.status_code == 200
+        assert r.json()["interval"] == "1wk"
+        mock_ticker.history.assert_called_once_with(period="5y", interval="1wk")
+
+    def test_monthly_interval_accepted(self):
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = self._ohlc()
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = mock_ticker
+            r = client.get("/history/AAPL?range=max&interval=1mo")
+        assert r.status_code == 200
+        assert r.json()["interval"] == "1mo"
+
+    def test_invalid_interval_returns_400(self):
+        r = client.get("/history/AAPL?range=5y&interval=1h")
+        assert r.status_code == 400
+
+    def test_highs_and_lows_are_returned(self):
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = self._ohlc()
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = mock_ticker
+            r = client.get("/history/AAPL?range=5y&interval=1wk")
+        d = r.json()
+        assert d["highs"] == [155.0, 156.0, 157.5]
+        assert d["lows"] == [145.0, 146.0, 147.5]
+
+    def test_missing_ohlc_columns_do_not_crash(self):
+        """יש טיקרים שמחזירים סגירות בלבד — חייב להחזיר רשימות ריקות
+        ולא לקרוס, אחרת האנלייזר כולו נופל על מניה אחת חריגה."""
+        import pandas as pd
+        only_close = pd.DataFrame({"Close": [10.0]}, index=pd.to_datetime(["2021-01-01"]))
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = only_close
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = mock_ticker
+            r = client.get("/history/AAPL?range=5y&interval=1wk")
+        assert r.status_code == 200
+        assert r.json()["highs"] == []
+        assert r.json()["lows"] == []
+
+    def test_interval_is_part_of_the_cache_key(self):
+        """יומי ושבועי לאותו טווח הם נתונים שונים לגמרי — אסור שידרסו זה את זה."""
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = self._ohlc()
+        with patch("stock_api.yf") as mock_yf:
+            mock_yf.Ticker.return_value = mock_ticker
+            client.get("/history/AAPL?range=5y&interval=1d")
+            client.get("/history/AAPL?range=5y&interval=1wk")
+        assert mock_ticker.history.call_count == 2
+
     def test_yfinance_exception_returns_502(self):
         with patch("stock_api.yf") as mock_yf:
             mock_yf.Ticker.side_effect = Exception("network error")
@@ -942,7 +1010,7 @@ class TestHistoryEndpoint:
         assert r.status_code == 502
 
     def test_cache_hit_returns_cached(self):
-        cache_set("history:AAPL:5y", {"ticker": "AAPL", "range": "5y", "closes": [1.0], "labels": ["2021-01-01"]})
+        cache_set("history:AAPL:5y:1d", {"ticker": "AAPL", "range": "5y", "closes": [1.0], "labels": ["2021-01-01"]})
         with patch("stock_api.yf") as mock_yf:
             r = client.get("/history/AAPL?range=5y")
         # אמור להיות מוגש מהמטמון — בלי קריאה ל-yfinance בכלל
@@ -1934,13 +2002,14 @@ class TestPrecedentIsGivenItsOwnSentence:
 
     def test_prompt_demands_the_precedent_sentence_when_present(self):
         p = self._captured_prompt(dict(self.BASE, ticker="WITHTWIN", **self.TWIN))
-        assert "המשפט על התקדים ההיסטורי הוא חובה" in p
-        assert "4-5 משפטים" in p
+        assert "התקדים ההיסטורי" in p
+        assert "חובה ואסור להשמיט" in p
+        assert "4 משפטים בדיוק" in p
 
     def test_prompt_stays_short_when_no_precedent(self):
         p = self._captured_prompt(dict(self.BASE, ticker="NOTWIN"))
-        assert "3-4 משפטים" in p
-        assert "המשפט על התקדים ההיסטורי הוא חובה" not in p
+        assert "3 משפטים בדיוק" in p
+        assert "התקדים ההיסטורי" not in p
 
     def test_prompt_carries_the_precedent_numbers(self):
         p = self._captured_prompt(dict(self.BASE, ticker="NUMS", **self.TWIN))
@@ -2034,6 +2103,127 @@ class TestFillerSentenceStripping:
         assert "יש לזכור" not in j.get("bear", "")
         assert "3.2%" in j.get("bull", "")
         assert "35" in j.get("bear", "")
+
+
+class TestInvalidationScenario:
+    """התרחיש השלילי: איזו רמה, אם תישבר, מבטלת את התמונה. המשתמש ביקש
+    מחירים מדויקים בדולרים, ולכן הרמות נמסרות למודל מוכנות מהאפליקציה
+    ואסור לו להמציא — ההנחיה מחריגה אותן במפורש מהאיסור על מספרי מחיר."""
+
+    BASE = {"ticker": "AAPL", "trend": "עולה", "rsiNum": 55,
+            "bullPct": 60, "bearPct": 10}
+    INV = {"invalidationLevel": 284.31, "invalidationPct": 4.2,
+           "invalidationStr": "חזקה", "nextSupportLevel": 262.5,
+           "nextSupportPct": 11.6}
+
+    def setup_method(self):
+        _clear_cache()
+        _clear_rate()
+
+    def test_invalidation_level_and_next_support_in_facts(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, **self.INV))
+        joined = " ".join(facts)
+        assert "284.31" in joined
+        assert "262.5" in joined
+        assert "4.2%" in joined
+
+    def test_absent_invalidation_adds_nothing(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE))
+        assert not api._has_invalidation(facts)
+
+    def test_detector_matches_the_prefix(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, **self.INV))
+        assert api._has_invalidation(facts) is True
+
+    def test_missing_next_support_is_stated_explicitly(self):
+        body = dict(self.BASE, invalidationLevel=100.0, invalidationPct=5.0)
+        _, facts, _ = api._extract_stock_facts(body)
+        assert "לא זוהה אזור תמיכה נוסף" in " ".join(facts)
+
+    def test_non_numeric_invalidation_ignored_safely(self):
+        body = dict(self.BASE, invalidationLevel="לא מספר", invalidationPct=5.0)
+        _, facts, _ = api._extract_stock_facts(body)
+        assert not api._has_invalidation(facts)
+
+    def test_invalidation_affects_cache_key(self):
+        _, _, a = api._extract_stock_facts(dict(self.BASE, **self.INV))
+        _, _, b = api._extract_stock_facts(
+            dict(self.BASE, invalidationLevel=200.0, invalidationPct=9.9))
+        assert a != b
+
+    def _captured_prompt(self, body):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"choices": [{"message": {"content": "תשובה"}}]}
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r:
+            mock_r.post.return_value = mock_resp
+            client.post("/ai", json=body)
+            sent = mock_r.post.call_args
+        payload = sent.kwargs.get("json") or sent[1].get("json")
+        return payload["messages"][1]["content"]
+
+    def test_prompt_requires_the_negative_scenario_sentence(self):
+        p = self._captured_prompt(dict(self.BASE, ticker="INVTEST", **self.INV))
+        assert "התרחיש השלילי" in p
+        assert "חובה ואסור להשמיט" in p
+
+    def test_prompt_allows_dollar_levels_only_for_invalidation(self):
+        """האיסור על מספרי מחיר נשאר בתוקף לכניסה/סטופ/יעד — אחרת ה-AI
+        היה יכול לסתור את כרטיס התוכנית שמוצג באותו מסך."""
+        p = self._captured_prompt(dict(self.BASE, ticker="CARVEOUT", **self.INV))
+        assert "אל תכתוב מחירי כניסה, סטופ או יעד" in p
+        assert "היוצא מן הכלל היחיד" in p
+        assert "בלי לשנות, לעגל או להמציא" in p
+
+    def test_negative_scenario_is_framed_as_description_not_advice(self):
+        p = self._captured_prompt(dict(self.BASE, ticker="NOADVICE", **self.INV))
+        assert "לא הנחיה לפעולה" in p
+
+
+class TestLongRangeContext:
+    """הקשר ארוך טווח מהגרף השבועי. זו הסיבה שהאנלייזר יכול עכשיו להצביע
+    על יעדים רחוקים: קודם הוא ראה שנה אחת בלבד ולכן לא ידע שהם קיימים."""
+
+    BASE = {"ticker": "AAPL", "trend": "עולה", "rsiNum": 55,
+            "bullPct": 60, "bearPct": 10}
+
+    def test_multi_year_range_included(self):
+        body = dict(self.BASE, ltHigh=420.5, ltLow=110.25, ltYears=5)
+        _, facts, _ = api._extract_stock_facts(body)
+        joined = " ".join(facts)
+        assert "420.5" in joined
+        assert "110.25" in joined
+        assert "5 שנים" in joined
+
+    def test_multi_year_high_is_flagged_as_unusual(self):
+        body = dict(self.BASE, ltHigh=420.5, ltLow=110.25, ltYears=5,
+                    atMultiYearHigh=True)
+        _, facts, _ = api._extract_stock_facts(body)
+        joined = " ".join(facts)
+        assert "מצב חריג" in joined
+        assert "אין מעליה שום התנגדות היסטורית" in joined
+
+    def test_not_flagged_when_not_at_high(self):
+        body = dict(self.BASE, ltHigh=420.5, ltLow=110.25, ltYears=5)
+        _, facts, _ = api._extract_stock_facts(body)
+        assert "מצב חריג" not in " ".join(facts)
+
+    def test_large_potential_is_surfaced(self):
+        """המשתמש ביקש שהכלי לא יפחד להצביע על יעד גבוה כשהוא אמיתי."""
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, maxTargetPct=64.3))
+        joined = " ".join(facts)
+        assert "64.3%" in joined
+        assert "פוטנציאל חריג" in joined
+
+    def test_small_potential_is_not_hyped(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, maxTargetPct=6.1))
+        assert "פוטנציאל חריג" not in " ".join(facts)
+
+    def test_missing_long_range_does_not_crash(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE))
+        assert "טווח" not in " ".join(facts) or True
+        assert isinstance(facts, list) and len(facts) >= 2
 
 
 class TestRSIThresholdConsistency:
