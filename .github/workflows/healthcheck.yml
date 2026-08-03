@@ -1,0 +1,33 @@
+name: Production health check
+
+# ── למה זה קיים.
+# ב-3.8.2026 ה-AI של האפליקציה היה מושבת לגמרי במשך זמן לא ידוע, בגלל חריגה
+# ממכסת Groq. הקוד היה תקין, כל 367 הבדיקות עברו, ו-CI היה ירוק — כי כל
+# הבדיקות רצות על הקוד ולא על המוצר החי. מה שגילה את התקלה בסוף היה שהמשתמש
+# שם לב. הבדיקה הזו רצה מול הפרודקשן עצמו, וכשהיא נכשלת GitHub שולח מייל.
+#
+# רצה מ-GitHub ולא מסביבת Cowork בכוונה: לסביבה שם אין גישת רשת ל-onrender
+# ול-github.io, ולכן בדיקה משם הייתה מדווחת על תקלות מדומות.
+
+on:
+  schedule:
+    # 05:00 UTC = 08:00 בישראל בשעון קיץ, לפני פתיחת המסחר בארה"ב
+    - cron: '0 5 * * *'
+  workflow_dispatch:        # מאפשר הרצה ידנית מיידית
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check production
+        run: node tests/healthcheck.js
