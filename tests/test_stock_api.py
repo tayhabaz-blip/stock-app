@@ -1949,6 +1949,93 @@ class TestPrecedentIsGivenItsOwnSentence:
         assert "מדגם קטן" in p
 
 
+class TestFillerSentenceStripping:
+    """ההנחיה בפרומפט לבדה לא הספיקה — בבדיקה חיה המודל כתב "מצב מורכב"
+    למרות שהביטוי אסור במפורש. הסינון כאן הוא שכבת האכיפה בצד השרת.
+    הוא שמרני בכוונה: משפט שנושא נתון קונקרטי לא נמחק גם אם ניסוחו רך."""
+
+    def test_removes_contentless_filler_sentence(self):
+        text = ("המניה עלתה 3.2% השבוע. התמונה הטכנית מציגה מצב מורכב. "
+                "מכפיל הרווח עומד על 35.")
+        out = api._strip_filler_sentences(text)
+        assert "מצב מורכב" not in out
+        assert "3.2%" in out
+        assert "35" in out
+
+    def test_keeps_filler_phrase_when_sentence_carries_a_number(self):
+        """עדיף ניסוח רך מאשר לאבד נתון — משפט עם מספר תמיד נשאר."""
+        text = ("המניה יציבה. מכפיל רווח של 35 מציג מצב מורכב. "
+                "הנפח גבוה פי 1.4.")
+        out = api._strip_filler_sentences(text)
+        assert "מכפיל רווח של 35" in out
+
+    def test_does_not_strip_when_too_few_sentences_remain(self):
+        """תשובה בת שני משפטים שאחד מהם מילוי — עדיף להשאיר כמות שהיא
+        מאשר להחזיר משפט בודד וקטוע."""
+        text = "יש לזכור את הסיכון. חשוב לציין את התנודתיות."
+        out = api._strip_filler_sentences(text)
+        assert out == text
+
+    def test_clean_text_is_returned_unchanged(self):
+        text = ("המניה עלתה 3.2% השבוע. מכפיל הרווח עומד על 35. "
+                "הנפח גבוה פי 1.4 מהממוצע.")
+        assert api._strip_filler_sentences(text) == text
+
+    def test_empty_and_none_are_safe(self):
+        assert api._strip_filler_sentences("") == ""
+        assert api._strip_filler_sentences(None) is None
+
+    def test_single_sentence_is_never_emptied(self):
+        text = "התמונה מציגה מצב מורכב."
+        assert api._strip_filler_sentences(text) == text
+
+    def test_every_banned_phrase_is_detected(self):
+        for phrase in api.BANNED_FILLER:
+            text = ("המניה עלתה 3.2% השבוע. הניתוח " + phrase + " כאן. "
+                    "מכפיל הרווח עומד על 35.")
+            out = api._strip_filler_sentences(text)
+            assert phrase not in out, "הביטוי לא סונן: " + phrase
+
+    def test_banned_list_and_system_prompt_cannot_drift(self):
+        """ההנחיה נבנית מאותה רשימה שהסינון משתמש בה — כך שהוספת ביטוי
+        אסור חדש מעדכנת אוטומטית גם את הבקשה למודל וגם את האכיפה."""
+        for phrase in api.BANNED_FILLER:
+            assert phrase in api.AI_SYSTEM
+
+    def test_ai_endpoint_applies_the_filter(self):
+        _clear_cache()
+        _clear_rate()
+        dirty = ("המניה עלתה 3.2% השבוע. התמונה מציגה מצב מורכב. "
+                 "מכפיל הרווח עומד על 35.")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"choices": [{"message": {"content": dirty}}]}
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r:
+            mock_r.post.return_value = mock_resp
+            r = client.post("/ai", json={"ticker": "FILTERTEST", "trend": "עולה"})
+        assert r.status_code == 200
+        assert "מצב מורכב" not in r.json().get("text", "")
+
+    def test_battle_endpoint_applies_the_filter_to_both_sides(self):
+        _clear_cache()
+        _clear_rate()
+        content = ("BULL:\nהמניה עלתה 3.2%. התמונה מציגה מצב מורכב. הנפח פי 1.4.\n"
+                   "BEAR:\nהמניה ירדה 2.1%. יש לזכור את הסיכון. המכפיל הוא 35.")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"choices": [{"message": {"content": content}}]}
+        with patch.object(api, "GROQ_KEY", "fake-key"), \
+             patch("stock_api.crequests") as mock_r:
+            mock_r.post.return_value = mock_resp
+            r = client.post("/ai/battle", json={"ticker": "FILTERBATTLE", "trend": "עולה"})
+        j = r.json()
+        assert "מצב מורכב" not in j.get("bull", "")
+        assert "יש לזכור" not in j.get("bear", "")
+        assert "3.2%" in j.get("bull", "")
+        assert "35" in j.get("bear", "")
+
+
 class TestRSIThresholdConsistency:
     """הבאג שנמצא בסריקה של הפרודקשן: הסורק סימן "RSI נמוך" מתחת ל-35 בעוד
     כרטיס המדד באפליקציה הציג "Neutral" עד 30 — אותה מניה, שני תיאורים
