@@ -8,7 +8,7 @@
 
 /* גרסה מוגדלת בכל שינוי במעטפת. הקובץ הראשי עבר מ-stocks.html ל-index.html,
    ובלי הגדלת הגרסה מתקינים קיימים היו נשארים עם המעטפת הישנה במטמון. */
-const VERSION      = 'v27';
+const VERSION      = 'v28';
 const SHELL_CACHE  = 'stockiq-shell-' + VERSION;
 const ASSET_CACHE  = 'stockiq-assets-' + VERSION;
 
