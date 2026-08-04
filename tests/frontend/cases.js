@@ -287,3 +287,73 @@ test('יחס סיכוי-סיכון מוצג בסדר שתואם לתווית ש�
   assert(!X.has("' · סיכוי/סיכון 1:'+t.rr"), 'נשאר הסדר ההפוך');
   assert(X.has("num(t.rr+':1')"), 'היחס אינו מוצג כ-rr:1');
 });
+
+/* ---------------------------------------------------------------- */
+group('assess — מיקום המחיר מול הממוצעים');
+
+const PRELUDE =
+  'const RSI_OVERSOLD=' + jsOversold + ', RSI_OVERBOUGHT=' + jsOverbought + ';\n' +
+  X.html.match(/const SECTOR_PE=\{[\s\S]*?\};/)[0] + '\n' +
+  X.html.match(/const SECTOR_PE_DEFAULT=\d+;/)[0];
+const A = X.load(['assess'], PRELUDE);
+// מחירים סביב ממוצעים של 100/98/95/90 כדי שכל תנאי יהיה חד-משמעי
+const HEALTHY = () => A.assess(110, 100, 98, 95, 90, 50, 20, 'Technology');
+const FALLEN  = () => A.assess(85,  100, 98, 95, 90, 50, 20, 'Technology');
+
+test('מניה מעל כל הממוצעים מקבלת ניקוד חיובי', () => {
+  const r = HEALTHY();
+  assert(r.rs.includes('המחיר מעל MA20'), 'חסר האיתות "המחיר מעל MA20"');
+  assert(r.rs.includes('MA9 מעל MA20'), 'ההצלבה לא נספרה');
+  assert(r.score >= 6, 'ציון ' + r.score + ' נמוך מדי למניה במגמה בריאה');
+});
+
+test('מחיר מתחת ל-MA20 גורע ניקוד', () => {
+  // זה הבאג שנצפה: AAPL ב-303.42 מול MA9 של 326.83 ו-MA20 של 323.91
+  // קיבלה "פוטנציאל קנייה" כי נבדק רק היחס בין הממוצעים זה לזה.
+  const r = FALLEN();
+  assert(r.rs.includes('המחיר מתחת MA20'), 'חסר האיתות "המחיר מתחת MA20"');
+  assert(r.score < HEALTHY().score, 'נפילה מתחת ל-MA20 לא הורידה את הציון');
+});
+
+test('הצלבה שהמחיר נטש אינה מזכה בניקוד', () => {
+  const r = FALLEN();
+  const stale = r.rs.some(x => x.startsWith('MA9 מעל MA20 —'));
+  assert(stale, 'ההצלבה הישנה לא סומנה כנטושה');
+  assert(!r.rs.includes('MA9 מעל MA20'), 'ההצלבה נספרה למרות שהמחיר מתחתיה');
+});
+
+test('הבאנר והאות לעולם אינם סותרים זה את זה', () => {
+  // שתי מערכות ניקוד נפרדות כבר גרמו פעם ל-"פוטנציאל קנייה" ליד האות C
+  [HEALTHY(), FALLEN(), A.assess(50, 100, 98, 95, 90, 75, 60, 'Technology')]
+    .forEach(r => {
+      const green = r.c === 'green';
+      assert(green === (r.l === 'פוטנציאל קנייה'), 'צבע ותווית לא תואמים');
+      assert(green === (r.grade === 'A' || r.grade === 'B'),
+        'באנר ירוק עם אות ' + r.grade);
+    });
+});
+
+test('מניה חלשה בכל פרמטר מקבלת D', () => {
+  const r = A.assess(50, 90, 100, 95, 120, 75, 60, 'Technology');
+  eq(r.grade, 'D', 'אות');
+  eq(r.l, 'זהירות — חולשה', 'תווית');
+});
+
+test('ממוצעים חסרים אינם מפילים את החישוב', () => {
+  const r = A.assess(110, null, null, null, null, null, null, null);
+  eq(r.score, 0, 'ציון בלי נתונים');
+  assert(r.rs.includes('RSI לא זמין'), 'חסר ציון ל-RSI חסר');
+});
+
+test('מגמה מעורבת אינה נספרת לאף צד בקרב ה-AI', () => {
+  // "עולה" ו-"יורד" הם המקרים החד-משמעיים. כשהממוצעים אומרים דבר אחד
+  // והמחיר אומר אחר, אין למי לתת את הנקודה — וזה עדיף על הכרעה שרירותית.
+  const S = X.load(['computeBattleScore'], PRELUDE);
+  const base = { rsiNum: 45, weekPos: 50, bullPct: 50, bearPct: 50 };
+  const mixed = S.computeBattleScore(
+    Object.assign({ trend: 'עולה, אך המחיר מתחת לשני הממוצעים הקצרים' }, base));
+  eq(mixed.bullPts, 0, 'נקודה שורית על מגמה מעורבת');
+  eq(mixed.bearPts, 0, 'נקודה דובית על מגמה מעורבת');
+  eq(S.computeBattleScore(Object.assign({ trend: 'עולה' }, base)).bullPts, 1, 'מגמה עולה');
+  eq(S.computeBattleScore(Object.assign({ trend: 'יורד' }, base)).bearPts, 1, 'מגמה יורדת');
+});
