@@ -2224,7 +2224,7 @@ async function openTwinFinder(){
   const labels=[];
   for(let k=0;k<total;k++){
     if(k===tw.windowLen-1)labels.push('היום');
-    else if(k<tw.windowLen-1)labels.push('-'+(tw.windowLen-1-k));
+    else if(k<tw.windowLen-1)labels.push(num('-'+(tw.windowLen-1-k)));
     else labels.push(num('+'+(k-tw.windowLen+1)));
   }
   const curData=tw.curPct.concat(new Array(tw.forwardLen).fill(null));
