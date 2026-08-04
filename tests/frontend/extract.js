@@ -58,9 +58,12 @@ function has(snippet) {
 }
 
 /* בונה סביבה מבודדת עם הפונקציות המבוקשות. */
-function load(names) {
+/* prelude: קבועים ברמת המודול שהפונקציה הנבדקת נשענת עליהם (ספי RSI, טבלת
+   מכפילי הסקטור). הם נשלפים מ-index.html עצמו ולא משוכפלים בקובץ הבדיקות,
+   כדי ששינוי בקובץ המקור יתגלה כאן ולא יתחבא מאחורי עותק ידני. */
+function load(names, prelude) {
   const src = names.map(extractFunction).join('\n');
-  const factory = new Function(src + '\nreturn {' + names.join(',') + '};');
+  const factory = new Function((prelude || '') + '\n' + src + '\nreturn {' + names.join(',') + '};');
   return factory();
 }
 
