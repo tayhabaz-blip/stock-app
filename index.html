@@ -1441,7 +1441,21 @@ function assess(price,m9,m20,m150,m200,rv,pe,sector){
   let s=0;const rs=[];
   if(m200){if(price>m200){s+=2;rs.push('מעל MA200');}else{s-=2;rs.push('מתחת MA200');}}
   if(m150){if(price>m150){s+=2;rs.push('מעל MA150');}else{s-=2;rs.push('מתחת MA150');}}
-  if(m9&&m20){if(m9>m20){s+=2;rs.push('MA9 מעל MA20');}else{s-=2;rs.push('MA9 מתחת MA20');}}
+  // ── מיקום המחיר מול הממוצע הקצר. בלי זה נבדק רק היחס בין שני הממוצעים
+  // זה לזה, ומניה שנפלה 10% ביומיים וירדה מתחת לשניהם עדיין קיבלה ניקוד
+  // חיובי מלא. נצפה בפועל ב-AAPL: מחיר 303.42 מול MA9 של 326.83 ו-MA20
+  // של 323.91 — והבאנר הכריז "פוטנציאל קנייה". ──
+  if(m20){if(price>m20){s+=2;rs.push('המחיר מעל MA20');}else{s-=2;rs.push('המחיר מתחת MA20');}}
+  if(m9&&m20){
+    // ── הצלבת ממוצעים היא אינדיקטור מפגר. כשהמחיר כבר מתחת לשניהם
+    // ההצלבה היא שריד מהמהלך הקודם ולא איתות, ולכן היא לא מזכה בניקוד —
+    // אבל היא נשארת בתצוגה, כדי שיהיה גלוי למה היא לא נספרה. ──
+    const stale=price<m9&&price<m20;
+    if(m9>m20){
+      if(stale)rs.push('MA9 מעל MA20 — הצלבה שהמחיר כבר נטש');
+      else{s+=2;rs.push('MA9 מעל MA20');}
+    }else{s-=2;rs.push('MA9 מתחת MA20');}
+  }
   // שימו לב ל-!= ולא ל-!== : כשאין מספיק ימי מסחר הערך הוא undefined,
   // והשוואה קשיחה ל-null הייתה מכניסה אותנו לענף ומדפיסה "RSI (undefined)"
   if(rv!=null&&!isNaN(rv)){
@@ -1460,13 +1474,16 @@ function assess(price,m9,m20,m150,m200,rv,pe,sector){
     else{s-=2;rs.push('מכפיל גבוה משמעותית מהסקטור');}
   }
   let grade,color,label;
-  if(s>=8){grade='A';color='var(--up)';label='חזק מאוד';}
-  else if(s>=5){grade='B';color='var(--lime)';label='חיובי';}
+  // ── הספים הועלו יחד עם הוספת בדיקת המחיר מול MA20: הניקוד המרבי גדל
+  // מ-11 ל-13, ובלי ההתאמה כל מניה במגמה בריאה הייתה מקבלת אות גבוהה
+  // יותר מקודם בלי שדבר במניה השתנה. היחס לסולם נשמר. ──
+  if(s>=9){grade='A';color='var(--up)';label='חזק מאוד';}
+  else if(s>=6){grade='B';color='var(--lime)';label='חיובי';}
   else if(s>=2){grade='C';color='var(--warn)';label='ניטרלי';}
   else{grade='D';color='var(--dn)';label='חלש';}
   // הבאנר נגזר מאותו ציון בדיוק, ולכן לא יכול לסתור את האות
-  const c=s>=5?'green':s>=2?'yellow':'red';
-  const l=s>=5?'פוטנציאל קנייה':s>=2?'תמונה מעורבת':'זהירות — חולשה';
+  const c=s>=6?'green':s>=2?'yellow':'red';
+  const l=s>=6?'פוטנציאל קנייה':s>=2?'תמונה מעורבת':'זהירות — חולשה';
   return{score:s,grade,color,label,c,l,rs};
 }
 function calcFV(eps,pe,price,growth,growthSource){
@@ -1609,7 +1626,16 @@ async function getAI(data){
   }
   const rr=(targets.length&&targets[0].rr!=null)?targets[0].rr:null;
 
-  const trend=m9&&m20&&parseFloat(m9)>parseFloat(m20)?'עולה':'יורד';
+  // ── המגמה שנמסרת ל-AI. קודם היא נגזרה אך ורק מהיחס בין שני הממוצעים,
+  // ולכן המודל כתב "המגמה הטכנית של המניה עולה" על מניה שירדה 9.9% בחמישה
+  // ימים ונסחרה מתחת לשני הממוצעים הקצרים. מיקום המחיר הוא חלק מהעובדה. ──
+  const _p=parseFloat(price),_m9=parseFloat(m9),_m20=parseFloat(m20);
+  const _cross=m9&&m20&&_m9>_m20;
+  const _above=m9&&m20&&_p>_m9&&_p>_m20;
+  const _below=m9&&m20&&_p<_m9&&_p<_m20;
+  const trend=_cross
+    ?(_below?'עולה, אך המחיר מתחת לשני הממוצעים הקצרים':'עולה')
+    :(_above?'יורד, אך המחיר מעל שני הממוצעים הקצרים':'יורד');
   const rsiTxt=rsiVal<RSI_OVERSOLD?'נמוך — אזור קנייה':rsiVal>RSI_OVERBOUGHT?'גבוה — אזור מכירה':'נייטרלי';
 
   const ltCtx=window.__ltContext||null;
