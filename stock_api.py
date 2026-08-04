@@ -861,6 +861,10 @@ AI_SYSTEM = "\n".join([
     "- בסס כל משפט על נתון קונקרטי שקיבלת, והזכר לפחות שלושה נתונים שונים.",
     "- תיאור מצב ה-RSI ניתן לך מוכן ומחושב. אל תסווג אותו מחדש ואל תסתור אותו:",
     "  אם נכתב 'נייטרלי' אסור לך לכתוב שהמניה במכירת יתר או בקניית יתר.",
+    "  כך זה נראה כשטועים, ונצפה אצלך בפועל: קיבלת 'RSI: 32 — נייטרלי, בחלק התחתון",
+    "  של הטווח' וכתבת 'RSI של 32 מצביע על מכירת יתר'. זו סתירה לסף 30, והאפליקציה",
+    "  מציגה למשתמש באותו מסך בדיוק את הסיווג הנכון. הניסוח הנכון: 'RSI של 32,",
+    "  נייטרלי בתחתית הטווח'.",
     "- אסורים לחלוטין ביטויי המילוי: " + ", ".join("'" + p + "'" for p in BANNED_FILLER) + ".",
     "- טקסט רץ בלבד: בלי כותרות, בלי כוכביות, בלי Markdown, בלי רשימות.",
     "",
@@ -918,6 +922,14 @@ def _groq_payload(prompt: str, max_tokens: int) -> dict:
 RATE_LIMITED = object()
 
 
+# -- מודל גיבוי. מכסות Groq נספרות בנפרד לכל מודל, ולכן חריגה במודל אחד
+# אינה אומרת דבר על השני. נצפה בפועל בפרודקשן: שתי בקשות ניתוח רצופות —
+# הראשונה הצליחה והשנייה חזרה 429, כלומר משתמש שבודק שלוש מניות ברצף קיבל
+# "ה-AI אינו זמין" בשתיים מהן. במקום להשאיר מסך ריק, פנייה מיידית למודל
+# משני עם מכסה נפרדת משלו. --
+AI_FALLBACK_MODEL = "openai/gpt-oss-20b"
+
+
 def _call_groq(payload: dict, first_timeout: int = 12, retry_timeout: int = 8):
     for attempt, timeout in enumerate((first_timeout, retry_timeout)):
         try:
@@ -956,6 +968,22 @@ def _call_groq(payload: dict, first_timeout: int = 12, retry_timeout: int = 8):
             log.warning("groq response was not valid JSON (attempt %s)", attempt + 1)
             return None
     return None
+
+
+# -- קריאה עם נפילה למודל גיבוי. רק חריגת מכסה מפעילה את הגיבוי: כשל רשת או
+# 5xx כבר טופלו בניסיון החוזר של _call_groq, ואין סיבה להניח שמודל אחר
+# יעזור שם. אם גם הגיבוי חורג מהמכסה מוחזר RATE_LIMITED כרגיל, כך
+# שההודעה למשתמש נשארת מדויקת ולא הופכת ל"תקלה זמנית". --
+def _call_groq_with_fallback(payload: dict):
+    d = _call_groq(payload)
+    if d is not RATE_LIMITED:
+        return d
+    if not AI_FALLBACK_MODEL or payload.get("model") == AI_FALLBACK_MODEL:
+        return RATE_LIMITED
+    log.warning("primary model %s rate limited - trying %s", payload.get("model"), AI_FALLBACK_MODEL)
+    fallback = dict(payload)
+    fallback["model"] = AI_FALLBACK_MODEL
+    return _call_groq(fallback)
 
 
 # ── שולפת מגוף הבקשה את התמונה הטכנית ובונה ממנה רשימת "עובדות" למודל,
@@ -1237,7 +1265,7 @@ async def ai_analysis(req: Request):
         "גם התרחיש השלילי הוא תיאור טכני של מה שקורה למחיר, לא הנחיה לפעולה."
     )
     try:
-        d = _call_groq(_groq_payload(prompt, 600))
+        d = _call_groq_with_fallback(_groq_payload(prompt, 600))
         if d is RATE_LIMITED:
             return {"text": "", "reason": "rate_limited"}
         if not d or "choices" not in d or not d["choices"]:
@@ -1247,6 +1275,7 @@ async def ai_analysis(req: Request):
         if not text:
             return {"text": "", "reason": "transient"}
         text = _normalize_hebrew_typography(_strip_filler_sentences(text))
+        text = _enforce_rsi_state(text, body.get("rsiNum"))
         return cache_set(ai_key, {"text": text})
     except Exception:
         log.exception("ai_analysis failed for %s", ticker)
@@ -1272,6 +1301,34 @@ def _normalize_hebrew_typography(text: str) -> str:
     text = text.replace("\u2011", "-").replace("\u2010", "-")
     text = re.sub(r"(\d)\s+%", r"\1%", text)
     return text
+
+
+# -- אכיפת סיווג ה-RSI. מצב ה-RSI מחושב בשרת ונמסר למודל כעובדה מוכנה,
+# וההנחיות אוסרות עליו במפורש לסווג מחדש. זה לא הספיק: בבדיקת הבריאות של
+# הפרודקשן (ריצה #3) המודל כתב "מכירת יתר" על RSI 32, כלומר סתר את הסף 30
+# שהאפליקציה עצמה מציגה למשתמש באותו מסך. אותו הגיון של סינון ביטויי
+# המילוי — משפט שסותר עובדה מחושבת מוסר, בתנאי שנשארים לפחות שני משפטים,
+# כי תשובה קטועה גרועה יותר ממשפט אחד לא מדויק. --
+RSI_STATE_TERMS = ("מכירת יתר", "קניית יתר")
+
+
+def _enforce_rsi_state(text: str, rsi_num) -> str:
+    if not text or not isinstance(rsi_num, (int, float)) or isinstance(rsi_num, bool):
+        return text
+    if rsi_num < RSI_OVERSOLD:
+        wrong = ("קניית יתר",)
+    elif rsi_num > RSI_OVERBOUGHT:
+        wrong = ("מכירת יתר",)
+    else:
+        wrong = RSI_STATE_TERMS
+    if not any(w in text for w in wrong):
+        return text
+    parts = [p for p in re.split(r"(?<=[.!?])\s+", text.strip()) if p.strip()]
+    kept = [s for s in parts if not any(w in s for w in wrong)]
+    if len(kept) < 2 or len(kept) == len(parts):
+        return text
+    log.warning("removed %s sentence(s) contradicting RSI %s", len(parts) - len(kept), rsi_num)
+    return " ".join(kept).strip()
 
 
 def _strip_filler_sentences(text: str) -> str:
@@ -1349,7 +1406,7 @@ async def ai_battle(req: Request):
         "כתוב טקסט רגיל בלבד — בלי כוכביות, בלי הדגשות Markdown ובלי כותרות משנה."
     )
     try:
-        d = _call_groq(_groq_payload(prompt, 900))
+        d = _call_groq_with_fallback(_groq_payload(prompt, 900))
         if d is RATE_LIMITED:
             return {"bull": "", "bear": "", "reason": "rate_limited"}
         if not d or "choices" not in d or not d["choices"]:
@@ -1361,6 +1418,10 @@ async def ai_battle(req: Request):
             return {"bull": "", "bear": "", "reason": "transient"}
         bull = _normalize_hebrew_typography(_strip_filler_sentences(bull))
         bear = _normalize_hebrew_typography(_strip_filler_sentences(bear))
+        # אותה אכיפה בדיוק כמו ב-/ai: קרב ה-AI רואה את אותן עובדות ולכן
+        # חייב לציית לאותו סף RSI שהמשתמש רואה על המסך.
+        bull = _enforce_rsi_state(bull, body.get("rsiNum"))
+        bear = _enforce_rsi_state(bear, body.get("rsiNum"))
         return cache_set(battle_key, {"bull": bull, "bear": bear})
     except Exception:
         log.exception("ai_battle failed for %s", ticker)
