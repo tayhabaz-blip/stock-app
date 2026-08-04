@@ -139,10 +139,24 @@ async function checkSite() {
     const r = await fetch(SITE + '/index.html?healthcheck=' + Date.now(), { cache: 'no-store' });
     if (!r.ok) { fail('אתר', 'index.html החזיר ' + r.status); return; }
     const html = await r.text();
-    const markers = ['structureBox', 'mergedSupports', 'rate_limited', 'RSI_OVERSOLD', 'twinStats'];
+    const markers = ['structureBox', 'mergedSupports', 'rate_limited', 'RSI_OVERSOLD', 'twinStats',
+      'function num(', 'function seg('];
     const missing = markers.filter(m => !html.includes(m));
     if (missing.length) fail('אתר', 'הגרסה המוגשת חסרה: ' + missing.join(', '));
     else ok('האתר מגיש את הגרסה הנוכחית');
+
+    // ── בידוד דו-כיווני. הבאג שנצפה על המסך: "+9.08%" הוצג כ-"9.08%+",
+    // ורשימת האיתותים "MA9 מעל MA20 · RSI ניטרלי" הוצגה כ-"מעל MA9 · MA20"
+    // — כלומר ההפך מהמצב בפועל. שתי השגיאות נובעות מאותו מקור, ולכן
+    // נבדק כאן שהעטיפות לא הוסרו בטעות בעדכון עתידי. ──
+    const bidi = [
+      ["esc(sg.rs.map(seg).join(' · '))", 'שורת האיתותים ללא בידוד'],
+      ["num('+'+t.pct+'%')", 'אחוז היעד ללא בידוד'],
+      ["num(t.rr+':1')", 'יחס סיכוי-סיכון ללא בידוד'],
+    ];
+    const lost = bidi.filter(([snip]) => !html.includes(snip)).map(([, why]) => why);
+    if (lost.length) fail('אתר', 'רגרסיית תצוגה: ' + lost.join(', '));
+    else ok('בידוד דו-כיווני במקומו');
 
     const m = html.match(/const RSI_OVERSOLD=(\d+), RSI_OVERBOUGHT=(\d+)/);
     if (!m) fail('אתר', 'ספי RSI לא נמצאו');
