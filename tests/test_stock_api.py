@@ -2939,3 +2939,114 @@ class TestQuotesEndpoint:
             mock_yf.download.return_value = self._bulk(["AAPL"])
             codes = [client.get("/quotes?tickers=T%d" % i).status_code for i in range(40)]
         assert 429 in codes
+
+
+# ── אכיפת סיווג ה-RSI על תשובת המודל.
+#
+# הרקע: בדיקת הבריאות של הפרודקשן (ריצה #3) נכשלה על "RSI 32 סווג בטעות
+# כמכירת יתר". השרת כבר מסר למודל את הסיווג המחושב ("32 — נייטרלי"),
+# וההנחיות אסרו עליו לסתור אותו — וזה עדיין קרה. בקשה יפה אינה אכיפה. ──
+class TestRSIStateEnforcement:
+    NEUTRAL = ("המניה נסחרת מעל ממוצע 200. RSI של 32 מצביע על מכירת יתר. "
+               "מכפיל הרווח עומד על 34 ומגלם ציפיות גבוהות.")
+
+    def test_removes_oversold_claim_when_rsi_is_neutral(self):
+        out = api._enforce_rsi_state(self.NEUTRAL, 32)
+        assert "מכירת יתר" not in out
+        assert "ממוצע 200" in out and "מכפיל הרווח" in out
+
+    def test_keeps_oversold_claim_when_rsi_really_is_oversold(self):
+        out = api._enforce_rsi_state(self.NEUTRAL, 27)
+        assert out == self.NEUTRAL
+
+    def test_removes_overbought_claim_when_rsi_is_neutral(self):
+        t = ("הנפח גבוה פי 2 מהממוצע. RSI של 58 מצביע על קניית יתר. "
+             "המחיר במרחק 4% מההתנגדות.")
+        assert "קניית יתר" not in api._enforce_rsi_state(t, 58)
+
+    def test_keeps_overbought_claim_when_rsi_really_is_overbought(self):
+        t = ("הנפח גבוה פי 2 מהממוצע. RSI של 74 מצביע על קניית יתר. "
+             "המחיר במרחק 4% מההתנגדות.")
+        assert api._enforce_rsi_state(t, 74) == t
+
+    def test_oversold_rsi_may_not_be_called_overbought(self):
+        t = ("המניה ירדה 12% בחודש. RSI של 22 מצביע על קניית יתר. "
+             "הנפח דל מהרגיל.")
+        assert "קניית יתר" not in api._enforce_rsi_state(t, 22)
+
+    def test_single_sentence_answer_is_never_gutted(self):
+        # תשובה בת משפט אחד שנמחק היא מסך ריק — גרוע יותר ממשפט לא מדויק
+        t = "RSI של 32 מצביע על מכירת יתר."
+        assert api._enforce_rsi_state(t, 32) == t
+
+    def test_boundary_values_follow_the_displayed_thresholds(self):
+        # בדיוק על הסף: 30 ו-70 אינם מכירת/קניית יתר לפי מה שהאפליקציה מציגה
+        t = "המחיר מעל ממוצע 200. RSI של 30 מצביע על מכירת יתר. הנפח ממוצע."
+        assert "מכירת יתר" not in api._enforce_rsi_state(t, api.RSI_OVERSOLD)
+
+    def test_missing_or_bad_rsi_leaves_text_untouched(self):
+        for bad in (None, "32", True):
+            assert api._enforce_rsi_state(self.NEUTRAL, bad) == self.NEUTRAL
+
+    def test_empty_text_is_safe(self):
+        assert api._enforce_rsi_state("", 32) == ""
+
+
+# ── נפילה למודל גיבוי כשהמכסה של המודל הראשי מוצתה.
+#
+# מכסות Groq נספרות בנפרד לכל מודל. נמדד בפרודקשן: מתוך שש בקשות ניתוח
+# רצופות רק שתיים הצליחו — משתמש שבודק כמה מניות ברצף קיבל מסך ריק ברוב
+# המקרים. ──
+class TestGroqFallback:
+    def _payload(self):
+        return {"model": api.AI_MODEL, "messages": []}
+
+    def test_falls_back_to_the_secondary_model_on_quota(self):
+        seen = []
+
+        def fake(payload, *a, **k):
+            seen.append(payload["model"])
+            return api.RATE_LIMITED if len(seen) == 1 else {"choices": [1]}
+
+        with patch("stock_api._call_groq", side_effect=fake):
+            out = api._call_groq_with_fallback(self._payload())
+        assert seen == [api.AI_MODEL, api.AI_FALLBACK_MODEL]
+        assert out == {"choices": [1]}
+
+    def test_successful_primary_never_touches_the_fallback(self):
+        seen = []
+
+        def fake(payload, *a, **k):
+            seen.append(payload["model"])
+            return {"choices": [1]}
+
+        with patch("stock_api._call_groq", side_effect=fake):
+            api._call_groq_with_fallback(self._payload())
+        assert seen == [api.AI_MODEL]
+
+    def test_transient_failure_does_not_trigger_the_fallback(self):
+        # כשל רשת או 5xx כבר קיבלו ניסיון חוזר; מודל אחר לא יעזור שם
+        seen = []
+
+        def fake(payload, *a, **k):
+            seen.append(payload["model"])
+            return None
+
+        with patch("stock_api._call_groq", side_effect=fake):
+            assert api._call_groq_with_fallback(self._payload()) is None
+        assert seen == [api.AI_MODEL]
+
+    def test_both_models_exhausted_still_reports_rate_limited(self):
+        # ההודעה למשתמש חייבת להישאר "המכסה מוצתה" ולא "תקלה זמנית"
+        with patch("stock_api._call_groq", return_value=api.RATE_LIMITED):
+            out = api._call_groq_with_fallback(self._payload())
+        assert out is api.RATE_LIMITED
+
+    def test_the_two_models_are_actually_different(self):
+        assert api.AI_FALLBACK_MODEL != api.AI_MODEL
+
+    def test_the_original_payload_is_not_mutated(self):
+        p = self._payload()
+        with patch("stock_api._call_groq", return_value=api.RATE_LIMITED):
+            api._call_groq_with_fallback(p)
+        assert p["model"] == api.AI_MODEL
