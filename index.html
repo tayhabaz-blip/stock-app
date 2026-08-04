@@ -813,6 +813,20 @@ function esc(s){
   if(s==null)return'';
   return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+// ── בידוד דו-כיווני (bidi). האפליקציה כולה RTL, ולכן ערך שמורכב רק מספרות
+// וסימנים ניטרליים ("+9.08%", "$300.26–$337.30", "0.9:1") מסודר מחדש על ידי
+// אלגוריתם ה-bidi ומוצג הפוך. נצפה בפועל על המסך: "9.08%+" במקום "+9.08%",
+// וטווח תרחישים שהוצג כ-"$337.30–$300.26" — גבוה לפני נמוך.
+//   num()  — כופה כיוון שמאל-לימין על ערך מספרי בודד.
+//   seg()  — כופה כיוון ימין-לשמאל על פריט טקסט מעורב עברית+לטינית, כדי
+//            שהפריט לא יתמזג עם המפריד או עם הפריט הבא. בלעדיו הרצף
+//            "MA9 מעל MA20 · RSI ניטרלי" הוצג כ-"מעל MA9 · MA20 · RSI" —
+//            כלומר המשתמש קרא "מעל MA9" בזמן שהמחיר היה הרבה מתחת ל-MA9.
+// התווים הם U+2066/U+2067 (בידוד) ו-U+2069 (סיום). הם בלתי נראים, אינם
+// משפיעים על חיפוש טקסט, ועוברים בשלום דרך esc() כי אינם תווי HTML. ──
+function num(v){return v==null||v===''?v:'⁦'+v+'⁩';}
+function seg(v){return v==null||v===''?v:'⁧'+v+'⁩';}
+
 // ── הודעת כשל ידידותית ל-AI, במקום מסך ריק שקט. הבקאנד מחזיר "reason"
 // (budget/transient/unavailable) בכל תשובה ריקה, וב-429 מחזיר "error" עם
 // משפט עברי מוכן — פשוט מציגים אותו כמו שהוא. ──
@@ -1067,7 +1081,7 @@ async function loadWLQuotes(list){
       if(!d){price.textContent='—';price.classList.add('wl-muted');return;}
       const up=d.pct>=0;
       price.textContent='$'+Number(d.price).toFixed(2);
-      chg.textContent=(up?'▲ +':'▼ ')+d.pct+'%';
+      chg.textContent=num((up?'▲ +':'▼ ')+d.pct+'%');
       chg.className='wl-chg '+(up?'up':'down');
       if(spark)spark.innerHTML=sparkSvg(d.spark,_indicesTint||cssVar('--alt'));
     });
@@ -1161,7 +1175,7 @@ function renderCompare(a,b){
     const pr=document.createElement('div');pr.className='cmp-price';pr.textContent=p!=null?'$'+p.toFixed(2):'—';
     const ch=document.createElement('div');
     ch.className='cmp-chg '+(dy!=null&&dy>=0?'up':'down');
-    ch.textContent=dy!=null?((dy>=0?'▲ +':'▼ ')+dy.toFixed(2)+'%'):'—';
+    ch.textContent=dy!=null?num((dy>=0?'▲ +':'▼ ')+dy.toFixed(2)+'%'):'—';
     c.append(t,n,pr,ch);head.append(c);
   });
   box.append(head);
@@ -1171,7 +1185,7 @@ function renderCompare(a,b){
     ['שווי שוק',      a.market_cap, b.market_cap, v=>fmt(v),                       null],
     ['מכפיל P/E',     a.pe_ratio,   b.pe_ratio,   v=>v!=null?v.toFixed(1):'—',     'low'],
     ['צמיחה',         grA,          grB,          v=>v!=null?(v*100).toFixed(1)+'%':'—','high'],
-    ['תשואת שנה',     yrA,          yrB,          v=>v!=null?(v>=0?'+':'')+v.toFixed(1)+'%':'—','high'],
+    ['תשואת שנה',     yrA,          yrB,          v=>v!=null?num((v>=0?'+':'')+v.toFixed(1)+'%'):'—','high'],
     ['RSI (14)',      rsiA,         rsiB,         v=>v!=null?v.toFixed(1):'—',     null],
     ['דיבידנד',       a.dividend_pct,b.dividend_pct,v=>v!=null?v.toFixed(2)+'%':'—','high'],
     ['סקטור',         a.sector,     b.sector,     v=>v||'—',                       null]
@@ -1305,7 +1319,7 @@ async function runScan(scope){
       card.innerHTML=
         '<div class="scan-ticker"><span class="scan-grade" style="background:'+gr.c+'22;border:1.5px solid '+gr.c+';color:'+gr.c+'">'+esc(gr.g)+'</span>'+esc(r.ticker)+
         (r.overbought?'<span class="overbought-badge">⚠️ מתוחה</span>':'')+'</div>'+
-        '<div class="scan-rsi">RSI: '+esc(r.rsi)+' · $'+esc(r.price)+'</div>'+
+        '<div class="scan-rsi">'+num('RSI: '+esc(r.rsi)+' · $'+esc(r.price))+'</div>'+
         sparkSvg(r.spark)+
         '<div class="scan-signals">'+(r.signals||[]).map(s=>'<span class="sig '+(String(s).includes('נמוך')?'sig-green':String(s).includes('גבוה')?'sig-red':'sig-blue')+'">'+esc(s)+'</span>').join('')+'</div>';
       if(validTicker(r.ticker))card.addEventListener('click',()=>loadScan(r.ticker));
@@ -1707,18 +1721,18 @@ async function getAI(data){
   let out='מגמה: '+(trendText||trend)+'\n';
   if(!trendText)out+=aiFailureText(aiFailInfo)+'\n';
   out+='\n';
-  out+='כניסה: $'+entry+(openField?' (מחיר נוכחי)':' (מעל הפריצה $'+breakLevel+')')+'\n';
-  out+='סטופ: $'+stop+(riskPct!=null?' (סיכון '+riskPct+'%)':'')+(stopCapped?' — נחסם ב-12%, התמיכה הקרובה רחוקה מדי':'')+'\n';
+  out+='כניסה: '+num('$'+entry)+(openField?' (מחיר נוכחי)':' (מעל הפריצה '+num('$'+breakLevel)+')')+'\n';
+  out+='סטופ: '+num('$'+stop)+(riskPct!=null?' (סיכון '+num(riskPct+'%')+')':'')+(stopCapped?' — נחסם ב-12%, התמיכה הקרובה רחוקה מדי':'')+'\n';
   if(distToBreakPct!==null){
-    out+='מרחק לפריצה: '+(distToBreakPct<=0?'הגיע':distToBreakPct+'%')+'\n';
+    out+='מרחק לפריצה: '+(distToBreakPct<=0?'הגיע':num(distToBreakPct+'%'))+'\n';
   }
   if(targets.length){
     out+='\nיעדים (אחוז ממחיר הכניסה, וסיכוי מול סיכון לכל יעד):\n';
     targets.forEach((t,i)=>{
-      out+='יעד '+(i+1)+' ('+t.str+'): $'+t.p+' · +'+t.pct+'%'+(t.rr!=null?' · סיכוי/סיכון 1:'+t.rr:'')+'\n';
+      out+='יעד '+(i+1)+' ('+t.str+'): '+num('$'+t.p)+' · '+num('+'+t.pct+'%')+(t.rr!=null?' · סיכוי מול סיכון '+num(t.rr+':1'):'')+'\n';
     });
     if(maxPot!==null&&maxPot>=15){
-      out+='\n🚀 פוטנציאל פריצה גדול: עד +'+maxPot+'%\n';
+      out+='\n🚀 פוטנציאל פריצה גדול: עד '+num('+'+maxPot+'%')+'\n';
     }
   }else{
     out+='יעד: '+headline+'\n';
@@ -1737,7 +1751,7 @@ async function getSentiment(ticker){
       '<div class="sentiment-header"><div class="sentiment-title">🐂 שורים / 🐻 דובים</div><div class="sentiment-analysts">'+total+' אנליסטים</div></div>'+
       '<div class="sentiment-bar-wrap"><div class="sentiment-bar-bull" style="width:'+bull+'%">'+(bull>10?bull+'%':'')+'</div><div class="sentiment-bar-neutral" style="width:'+neutral+'%">'+(neutral>10?neutral+'%':'')+'</div><div class="sentiment-bar-bear" style="width:'+bear+'%">'+(bear>10?bear+'%':'')+'</div></div>'+
       '<div class="sentiment-labels"><span class="sentiment-label-bull">🐂 '+bull+'% שורים</span><span class="sentiment-label-neutral">Hold '+neutral+'%</span><span class="sentiment-label-bear">'+bear+'% דובים 🐻</span></div>'+
-      '<div class="sentiment-votes"><span class="vote-chip">💪 Strong Buy: '+(d.votes?.strong_buy||0)+'</span><span class="vote-chip">✅ Buy: '+(d.votes?.buy||0)+'</span><span class="vote-chip">⏸ Hold: '+(d.votes?.hold||0)+'</span><span class="vote-chip">⚠️ Sell: '+(d.votes?.sell||0)+'</span><span class="vote-chip">🚨 Strong Sell: '+(d.votes?.strong_sell||0)+'</span></div>'+
+      '<div class="sentiment-votes"><span class="vote-chip">💪 Strong Buy: '+(d.votes?.strong_buy||0)+'</span><span class="vote-chip">✅ Buy: '+(d.votes?.buy||0)+'</span><span class="vote-chip">⏸️ Hold: '+(d.votes?.hold||0)+'</span><span class="vote-chip">⚠️ Sell: '+(d.votes?.sell||0)+'</span><span class="vote-chip">🚨 Strong Sell: '+(d.votes?.strong_sell||0)+'</span></div>'+
       (d.short_pct_float?'<div class="short-row"><span class="short-label">אחוז שורט</span><span class="short-val">'+d.short_pct_float+'%</span></div>':'');
     return d;
   }catch(e){document.getElementById('sentCard').style.display='none';return null;}
@@ -2067,7 +2081,7 @@ async function openMonteCarlo(){
 
   function render(nDays){
     const cut=arr=>arr.slice(0,nDays+1);
-    const labels=cut(mc.days).map(dd=>dd===0?'היום':'+'+dd);
+    const labels=cut(mc.days).map(dd=>dd===0?'היום':num('+'+dd));
     const gc=cssVar('--line'),tc=cssVar('--txt3'),accent=cssVar('--accent');
     if(mcChart)mcChart.destroy();
     mcChart=new Chart(document.getElementById('mcCanvas'),{
@@ -2091,7 +2105,7 @@ async function openMonteCarlo(){
     const lo10=mc.p10[nDays],hi90=mc.p90[nDays],lo25=mc.p25[nDays],hi75=mc.p75[nDays],med=mc.p50[nDays];
     document.getElementById('mcSummary').innerHTML=
       'ב-80% מהתרחישים, בעוד '+nDays+' ימי מסחר המחיר צפוי להיות בין <b>$'+lo10.toFixed(2)+'</b> ל-<b>$'+hi90.toFixed(2)+'</b>'+
-      '<br>חציון התרחישים: <b style="color:var(--accent)">$'+med.toFixed(2)+'</b> · טווח מצומצם (50% מהתרחישים): $'+lo25.toFixed(2)+'–$'+hi75.toFixed(2);
+      '<br>חציון התרחישים: <b style="color:var(--accent)">$'+med.toFixed(2)+'</b> · טווח מצומצם (50% מהתרחישים): '+num('$'+lo25.toFixed(2)+'–$'+hi75.toFixed(2));
   }
   render(30);
   document.getElementById('mcRange').addEventListener('click',e=>{
@@ -2178,8 +2192,8 @@ async function openTwinFinder(){
   const listHtml=tw.top.map((c,i)=>{
     const up=c.fwdReturn>=0;
     return '<div class="twin-row"><div class="twin-row-label"><span class="twin-row-dot" style="background:'+cssVar(twinColorVars[i]||'--alt')+'"></span>'+
-      esc(c.startLabel)+' – '+esc(c.endLabel)+'</div>'+
-      '<div class="twin-row-ret" style="color:'+(up?'var(--up)':'var(--dn)')+'">'+(up?'+':'')+c.fwdReturn.toFixed(1)+'%</div></div>';
+      num(esc(c.startLabel)+' – '+esc(c.endLabel))+'</div>'+
+      '<div class="twin-row-ret" style="color:'+(up?'var(--up)':'var(--dn)')+'">'+num((up?'+':'')+c.fwdReturn.toFixed(1)+'%')+'</div></div>';
   }).join('');
 
   overlay.innerHTML=
@@ -2189,7 +2203,7 @@ async function openTwinFinder(){
       '<div class="twin-intro">מצאנו את '+tw.top.length+' התקופות (מתוך '+tw.totalCandidates+' שנבדקו בהיסטוריה של '+esc(tkr)+') שבהן תבנית המחיר הכי דמתה ל-'+tw.windowLen+' ימי המסחר האחרונים. הקו המודגש הוא התבנית של היום; הקווים הצבעוניים ממשיכים אל מה שקרה בפועל אחריה.</div>'+
       '<div style="position:relative;height:240px"><canvas id="twinCanvas"></canvas></div>'+
       '<div class="mc-summary">תשואה ממוצעת קדימה ('+tw.forwardLen+' ימי מסחר): '+
-        '<b style="color:'+(tw.avgFwd>=0?'var(--up)':'var(--dn)')+'">'+(tw.avgFwd>=0?'+':'')+tw.avgFwd.toFixed(1)+'%</b>'+
+        '<b style="color:'+(tw.avgFwd>=0?'var(--up)':'var(--dn)')+'">'+num((tw.avgFwd>=0?'+':'')+tw.avgFwd.toFixed(1)+'%')+'</b>'+
         ' · אחוז ניצחון: <b>'+tw.winRate+'%</b></div>'+
       '<div class="twin-list">'+listHtml+'</div>'+
       '<div class="dna-hint">⚠️ זו התאמת תבנית סטטיסטית בתוך ההיסטוריה של המניה עצמה — דמיון בעבר אינו ערובה שהעתיד יחזור על עצמו. אינה תחזית, המלצה או ייעוץ השקעות.</div>'+
@@ -2211,7 +2225,7 @@ async function openTwinFinder(){
   for(let k=0;k<total;k++){
     if(k===tw.windowLen-1)labels.push('היום');
     else if(k<tw.windowLen-1)labels.push('-'+(tw.windowLen-1-k));
-    else labels.push('+'+(k-tw.windowLen+1));
+    else labels.push(num('+'+(k-tw.windowLen+1)));
   }
   const curData=tw.curPct.concat(new Array(tw.forwardLen).fill(null));
   const gc=cssVar('--line'),tc=cssVar('--txt3');
@@ -2228,10 +2242,10 @@ async function openTwinFinder(){
     options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
       plugins:{legend:{display:false},tooltip:{backgroundColor:cssVar('--raised'),titleColor:cssVar('--strong'),
         bodyColor:cssVar('--txt2'),borderColor:cssVar('--line2'),borderWidth:1,padding:10,cornerRadius:10,
-        callbacks:{label:c=>(c.parsed.y>=0?'+':'')+c.parsed.y.toFixed(1)+'%'}}},
+        callbacks:{label:c=>num((c.parsed.y>=0?'+':'')+c.parsed.y.toFixed(1)+'%')}}},
       scales:{
         x:{ticks:{color:tc,maxTicksLimit:8,font:{size:10}},grid:{color:gc}},
-        y:{ticks:{color:tc,font:{size:11},callback:v=>(v>=0?'+':'')+v+'%'},grid:{color:gc}}
+        y:{ticks:{color:tc,font:{size:11},callback:v=>num((v>=0?'+':'')+v+'%')},grid:{color:gc}}
       }}
   });
 }
@@ -2341,11 +2355,11 @@ async function openTimeMachine(){
         '<input type="range" id="tmSlider" class="tm-slider" min="0" max="'+maxIdx+'" step="1" value="'+curIdx+'">'+
       '</div>'+
       '<div class="tm-hero"><div class="tm-hero-value" style="color:'+(up?'var(--up)':'var(--dn)')+'">'+fmtMoney(tm.currentValue)+'</div>'+
-      '<div class="tm-hero-sub">'+(up?'+':'')+tm.totalReturnPct.toFixed(1)+'% מאז '+esc(fmtDate(tm.startDate))+'</div></div>'+
+      '<div class="tm-hero-sub">'+num((up?'+':'')+tm.totalReturnPct.toFixed(1)+'%')+' מאז '+esc(fmtDate(tm.startDate))+'</div></div>'+
       '<div class="tm-results">'+
         '<div class="tm-result-card"><div class="tm-result-label">מניות שנקנו</div><div class="tm-result-value">'+tm.shares.toFixed(3)+'</div></div>'+
         '<div class="tm-result-card"><div class="tm-result-label">מחיר כניסה</div><div class="tm-result-value">$'+tm.startPrice.toFixed(2)+'</div></div>'+
-        '<div class="tm-result-card"><div class="tm-result-label">תשואה שנתית (CAGR)</div><div class="tm-result-value" style="color:'+(tm.cagr!=null&&tm.cagr>=0?'var(--up)':tm.cagr!=null?'var(--dn)':'var(--txt3)')+'">'+(tm.cagr!=null?(tm.cagr>=0?'+':'')+tm.cagr.toFixed(1)+'%':'—')+'</div></div>'+
+        '<div class="tm-result-card"><div class="tm-result-label">תשואה שנתית (CAGR)</div><div class="tm-result-value" style="color:'+(tm.cagr!=null&&tm.cagr>=0?'var(--up)':tm.cagr!=null?'var(--dn)':'var(--txt3)')+'">'+(tm.cagr!=null?num((tm.cagr>=0?'+':'')+tm.cagr.toFixed(1)+'%'):'—')+'</div></div>'+
         '<div class="tm-result-card"><div class="tm-result-label">תקופת החזקה</div><div class="tm-result-value" style="font-size:13px">'+fmtYears(tm.years)+'</div></div>'+
       '</div>'+
       '<div style="position:relative;height:220px"><canvas id="tmCanvas"></canvas></div>'+
@@ -2679,11 +2693,11 @@ async function analyze(){
       '<div id="aiText" class="ai-loading"><div class="ai-spinner"><svg width="16" height="16" viewBox="0 0 100 100"><polyline points="10,80 35,55 55,65 90,15" fill="none" stroke="'+cssVar('--accent')+'" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" pathLength="100" style="stroke-dasharray:100;stroke-dashoffset:100;animation:drawLine 1.2s ease-in-out infinite"/></svg></div>מנתח...</div></div>'+
       '<div id="structureBox" class="structure-box" style="display:none"></div>'+
       '<div id="invalidationBox" class="invalidation-box" style="display:none"></div>'+
-      '<div class="signal-banner '+sg.c+'"><div class="signal-dot dot-'+sg.c+'"></div><div><div class="signal-title '+sg.c+'">ניתוח טכני — '+esc(sg.l)+'</div><div class="signal-reasons">'+esc(sg.rs.join(' · '))+'</div></div></div>'+
+      '<div class="signal-banner '+sg.c+'"><div class="signal-dot dot-'+sg.c+'"></div><div><div class="signal-title '+sg.c+'">ניתוח טכני — '+esc(sg.l)+'</div><div class="signal-reasons">'+esc(sg.rs.map(seg).join(' · '))+'</div></div></div>'+
       '<div class="glass sentiment-card" id="sentCard"><div class="ai-loading"><div class="ai-spinner"><svg width="16" height="16" viewBox="0 0 100 100"><polyline points="10,80 35,55 55,65 90,15" fill="none" stroke="'+cssVar('--accent')+'" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" pathLength="100" style="stroke-dasharray:100;stroke-dashoffset:100;animation:drawLine 1.2s ease-in-out infinite"/></svg></div>טוען נתוני אנליסטים...</div></div>'+
       '<div class="metrics">'+
       '<div class="glass metric"><div class="metric-label">RSI (14)</div><div class="metric-value '+(rv_>RSI_OVERBOUGHT?'down':rv_<RSI_OVERSOLD?'up':'')+'">'+(rv_!=null&&!isNaN(rv_)?esc(rv_):'—')+'</div><div class="metric-sub">'+(rv_==null||isNaN(rv_)?'אין מספיק נתונים':rv_>RSI_OVERBOUGHT?'Overbought':rv_<RSI_OVERSOLD?'Oversold':'Neutral')+'</div></div>'+
-      '<div class="glass metric"><div class="metric-label">MA9 / MA20</div><div class="metric-value" style="font-size:16px">$'+(lm9?.toFixed(2)||'—')+'</div><div class="metric-sub">/ $'+(lm20?.toFixed(2)||'—')+'</div></div>'+
+      '<div class="glass metric"><div class="metric-label">MA9 / MA20</div><div class="metric-value" style="font-size:16px">$'+(lm9?.toFixed(2)||'—')+'</div><div class="metric-sub" dir="ltr">/ $'+(lm20?.toFixed(2)||'—')+'</div></div>'+
       '<div class="glass metric"><div class="metric-label">MA200</div><div class="metric-value" style="font-size:16px">'+(lm200?'$'+lm200.toFixed(2):'—')+'</div></div>'+
       '</div>'+
       '<div class="glass chart-card"><div class="chart-header"><div class="chart-header-title">גרף מחיר</div><div class="tf-group" id="tfGroup"><button class="tf-btn" data-d="21">1M</button><button class="tf-btn" data-d="63">3M</button><button class="tf-btn" data-d="126">6M</button><button class="tf-btn active" data-d="0">1Y</button></div></div><div style="position:relative;height:240px"><canvas id="pc"></canvas></div></div>'+
