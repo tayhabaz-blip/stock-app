@@ -269,8 +269,9 @@
   .scan-card.overbought{border-inline-start:3px solid var(--dn)}
   .overbought-badge{display:inline-block;font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:5px;
     background:var(--dn-soft);color:var(--dn);margin-inline-start:8px;font-family:var(--mono)}
-  .scan-grade{display:inline-flex;align-items:center;justify-content:center;width:23px;height:23px;
-    border-radius:6px;font-size:12px;font-weight:700;margin-inline-end:9px;flex-shrink:0;font-family:var(--mono)}
+  .scan-signal{display:inline-flex;align-items:center;justify-content:center;min-width:23px;height:23px;
+    padding:0 5px;border-radius:6px;font-size:10px;font-weight:700;letter-spacing:-1px;
+    margin-inline-end:9px;flex-shrink:0;font-family:var(--mono);direction:ltr}
   .scan-ticker{font-size:18px;font-weight:600;font-family:var(--mono);color:var(--strong)}
   .scan-rsi{font-size:12px;color:var(--txt2);margin:7px 0;font-family:var(--mono)}
   .scan-spark{width:100%;height:28px;margin:2px 0 9px;display:block}
@@ -573,7 +574,7 @@ if ('serviceWorker' in navigator) {
   </div>
   <div id="scanPage" style="display:none">
     <div style="font-size:20px;font-weight:600;margin-bottom:8px">סריקת מניות 🔍</div>
-    <div style="font-size:13px;color:rgba(255,255,255,0.4);margin-bottom:12px">זיהוי אוטומטי של מניות עם איתותים טכניים</div>
+    <div style="font-size:13px;color:rgba(255,255,255,0.4);margin-bottom:12px">זיהוי אוטומטי של מניות עם איתותים טכניים — מדורג לפי קרבה לפריצה, לא לפי ציון הבריאות</div>
     <button class="scan-btn" onclick="runScan()">סרוק את השוק</button>
     <button class="scan-btn" style="background:transparent;border:1px solid var(--line2);color:var(--txt2)" onclick="runScan('wl')">סרוק את רשימת המעקב ⭐</button>
     <div id="scanResults" style="margin-top:1.5rem">
@@ -837,7 +838,7 @@ function aiFailureText(d){
   // ── חריגה ממכסת ספק ה-AI. במכוון לא "נסו שוב בעוד רגע": המכסה נמדדת
   // לאורך שעות, והבטחה לרגע היא פשוט לא נכונה. ──
   if(reason==='rate_limited')return '🚦 מכסת השימוש ב-AI נוצלה במלואה כרגע. הניתוח הטכני המלא ממשיך לעבוד — הניתוח החכם יחזור בהמשך היום.';
-  if(reason==='transient')return '⏳ עומס רגעי בשרתי ה-AI — נסו שוב בעוד רגע.';
+  if(reason==='transient')return '⏳️ עומס רגעי בשרתי ה-AI — נסו שוב בעוד רגע.';
   return '🤖 ניתוח AI לא זמין כרגע.';
 }
 // ── שורת "טוען..." מאוחדת עם ספינר ה-SVG המצויר — אותו ויזואל בדיוק בכל
@@ -1285,13 +1286,18 @@ function sparkSvg(input,forceColor){
   const color=forceColor||(arr[arr.length-1]>=arr[0]?'#4ade80':'#f87171');
   return '<svg class="scan-spark" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none"><polyline points="'+pts+'" fill="none" stroke="'+color+'" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 }
-function scanGrade(r){
-  // "מתוחה" מקבל אות נפרדת מ"חלש" — שתי משמעויות שונות לא צריכות לחלוק ציון
-  if(r.overbought)return{g:'!',c:'#f87171',l:'מתוחה'};
-  if(r.score>=10)return{g:'A',c:'#4ade80',l:'חזק מאוד'};
-  if(r.score>=5)return{g:'B',c:'var(--lime)',l:'חיובי'};
-  if(r.score>=1)return{g:'C',c:'var(--warn)',l:'ניטרלי'};
-  return{g:'D',c:'#f87171',l:'חלש'};
+// ── עוצמת האיתות בסורק. זה *אינו* ציון הבריאות שמופיע במסך הניתוח:
+// הסורק מדרג קרבה לפריצה ופוטנציאל היפוך, ולא את איכות החברה. כל עוד שניהם
+// השתמשו באותן אותיות A/B/C ובאותם צבעים, אותה מניה קיבלה שתי תשובות סותרות
+// בשני מסכים. נמדד בפרודקשן: UNH הוצגה בסורק כ-A ובמסך הניתוח כ-D, ו-MSFT
+// כ-C בסורק מול B בניתוח. לכן כאן משתמשים בסימון שונה לחלוטין — חיצים
+// שמתארים עוצמת איתות ולא ציון. ──
+function scanSignal(r){
+  if(r.overbought)return{g:'!',c:'#f87171',l:'מתוחה — RSI גבוה'};
+  if(r.score>=10)return{g:'▲▲▲',c:'#4ade80',l:'איתות חזק'};
+  if(r.score>=5)return{g:'▲▲',c:'var(--lime)',l:'איתות בינוני'};
+  if(r.score>=1)return{g:'▲',c:'var(--warn)',l:'איתות חלש'};
+  return{g:'·',c:'var(--txt3)',l:'איתות זניח'};
 }
 async function runScan(scope){
   const box=document.getElementById('scanResults');
@@ -1313,11 +1319,11 @@ async function runScan(scope){
     if(!d.results||!d.results.length){box.innerHTML='<div class="empty"><div class="empty-icon">😴</div><div class="empty-title">אין איתותים כרגע</div></div>';return;}
     const grid=document.createElement('div');grid.className='scan-grid';
     d.results.forEach(r=>{
-      const gr=scanGrade(r);
+      const gr=scanSignal(r);
       const card=document.createElement('div');
       card.className='glass scan-card'+(r.overbought?' overbought':'');
       card.innerHTML=
-        '<div class="scan-ticker"><span class="scan-grade" style="background:'+gr.c+'22;border:1.5px solid '+gr.c+';color:'+gr.c+'">'+esc(gr.g)+'</span>'+esc(r.ticker)+
+        '<div class="scan-ticker"><span class="scan-signal" title="'+esc(gr.l)+'" style="background:'+gr.c+'22;border:1.5px solid '+gr.c+';color:'+gr.c+'">'+esc(gr.g)+'</span>'+esc(r.ticker)+
         (r.overbought?'<span class="overbought-badge">⚠️ מתוחה</span>':'')+'</div>'+
         '<div class="scan-rsi">'+num('RSI: '+esc(r.rsi)+' · $'+esc(r.price))+'</div>'+
         sparkSvg(r.spark)+
@@ -1694,7 +1700,7 @@ async function getAI(data){
     newsHeadlines=(dn.headlines||[]).map(h=>h.headline_he||h.headline).filter(Boolean).slice(0,2);
   }catch(e){}
 
-  // אותם נתונים בדיוק שנשלחים ל-/ai נשמרים כאן — קרב ה-AI (⚔️) קורא אותם
+  // אותם נתונים בדיוק שנשלחים ל-/ai נשמרים כאן — קרב ה-AI (🥊) קורא אותם
   // משם כדי לא לחשב את כל התמונה הטכנית פעם נוספת ("מקור אמת" יחיד לשני הפיצ'רים)
   const aiFacts={
     ticker,trend,rsiTxt,
@@ -1802,8 +1808,8 @@ function computeEventBadges(price,weekHigh,weekLow,prevClose,prevM200,lm200,rv_)
     else if(price<=weekLow*1.03)badges.push({icon:'🧊',text:'קרוב לשפל 52 שבועות',dir:'down',pri:3});
   }
   if(prevM200!=null&&lm200!=null&&prevClose!=null){
-    if(prevClose<prevM200&&price>lm200)badges.push({icon:'⚡',text:'חצה מעל ממוצע נע 200',dir:'up',pri:2});
-    else if(prevClose>prevM200&&price<lm200)badges.push({icon:'⚡',text:'חצה מתחת לממוצע נע 200',dir:'down',pri:2});
+    if(prevClose<prevM200&&price>lm200)badges.push({icon:'⚡️',text:'חצה מעל ממוצע נע 200',dir:'up',pri:2});
+    else if(prevClose>prevM200&&price<lm200)badges.push({icon:'⚡️',text:'חצה מתחת לממוצע נע 200',dir:'down',pri:2});
   }
   if(rv_!=null){
     if(rv_>=RSI_OVERBOUGHT)badges.push({icon:'📈',text:'RSI גבוה ('+Math.round(rv_)+') · קניית יתר',dir:'down',pri:4});
@@ -1827,7 +1833,7 @@ function computeArchetype(rv_,fvData,grade,price,weekHigh,weekLow,dividendPct,gr
   if(dividendPct!=null&&dividendPct>=2.5&&(grade==='A'||grade==='B'))
     return{icon:'🛡️',name:'השומר הזהיר',desc:'דיבידנד יציב לצד יסודות בריאים'};
   if(growthVal!=null&&growthVal>=0.25)
-    return{icon:'⚡',name:'הרודף המהיר',desc:'צמיחה דו-ספרתית גבוהה מניעה את המניה'};
+    return{icon:'⚡️',name:'הרודף המהיר',desc:'צמיחה דו-ספרתית גבוהה מניעה את המניה'};
   if(grade==='A'&&weekHigh!=null&&price>=weekHigh*0.95&&rv_!=null&&!isNaN(rv_)&&rv_>=40&&rv_<=65)
     return{icon:'🏔️',name:'האגדה היציבה',desc:'ביצועים חזקים ויציבים, בלי היסטריה'};
   return{icon:'🌊',name:'הגל השקט',desc:'תנועה מאוזנת כרגע, בלי איתות קיצון בולט'};
@@ -1972,7 +1978,7 @@ async function openDNACard(){
       '<button class="dna-close" id="dnaCloseBtn">✕</button></div>'+
       '<div class="dna-canvas-wrap"><img src="'+dataUrl+'" alt="כרטיס DNA של '+esc(d.t)+'"></div>'+
       '<div class="dna-actions">'+
-        '<button class="dna-btn dna-btn-download" id="dnaDownloadBtn">⬇ הורדה</button>'+
+        '<button class="dna-btn dna-btn-download" id="dnaDownloadBtn">⬇️ הורדה</button>'+
         (navigator.share?'<button class="dna-btn dna-btn-share" id="dnaShareBtn">📤 שיתוף</button>':'')+
       '</div>'+
       '<div class="dna-hint">התמונה נוצרת מקומית מהנתונים המוצגים — לא נשלחת לשום שרת</div>'+
@@ -2482,7 +2488,7 @@ async function openAIBattle(){
   if(!facts){
     overlay.innerHTML=
       '<div class="dna-modal battle-modal">'+
-        '<div class="dna-modal-head"><div class="dna-modal-title">⚔️ קרב AI — '+esc(tkr)+'</div>'+
+        '<div class="dna-modal-head"><div class="dna-modal-title">🥊 קרב AI — '+esc(tkr)+'</div>'+
         '<button class="dna-close" id="battleCloseBtn">✕</button></div>'+
         '<div class="tm-loading">הניתוח החכם עדיין נטען — נסה שוב בעוד רגע.</div>'+
       '</div>';
@@ -2499,7 +2505,7 @@ async function openAIBattle(){
   }
   overlay.innerHTML=
     '<div class="dna-modal battle-modal">'+
-      '<div class="dna-modal-head"><div class="dna-modal-title">⚔️ קרב AI — '+esc(tkr)+'</div>'+
+      '<div class="dna-modal-head"><div class="dna-modal-title">🥊 קרב AI — '+esc(tkr)+'</div>'+
       '<button class="dna-close" id="battleCloseBtn">✕</button></div>'+
       '<div class="tm-loading" id="battleBody">'+spinnerRow('שני הצדדים בונים טיעונים...')+'</div>'+
     '</div>';
@@ -2687,7 +2693,7 @@ async function analyze(){
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">'+
       '<span class="back-btn" onclick="showHome()">← בית</span>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
-      '<button id="battleBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(248,113,113,0.12);color:var(--dn);cursor:pointer;font-family:inherit">⚔️ קרב AI</button>'+
+      '<button id="battleBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(248,113,113,0.12);color:var(--dn);cursor:pointer;font-family:inherit">🥊 קרב AI</button>'+
       '<button id="timeBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(96,165,250,0.12);color:var(--ma9);cursor:pointer;font-family:inherit">🕰️ מכונת זמן</button>'+
       '<button id="twinBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(163,230,53,0.12);color:var(--lime);cursor:pointer;font-family:inherit">👯 תאום מוזר בזמן</button>'+
       '<button id="mcBtn" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:rgba(251,191,36,0.12);color:var(--warn);cursor:pointer;font-family:inherit">🔮 עתידים אפשריים</button>'+
