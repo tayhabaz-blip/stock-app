@@ -357,3 +357,47 @@ test('מגמה מעורבת אינה נספרת לאף צד בקרב ה-AI', () 
   eq(S.computeBattleScore(Object.assign({ trend: 'עולה' }, base)).bullPts, 1, 'מגמה עולה');
   eq(S.computeBattleScore(Object.assign({ trend: 'יורד' }, base)).bearPts, 1, 'מגמה יורדת');
 });
+
+/* ---------------------------------------------------------------- */
+group('הסורק ומסך הניתוח לא מתחזים זה לזה');
+
+test('הסורק אינו מציג אותיות ציון כמו מסך הניתוח', () => {
+  // נמדד בפרודקשן: UNH הוצגה בסורק כ-A ובמסך הניתוח כ-D, ו-MSFT כ-C מול B.
+  // שני המספרים מודדים דברים שונים לגמרי — ציון הסורק הוא קרבה לפריצה,
+  // ולא איכות החברה — ולכן אסור להם לחלוק את אותה שפה חזותית.
+  const S = X.load(['scanSignal']);
+  const grades = ['A', 'B', 'C', 'D'];
+  [0, 1, 5, 10, 20].forEach(score => {
+    const out = S.scanSignal({ score, overbought: false });
+    assert(!grades.includes(out.g),
+      'ציון ' + score + ' החזיר אות ' + out.g + ' — הסורק חזר להתחזות לציון בריאות');
+    assert(out.l && out.l.includes('איתות'),
+      'התווית "' + out.l + '" לא מבהירה שמדובר בעוצמת איתות');
+  });
+});
+
+test('מניה מתוחה מסומנת בנפרד ולא כאיתות חזק', () => {
+  const S = X.load(['scanSignal']);
+  const hot = S.scanSignal({ score: 20, overbought: true });
+  eq(hot.g, '!', 'סימון מניה מתוחה');
+  assert(hot.l.includes('מתוחה'), 'התווית לא מזכירה שהמניה מתוחה');
+});
+
+test('עוצמת האיתות עולה מונוטונית עם הציון', () => {
+  const S = X.load(['scanSignal']);
+  const len = sc => S.scanSignal({ score: sc, overbought: false }).g.length;
+  assert(len(0) <= len(1) && len(1) <= len(5) && len(5) <= len(10),
+    'ציון גבוה יותר לא נתן איתות חזק יותר');
+});
+
+test('אין אימוג׳י שנטען כתו טקסט מונוכרום', () => {
+  // ⚔️ נראה על המסך כמו ✕ צמוד לכותרת המודל — כלומר כמו כפתור סגירה שני.
+  // הרשימה כאן היא תווים שברירת המחדל שלהם ביוניקוד היא טקסט ולא אימוג׳י.
+  const needsVS = ['⏳', '⚡', '⬇', '⚠', '⏸'];
+  needsVS.forEach(ch => {
+    const bare = X.html.split(ch).length - 1;
+    const dressed = X.html.split(ch + '️').length - 1;
+    eq(bare, dressed, 'התו ' + ch + ' מופיע בלי VS16 ולכן עלול להיטען כטקסט');
+  });
+  assert(!X.has('⚔'), 'הסמל ⚔ חזר לקוד — הוא נראה כמו כפתור סגירה');
+});
