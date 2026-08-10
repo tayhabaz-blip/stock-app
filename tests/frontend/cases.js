@@ -401,3 +401,83 @@ test('אין אימוג׳י שנטען כתו טקסט מונוכרום', () => 
   });
   assert(!X.has('⚔'), 'הסמל ⚔ חזר לקוד — הוא נראה כמו כפתור סגירה');
 });
+
+/* ---------------------------------------------------------------- */
+group('דיוק המודלים הסטטיסטיים');
+
+const M = X.load(['computeMonteCarlo', 'computeTwins']);
+
+/* סדרה סינתטית דטרמיניסטית — אותם מספרים בכל הרצה, בלי תלות בשעון או באקראי */
+function series(n) {
+  const c = [], lb = [];
+  let p = 100;
+  for (let i = 0; i < n; i++) {
+    p *= 1 + (Math.sin(i / 7) * 0.012 + Math.sin(i / 31) * 0.008);
+    c.push(parseFloat(p.toFixed(4)));
+    lb.push('d' + i);
+  }
+  return { c, lb };
+}
+
+test('אותה מניה באותו מחיר מחזירה בדיוק אותה סימולציה', () => {
+  // נמדד בפרודקשן לפני התיקון: שש הרצות על NVDA נתנו אחוזון 90 בין
+  // 260.06 ל-270.61 — פער של 4.7% מהמחיר, והמספר הוצג עד רמת הסנט.
+  // משתמש שפתח את החלון פעמיים ראה שתי תשובות שונות לאותה שאלה.
+  const { c } = series(400);
+  const a = M.computeMonteCarlo(c, c[c.length - 1], 3000, 30, 'NVDA');
+  const b = M.computeMonteCarlo(c, c[c.length - 1], 3000, 30, 'NVDA');
+  const last = a.days.length - 1;
+  ['p10', 'p25', 'p50', 'p75', 'p90'].forEach(k =>
+    eq(a[k][last], b[k][last], 'האחוזון ' + k + ' השתנה בין שתי הרצות זהות'));
+});
+
+test('מניות שונות אינן מקבלות את אותה סימולציה', () => {
+  const { c } = series(400);
+  const a = M.computeMonteCarlo(c, c[c.length - 1], 3000, 30, 'NVDA');
+  const b = M.computeMonteCarlo(c, c[c.length - 1], 3000, 30, 'AMD');
+  const last = a.days.length - 1;
+  assert(a.p90[last] !== b.p90[last], 'הזרע אינו תלוי בטיקר');
+});
+
+test('האחוזונים שומרים על הסדר בכל יום', () => {
+  const { c } = series(400);
+  const mc = M.computeMonteCarlo(c, c[c.length - 1], 1000, 30, 'T');
+  mc.days.forEach((_, d) => {
+    assert(mc.p10[d] <= mc.p25[d] && mc.p25[d] <= mc.p50[d]
+        && mc.p50[d] <= mc.p75[d] && mc.p75[d] <= mc.p90[d],
+      'סדר האחוזונים נשבר ביום ' + d);
+  });
+});
+
+test('הסימולציה מתחילה מהמחיר הנוכחי בדיוק', () => {
+  const { c } = series(400);
+  const price = c[c.length - 1];
+  const mc = M.computeMonteCarlo(c, price, 500, 10, 'T');
+  ['p10', 'p50', 'p90'].forEach(k => eq(mc[k][0], price, 'יום 0 של ' + k));
+});
+
+test('היסטוריה קצרה מדי אינה מחזירה סימולציה מדומה', () => {
+  const { c } = series(15);
+  eq(M.computeMonteCarlo(c, c[c.length - 1], 500, 30, 'T'), null, 'סדרה קצרה');
+});
+
+test('שני תקדימים לעולם אינם אותו קטע היסטוריה', () => {
+  // נצפה ב-NVDA: מתוך שלושת התקדימים שניים היו 2025-11-28 ו-2025-12-01,
+  // כלומר אותו אירוע בהזזה של יום מסחר אחד — ושניהם נספרו גם בממוצע
+  // התשואה וגם באחוז ההצלחה, מה שניפח את גודל המדגם.
+  const { c, lb } = series(400);
+  const tw = M.computeTwins(c, lb, 20, 10, 3);
+  assert(tw && tw.top.length === 3, 'לא נמצאו שלושה תקדימים');
+  tw.top.forEach((a, i) => tw.top.slice(i + 1).forEach(b => {
+    assert(Math.abs(a.start - b.start) >= 20,
+      'התקדימים ' + a.startLabel + ' ו-' + b.startLabel + ' חופפים');
+  }));
+});
+
+test('אחוז ההצלחה נגזר בדיוק מהתקדימים שנבחרו', () => {
+  const { c, lb } = series(400);
+  const tw = M.computeTwins(c, lb, 20, 10, 3);
+  const wins = tw.top.filter(t => t.fwdReturn > 0).length;
+  eq(tw.winRate, Math.round(wins / tw.top.length * 100), 'אחוז ניצחון');
+  close(tw.avgFwd, tw.top.reduce((s, t) => s + t.fwdReturn, 0) / tw.top.length, 1e-9, 'ממוצע');
+});
