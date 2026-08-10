@@ -3050,3 +3050,21 @@ class TestGroqFallback:
         with patch("stock_api._call_groq", return_value=api.RATE_LIMITED):
             api._call_groq_with_fallback(p)
         assert p["model"] == api.AI_MODEL
+
+
+# ── ניסוח הנפח היחסי. העובדה נמסרת למודל מנוסחת היטב ("פי 0.8"), והוא בכל
+# זאת כתב "נפח המסחר היחסי של 0.8-ממוצע" — צירוף שאינו עברית. הדוגמה
+# השגויה המפורשת בהנחיות היא אותו דפוס שעבד על שאר שגיאות הניסוח. ──
+class TestRelativeVolumeWording:
+    def test_the_rule_names_the_correct_phrasing(self):
+        assert "גבוה פי 2.2 מהממוצע" in api.AI_SYSTEM
+        assert "דל, 0.8 מהממוצע" in api.AI_SYSTEM
+
+    def test_the_observed_mistake_is_shown_as_forbidden(self):
+        assert "0.8-ממוצע" in api.AI_SYSTEM
+        assert "אינה עברית" in api.AI_SYSTEM
+
+    def test_the_fact_itself_stays_unambiguous(self):
+        _, facts, _ = api._extract_stock_facts({"ticker": "T", "relVolume": 0.8})
+        line = [f for f in facts if "נפח מסחר יחסי" in f]
+        assert line and "פי 0.8" in line[0]
