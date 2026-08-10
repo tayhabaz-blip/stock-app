@@ -1797,6 +1797,21 @@ function ahHtml(ah){
 }
 // ── תגי אירוע למניה המנותחת (שיא/שפל 52 שבועות, חציית ממוצע נע 200, RSI קיצוני).
 // הכל מחושב מנתונים שכבר בזיכרון — בלי שום קריאת רשת נוספת. עד 3 תגים, לפי עדיפות. ──
+// ── שיא ושפל 52 שבועות מוסכמים. ספק הנתונים מחזיר טווח משלו, וההיסטוריה
+// שהאפליקציה מציירת בגרף לפעמים חורגת ממנו: נמדד ב-AAPL שפל של 218.38 בגרף
+// מול 223.78 בכרטיס, ב-KO 64.04 מול 65.35 וב-MSFT שיא 550.24 מול 553.72.
+// המשתמש רואה את הגרף ואת הכרטיס באותו מסך, ולכן הם לא יכולים לסתור זה את
+// זה. נלקח הערך הקיצוני מבין השניים: הכרטיס לעולם לא "חותך" שפל שהגרף מראה,
+// ותג "שפל 52 שבועות" נדלק רק כשהמחיר באמת בתחתית כל מה שמוצג. ──
+function reconcile52(apiVal,series,pick){
+  const c=(series||[]).filter(v=>v!=null&&!isNaN(v)).slice(-252);
+  const api=(apiVal!=null&&!isNaN(apiVal)&&apiVal>0)?apiVal:null;
+  if(!c.length)return api;
+  let fromHist=c[0];
+  for(const v of c){if(pick==='max'){if(v>fromHist)fromHist=v;}else if(v<fromHist)fromHist=v;}
+  if(api==null)return fromHist;
+  return pick==='max'?Math.max(api,fromHist):Math.min(api,fromHist);
+}
 function computeEventBadges(price,weekHigh,weekLow,prevClose,prevM200,lm200,rv_){
   const badges=[];
   if(weekHigh!=null){
@@ -2675,7 +2690,10 @@ async function analyze(){
     const lm150=m150v.filter(v=>v!==null).pop(),lm200=m200v.filter(v=>v!==null).pop();
     const m200clean=m200v.filter(v=>v!==null);
     const prevM200=m200clean.length>1?m200clean[m200clean.length-2]:null;
-    const eventBadges=computeEventBadges(price,json.week_high,json.week_low,histPrev,prevM200,lm200,rv_);
+    // ערך אחד לכל המסך: התגים, המיקום בטווח, הארכיטיפ, כרטיס ה-DNA וה-AI
+    const wHigh=reconcile52(json.week_high,highs,'max');
+    const wLow=reconcile52(json.week_low,lows,'min');
+    const eventBadges=computeEventBadges(price,wHigh,wLow,histPrev,prevM200,lm200,rv_);
     const eventBadgesHtml=eventBadges.length?'<div class="event-badges">'+eventBadges.map(b=>'<span class="event-badge '+b.dir+'">'+b.icon+' '+b.text+'</span>').join('')+'</div>':'';
     // ── רזולוציה שבועית של 5 שנים. זה מה שמאפשר לאנלייזר לראות רמות
     // שנוצרו לפני שנים ולא נכנסות לחלון של שנה אחת — בדיוק הרמות שקובעות
@@ -2710,7 +2728,7 @@ async function analyze(){
 
     // נתוני הניתוח האחרון — נשמרים בזיכרון בלבד לצורך כרטיס ה-DNA (בלי קריאת רשת נוספת)
     window.__dna={t:t,name:json.name||t,price:price,ch:ch,isUp:isUp,grade:sg.grade,gradeLabel:sg.label,
-      rsi:rv_,weekHigh:json.week_high,weekLow:json.week_low,dividendPct:json.dividend_pct,fvData:fvData,growthVal:growthVal};
+      rsi:rv_,weekHigh:wHigh,weekLow:wLow,dividendPct:json.dividend_pct,fvData:fvData,growthVal:growthVal};
     // היסטוריית מחירים גולמית — לצורך סימולציית מונטה קרלו ומוצא התאום הסטטיסטי (בלי קריאת רשת נוספת)
     window.__priceHist={closes:d,labels:lb,price:price};
 
@@ -2735,8 +2753,8 @@ async function analyze(){
       '<div class="glass fund-card"><div class="fund-label">שווי שוק</div><div class="fund-value">'+fmt(json.market_cap)+'</div></div>'+
       '<div class="glass fund-card"><div class="fund-label">P/E</div><div class="fund-value">'+(json.pe_ratio?json.pe_ratio.toFixed(1):'—')+'</div></div>'+
       '<div class="glass fund-card"><div class="fund-label">EPS</div><div class="fund-value">'+(json.eps?'$'+json.eps.toFixed(2):'—')+'</div></div>'+
-      '<div class="glass fund-card"><div class="fund-label">52W גבוה</div><div class="fund-value">'+(json.week_high?'$'+json.week_high.toFixed(2):'—')+'</div></div>'+
-      '<div class="glass fund-card"><div class="fund-label">52W נמוך</div><div class="fund-value">'+(json.week_low?'$'+json.week_low.toFixed(2):'—')+'</div></div>'+
+      '<div class="glass fund-card"><div class="fund-label">52W גבוה</div><div class="fund-value">'+(wHigh?'$'+wHigh.toFixed(2):'—')+'</div></div>'+
+      '<div class="glass fund-card"><div class="fund-label">52W נמוך</div><div class="fund-value">'+(wLow?'$'+wLow.toFixed(2):'—')+'</div></div>'+
       '<div class="glass fund-card"><div class="fund-label">דיבידנד</div><div class="fund-value">'+(json.dividend_pct?json.dividend_pct.toFixed(2)+'%':'—')+'</div></div>'+
       '</div>'+
       '<div style="display:grid;grid-template-columns:1fr'+(fvData?' 1fr':'')+';gap:12px;margin-bottom:1.5rem">'+
@@ -2814,7 +2832,7 @@ async function analyze(){
     if(battleBtn)battleBtn.addEventListener('click',openAIBattle);
 
     getSentiment(t).then(sentData=>{
-      getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,zsDaily:dailyZones,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows,sector:json.sector,weekHigh:json.week_high,weekLow:json.week_low,change5dPct,relVolume,daysToEarnings:json.days_to_earnings,twinStats}).then(res=>{
+      getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,zsDaily:dailyZones,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows,sector:json.sector,weekHigh:wHigh,weekLow:wLow,change5dPct,relVolume,daysToEarnings:json.days_to_earnings,twinStats}).then(res=>{
         const el=document.getElementById('aiText');
         if(el){el.className='ai-text';el.textContent=res.text||'לא ניתן לטעון ניתוח AI.';}
         // ── התרחיש השלילי בשורה נפרדת ובולטת, מתחת לניתוח. במכוון לא בתוך
