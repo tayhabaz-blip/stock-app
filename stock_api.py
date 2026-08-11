@@ -528,7 +528,14 @@ CORE_UNIVERSE = [
     "SHOP", "CRWD", "SNOW", "DDOG", "NET", "MDB", "PANW", "ZS", "ARM", "MU",
     "INTC", "QCOM", "MRVL", "SMCI", "DELL", "ORCL", "ADBE", "CRM", "NOW", "INTU",
     "DIS", "BA", "JPM", "BAC", "V", "MA", "WMT", "COST", "PEP", "KO",
-    "XOM", "CVX", "LLY", "UNH", "RIVN"
+    "XOM", "CVX", "LLY", "UNH", "RIVN", "CSCO", "TXN", "IBM", "OKTA", "TEAM",
+    "WDAY", "ROKU", "PINS", "SNAP", "TTD", "LYFT", "DASH", "RBLX", "U", "TWLO",
+    "ZM", "DOCU", "ETSY", "EBAY", "BKNG", "MAR", "HLT", "WFC", "GS", "MS",
+    "C", "SCHW", "AXP", "BLK", "SPGI", "JNJ", "PFE", "MRK", "ABBV", "CVS",
+    "TMO", "DHR", "ABT", "BMY", "AMGN", "GILD", "MCD", "NKE", "SBUX", "TGT",
+    "HD", "LOW", "PG", "CL", "KMB", "GIS", "COP", "SLB", "OXY", "PSX",
+    "VLO", "NEE", "DUK", "SO", "CAT", "DE", "GE", "HON", "MMM", "UPS",
+    "FDX", "LMT", "RTX", "NOC", "F", "GM", "DAL", "UAL", "LUV",
 ]
 
 
@@ -562,6 +569,276 @@ def get_universe():
         if t not in merged:
             merged.append(t)
     return merged
+
+
+# ══════════════════════════════════════════════════════════════════════
+# גלאי תבניות גרפיות
+#
+# כל זיהוי חייב להסביר את עצמו במספרים — אילו נקודות יצרו את התבנית,
+# באיזה מרחק ובאיזה הפרש. גלאי שלא יודע להסביר את עצמו הוא ניחוש עם
+# ממשק יפה, וזה בדיוק מה שהאפליקציה הזו לא אמורה להיות.
+# ══════════════════════════════════════════════════════════════════════
+
+SWING_LOOKBACK = 5
+
+# -- כמה ימי מסחר אחורה תבנית עדיין נחשבת "פעילה". נמדד על 20 מניות
+# אמיתיות: בלי התנאי הזה 20 מתוך 20 המניות הכילו תבנית כלשהי (AMD עם 36
+# זיהויים), כי הגלאי מצא כל מופע היסטורי בחלון של חצי שנה. סף של 5 ימים
+# נתן 2 מתוך 20 (מחמיר מדי), 20 ימים נתן 13 מתוך 20 (רופף), ו-10 ימים
+# נתן 7 מתוך 20. אחרי שהעדכניות נמדדת מנקודת הפריצה ולא רק מסיום התבנית
+# (תחתית כפולה שפרצה אתמול היא הסטאפ הכי רלוונטי שיש, גם אם השפל השני
+# שלה לפני חודש) המספרים השתנו: 10 ימים נתן 11 מתוך 20 — רופף מדי —
+# ו-5 ימים נתן 6 מתוך 20 עם פיזור טוב על כל ארבע התבניות. --
+PATTERN_RECENCY_BARS = 5
+
+# -- מתחת לזה לא מוצג מספר אלא "אין מספיק תקדימים". אותו סף כמו במוצא
+# התאום הסטטיסטי: ממוצע על שני מקרים אינו סטטיסטיקה. --
+PATTERN_MIN_PRIORS = 3
+PATTERN_FORWARD_BARS = 10
+
+
+def _swings(highs, lows, lookback=SWING_LOOKBACK):
+    """נקודות סווינג עם אינדקס. שיא מקומי = הגבוה ביותר בחלון של ±lookback.
+
+    שני ימים צמודים באותו מחיר בדיוק מזוהים שניהם כשיא, וזה שובר כל גלאי
+    שסופר נקודות: המשולש העולה נפל לגמרי בבדיקה כי אותו שפל נספר פעמיים
+    ואז "השפלים לא עולים". לכן נקודות במרחק של עד lookback ימים זו מזו
+    מאוחדות לאחת — הקיצונית מביניהן.
+    """
+    n = min(len(highs), len(lows))
+
+    def collapse(points, is_better):
+        out = []
+        for i, price in points:
+            if out and i - out[-1][0] <= lookback:
+                if is_better(price, out[-1][1]):
+                    out[-1] = (i, price)
+            else:
+                out.append((i, price))
+        return out
+
+    raw_hi, raw_lo = [], []
+    for i in range(lookback, n - lookback):
+        window = range(i - lookback, i + lookback + 1)
+        if all(highs[j] <= highs[i] for j in window if j != i):
+            raw_hi.append((i, highs[i]))
+        if all(lows[j] >= lows[i] for j in window if j != i):
+            raw_lo.append((i, lows[i]))
+    return (collapse(raw_hi, lambda a, b: a > b),
+            collapse(raw_lo, lambda a, b: a < b))
+
+
+def _chg(a, b):
+    return ((b - a) / a * 100.0) if a else 0.0
+
+
+def _first_cross(closes, after, level, upward):
+    """היום הראשון אחרי `after` שבו המחיר חצה את רמת ההפעלה, אם בכלל."""
+    for k in range(after + 1, len(closes)):
+        if (closes[k] > level) if upward else (closes[k] < level):
+            return k
+    return None
+
+
+# -- תחתית כפולה: המוכרים ניסו פעמיים לשבור את אותה רמה ונכשלו. --
+def _pat_double_bottom(closes, highs, lows, hi, lo):
+    out = []
+    for a in range(len(lo)):
+        i1, p1 = lo[a]
+        for b in range(a + 1, len(lo)):
+            i2, p2 = lo[b]
+            gap = i2 - i1
+            if gap < 15:
+                continue
+            if gap > 70:
+                break
+            base = min(p1, p2)
+            if not base or abs(p2 - p1) / base > 0.04:
+                continue
+            peak = max(highs[i1:i2 + 1])
+            if peak < base * 1.08:
+                continue
+            # ל-W יש בדיוק שתי רגליים. שפל שלישי באותו גובה ביניהן אומר
+            # שזו תבנית אחרת (תחתית מעוגלת, משולש) ולא תחתית כפולה.
+            if any(i1 < i < i2 and pr <= base * 1.04 for i, pr in lo):
+                continue
+            out.append({
+                "name": "תחתית כפולה", "dir": "up", "start": i1, "end": i2,
+                "done": _first_cross(closes, i2, peak, True),
+                "detail": "שפל ב-%.2f ושפל ב-%.2f, %d ימים ביניהם, פסגה של %.0f%% באמצע"
+                          % (p1, p2, gap, _chg(base, peak)),
+            })
+    return out
+
+
+# -- פסגה כפולה: הקונים נכשלו פעמיים באותה רמה. --
+def _pat_double_top(closes, highs, lows, hi, lo):
+    out = []
+    for a in range(len(hi)):
+        i1, p1 = hi[a]
+        for b in range(a + 1, len(hi)):
+            i2, p2 = hi[b]
+            gap = i2 - i1
+            if gap < 15:
+                continue
+            if gap > 70:
+                break
+            top = max(p1, p2)
+            if not top or abs(p2 - p1) / top > 0.04:
+                continue
+            trough = min(lows[i1:i2 + 1])
+            if trough > top * 0.92:
+                continue
+            if any(i1 < i < i2 and pr >= top * 0.96 for i, pr in hi):
+                continue
+            out.append({
+                "name": "פסגה כפולה", "dir": "down", "start": i1, "end": i2,
+                "done": _first_cross(closes, i2, trough, False),
+                "detail": "שיא ב-%.2f ושיא ב-%.2f, %d ימים ביניהם, שקע של %.0f%% באמצע"
+                          % (p1, p2, gap, _chg(top, trough)),
+            })
+    return out
+
+
+# -- משולש עולה: תקרה שטוחה עם שפלים שעולים תחתיה. --
+def _pat_ascending_triangle(closes, highs, lows, hi, lo):
+    out = []
+    for a in range(len(hi)):
+        for b in range(a + 1, len(hi)):
+            i1, p1 = hi[a]
+            i2, p2 = hi[b]
+            span = i2 - i1
+            if span < 15:
+                continue
+            if span > 90:
+                break
+            level = (p1 + p2) / 2.0
+            if not level or abs(p2 - p1) / level > 0.025:
+                continue
+            inner = [(i, pr) for i, pr in lo if i1 < i < i2]
+            if len(inner) < 2:
+                continue
+            if not all(inner[k][1] > inner[k - 1][1] * 1.01 for k in range(1, len(inner))):
+                continue
+            out.append({
+                "name": "משולש עולה", "dir": "up", "start": i1, "end": i2,
+                "done": _first_cross(closes, i2, level, True),
+                "detail": "התנגדות שטוחה סביב %.2f עם %d שפלים עולים תחתיה"
+                          % (level, len(inner)),
+            })
+    return out
+
+
+# -- דגל שורי: עלייה חדה ואז דשדוש צר. הפסקה, לא היפוך. --
+def _pat_bull_flag(closes, highs, lows, hi, lo):
+    out = []
+    n = len(closes)
+    for pole_start in range(n):
+        found = False
+        for pole_end in range(pole_start + 5, min(pole_start + 21, n)):
+            gain = _chg(closes[pole_start], closes[pole_end])
+            if gain < 15:
+                continue
+            for flag_end in range(pole_end + 5, min(pole_end + 26, n)):
+                seg_hi = max(highs[pole_end:flag_end + 1])
+                seg_lo = min(lows[pole_end:flag_end + 1])
+                if not seg_lo:
+                    continue
+                if _chg(seg_lo, seg_hi) > gain * 0.5:
+                    continue
+                # ירידה של יותר מחצי מהעלייה כבר אינה הפסקה אלא ביטול
+                if seg_lo < closes[pole_start] + (closes[pole_end] - closes[pole_start]) * 0.5:
+                    continue
+                # דגל הוא הפסקה, לא המשך. מגמה עולה חלקה מכילה תמיד קטע
+                # של 15% ואחריו קטע צר יותר, וזוהתה בטעות כדגל.
+                if closes[flag_end] > closes[pole_end] * 1.03:
+                    continue
+                out.append({
+                    "name": "דגל שורי", "dir": "up", "start": pole_start, "end": flag_end,
+                    "done": _first_cross(closes, flag_end, seg_hi, True),
+                    "detail": "עלייה של %.0f%% ב-%d ימים ואחריה דשדוש בטווח %.0f%%"
+                              % (gain, pole_end - pole_start, _chg(seg_lo, seg_hi)),
+                })
+                found = True
+                break
+            if found:
+                break
+    return out
+
+
+PATTERN_DETECTORS = (_pat_double_bottom, _pat_double_top,
+                     _pat_ascending_triangle, _pat_bull_flag)
+
+
+def _all_patterns(closes, highs, lows):
+    """כל המופעים של כל התבניות בסדרה, כולל היסטוריים."""
+    if len(closes) < 40:
+        return []
+    hi, lo = _swings(highs, lows)
+    found = []
+    for detect in PATTERN_DETECTORS:
+        try:
+            found.extend(detect(closes, highs, lows, hi, lo))
+        except Exception:
+            log.exception("pattern detector failed")
+    return found
+
+
+def _pattern_age(pat, n):
+    """גיל התבנית בימי מסחר, מהמאוחר מבין סיומה לבין הפריצה ממנה.
+
+    תחתית כפולה שהשפל השני שלה לפני 25 יום אבל שפרצה לפני יומיים היא
+    הסטאפ הרלוונטי ביותר שיש, ומדידה מהשפל בלבד הייתה מפילה אותה.
+    """
+    marker = pat["end"]
+    if pat.get("done") is not None and pat["done"] > marker:
+        marker = pat["done"]
+    return n - 1 - marker
+
+
+def _active_patterns(closes, highs, lows):
+    """רק תבניות שעדיין רלוונטיות, אחת לכל סוג — המאוחרת ביותר."""
+    n = len(closes)
+    best = {}
+    for pat in _all_patterns(closes, highs, lows):
+        if _pattern_age(pat, n) > PATTERN_RECENCY_BARS:
+            continue
+        cur = best.get(pat["name"])
+        if cur is None or pat["end"] > cur["end"]:
+            best[pat["name"]] = pat
+    return sorted(best.values(), key=lambda x: -x["end"])
+
+
+def _pattern_track_record(closes, highs, lows, name):
+    """מה קרה בעבר אחרי אותה תבנית באותה מניה.
+
+    המופעים חייבים להיות מופרדים זה מזה — שני חלונות בהפרש של יום-יומיים
+    הם אותו אירוע שנספר פעמיים, אותו לקח בדיוק שנלמד במוצא התאום.
+    """
+    n = len(closes)
+    same = sorted((p for p in _all_patterns(closes, highs, lows) if p["name"] == name),
+                  key=lambda x: x["end"])
+    chosen = []
+    for pat in same:
+        end = pat["end"]
+        if end + PATTERN_FORWARD_BARS >= n:
+            continue  # אין מספיק ימים אחריו כדי למדוד תשואה
+        if _pattern_age(pat, n) <= PATTERN_RECENCY_BARS:
+            continue  # זו התבנית הנוכחית, לא תקדים
+        if any(abs(c - end) < 15 for c in chosen):
+            continue
+        chosen.append(end)
+    if len(chosen) < PATTERN_MIN_PRIORS:
+        return None
+    rets = [_chg(closes[e], closes[e + PATTERN_FORWARD_BARS]) for e in chosen]
+    wins = sum(1 for r in rets if r > 0)
+    return {
+        "samples": len(rets),
+        "avg_fwd": round(sum(rets) / len(rets), 1),
+        "win_rate": round(wins * 100.0 / len(rets)),
+        "forward_len": PATTERN_FORWARD_BARS,
+    }
+
 
 # ── סורק מניות (מטמון 5 דקות) ──
 def _scan_one(ticker, hist):
@@ -659,6 +936,10 @@ def _scan_one(ticker, hist):
     # ── מיני-גרף: 20 נקודות אחרונות בלבד, לתצוגה בכרטיס הסריקה ──
     spark = [round(v, 2) for v in closes[-20:]]
 
+    # ── תבניות גרפיות פעילות. הנתונים כבר ביד, ולכן הזיהוי לא עולה
+    # שום קריאת רשת נוספת — רק חישוב על מה שכבר נמשך. ──
+    patterns = _active_patterns(closes, highs, lows)
+
     return {
         "ticker": ticker,
         "price": round(price, 2),
@@ -668,6 +949,8 @@ def _scan_one(ticker, hist):
         "score": round(score, 1),
         "overbought": overbought,
         "spark": spark,
+        "patterns": [{"name": p["name"], "dir": p["dir"], "detail": p["detail"]}
+                     for p in patterns],
     }
 
 
