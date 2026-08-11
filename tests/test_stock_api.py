@@ -3068,3 +3068,130 @@ class TestRelativeVolumeWording:
         _, facts, _ = api._extract_stock_facts({"ticker": "T", "relVolume": 0.8})
         line = [f for f in facts if "נפח מסחר יחסי" in f]
         assert line and "פי 0.8" in line[0]
+
+
+# ── גלאי התבניות הגרפיות.
+#
+# הכלל: גלאי שמזהה הכל אינו גלאי. בבדיקה על 20 מניות אמיתיות, בלי תנאי
+# עדכניות, 20 מתוך 20 הכילו תבנית כלשהי (AMD עם 36 זיהויים) — ולכן חלק
+# מהבדיקות כאן הן דווקא סדרות שאסור שיזוהו. ──
+def _ohlc(closes, pad=0.004):
+    return [c * (1 + pad) for c in closes], [c * (1 - pad) for c in closes]
+
+
+def _ramp(a, b, n):
+    return [a + (b - a) * i / (n - 1.0) for i in range(n)]
+
+
+def _flat(v, n, wobble=0.0):
+    return [v + (wobble if i % 2 else -wobble) for i in range(n)]
+
+
+DB = _ramp(120, 100, 12) + _ramp(100, 116, 14) + _ramp(116, 101, 14) + _ramp(101, 125, 20)
+DT = _ramp(100, 130, 12) + _ramp(130, 112, 14) + _ramp(112, 129, 14) + _ramp(129, 100, 20)
+AT = (_ramp(90, 120, 8) + _ramp(120, 98, 8) + _ramp(98, 119, 8) + _ramp(119, 106, 8)
+      + _ramp(106, 120, 8) + _ramp(120, 112, 8) + _ramp(112, 128, 12))
+BF = _flat(100, 12, 0.4) + _ramp(100, 130, 10) + _flat(127, 14, 1.2) + _ramp(127, 145, 10)
+NOISE = [100 + (7 if i % 3 == 0 else -5 if i % 3 == 1 else 1) for i in range(80)]
+STEADY = _ramp(100, 160, 80)
+FRESH_DB = _ramp(120, 100, 12) + _ramp(100, 116, 14) + _ramp(116, 101, 14) + _ramp(101, 122, 7)
+
+
+def _names(series):
+    h, l = _ohlc(series)
+    return set(p["name"] for p in api._all_patterns(series, h, l))
+
+
+class TestPatternDetection:
+    def test_each_pattern_is_found_in_a_series_built_for_it(self):
+        assert "תחתית כפולה" in _names(DB)
+        assert "פסגה כפולה" in _names(DT)
+        assert "משולש עולה" in _names(AT)
+        assert "דגל שורי" in _names(BF)
+
+    def test_noise_produces_nothing(self):
+        # מסור בעל משרעת קבועה נראה כמו תחתית כפולה לכל גלאי נאיבי
+        assert _names(NOISE) == set()
+
+    def test_a_smooth_trend_produces_nothing(self):
+        # מגמה עולה חלקה מכילה תמיד קטע של 15% ואחריו קטע צר יותר,
+        # וזוהתה בטעות כדגל שורי לפני שנוסף התנאי שדגל אינו ממשיך לעלות
+        assert _names(STEADY) == set()
+
+    def test_a_short_series_does_not_crash(self):
+        assert api._all_patterns([1, 2, 3], [1, 2, 3], [1, 2, 3]) == []
+
+    def test_every_detection_explains_itself(self):
+        h, l = _ohlc(DB)
+        for pat in api._all_patterns(DB, h, l):
+            assert pat["detail"] and any(ch.isdigit() for ch in pat["detail"])
+            assert pat["dir"] in ("up", "down")
+
+
+class TestSwingCollapse:
+    def test_adjacent_equal_extremes_collapse_to_one(self):
+        # שני ימים צמודים באותו מחיר זוהו שניהם כשפל, ואז "השפלים לא
+        # עולים" והמשולש העולה לא זוהה כלל. זה היה באג אמיתי.
+        closes = _ramp(100, 120, 8) + _ramp(120, 100, 8) + _ramp(100, 120, 8)
+        h, l = _ohlc(closes)
+        hi, lo = api._swings(h, l)
+        for pts in (hi, lo):
+            gaps = [pts[i][0] - pts[i - 1][0] for i in range(1, len(pts))]
+            assert all(g > api.SWING_LOOKBACK for g in gaps), "נקודות סווינג כפולות"
+
+
+class TestPatternRecency:
+    def test_a_freshly_triggered_pattern_is_active(self):
+        h, l = _ohlc(FRESH_DB)
+        assert any(p["name"] == "תחתית כפולה" for p in api._active_patterns(FRESH_DB, h, l))
+
+    def test_an_old_pattern_is_not_active(self):
+        old = DB + _ramp(125, 128, 60)
+        h, l = _ohlc(old)
+        assert not any(p["name"] == "תחתית כפולה" for p in api._active_patterns(old, h, l))
+
+    def test_age_is_measured_from_the_breakout_not_the_pattern_end(self):
+        # תחתית כפולה שהשפל השני שלה לפני חודש אבל שפרצה אתמול היא
+        # הסטאפ הרלוונטי ביותר, ומדידה מהשפל בלבד הייתה מפילה אותה
+        n = len(FRESH_DB)
+        h, l = _ohlc(FRESH_DB)
+        pats = [p for p in api._all_patterns(FRESH_DB, h, l) if p["name"] == "תחתית כפולה"]
+        assert pats
+        pat = pats[0]
+        assert pat["done"] is not None and pat["done"] > pat["end"]
+        assert api._pattern_age(pat, n) < n - 1 - pat["end"]
+
+    def test_each_pattern_type_appears_once_in_the_active_list(self):
+        h, l = _ohlc(FRESH_DB)
+        active = api._active_patterns(FRESH_DB, h, l)
+        assert len(active) == len(set(p["name"] for p in active))
+
+
+class TestPatternTrackRecord:
+    def test_too_few_precedents_returns_nothing_rather_than_a_number(self):
+        # ממוצע על שני מקרים אינו סטטיסטיקה — אותו סף כמו במוצא התאום
+        h, l = _ohlc(DB)
+        assert api._pattern_track_record(DB, h, l, "תחתית כפולה") is None
+
+    def test_enough_precedents_produce_a_consistent_statistic(self):
+        series = DB * 4
+        h, l = _ohlc(series)
+        rec = api._pattern_track_record(series, h, l, "תחתית כפולה")
+        assert rec and rec["samples"] >= api.PATTERN_MIN_PRIORS
+        assert 0 <= rec["win_rate"] <= 100
+        assert rec["forward_len"] == api.PATTERN_FORWARD_BARS
+
+    def test_an_unknown_pattern_name_is_safe(self):
+        h, l = _ohlc(DB)
+        assert api._pattern_track_record(DB, h, l, "לא קיים") is None
+
+
+class TestScanUniverse:
+    def test_the_universe_is_large_enough_to_find_patterns(self):
+        # סורק תבניות על 60 שמות מחזיר ריק לעיתים קרובות מדי. נמדד
+        # שזמן הסריקה ליניארי בכ-67 מילישניות למניה, כלומר 150 מניות
+        # הן כ-10 שניות — בתוך מה שהאפליקציה כבר יודעת להציג.
+        assert len(api.CORE_UNIVERSE) >= 120
+
+    def test_the_universe_has_no_duplicates(self):
+        assert len(api.CORE_UNIVERSE) == len(set(api.CORE_UNIVERSE))
