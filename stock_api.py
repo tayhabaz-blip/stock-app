@@ -577,6 +577,16 @@ def get_universe():
 # כל זיהוי חייב להסביר את עצמו במספרים — אילו נקודות יצרו את התבנית,
 # באיזה מרחק ובאיזה הפרש. גלאי שלא יודע להסביר את עצמו הוא ניחוש עם
 # ממשק יפה, וזה בדיוק מה שהאפליקציה הזו לא אמורה להיות.
+#
+# אזהרה למי שיוסיף כאן תצוגה: התבניות האלה תיאוריות, לא ניבוייות. נמדדו
+# על 120 מניות ו-700 ימי מסחר, מול התשואה של יום אקראי באותה מניה, עם
+# שגיאת תקן מקובצת לפי מניה (120 מניות מתואמות אינן 900 תצפיות בלתי
+# תלויות). התוצאה, בנקודות אחוז ל-10 ימים קדימה מיום הכניסה האמיתי:
+# תחתית כפולה 0.21- (t=0.79-), פסגה כפולה 0.45+ (t=1.26), משולש עולה
+# 0.04+ (t=0.07). כלומר אפס, בכל שלושתן.
+#
+# מותר להציג "המניה הזו מציגה כרגע תחתית כפולה". אסור לרמוז שזה אומר
+# משהו על מחר, ואסור להציג מספר הצלחה בלי ה-baseline לצידו.
 # ══════════════════════════════════════════════════════════════════════
 
 SWING_LOOKBACK = 5
@@ -588,7 +598,9 @@ SWING_LOOKBACK = 5
 # נתן 7 מתוך 20. אחרי שהעדכניות נמדדת מנקודת הפריצה ולא רק מסיום התבנית
 # (תחתית כפולה שפרצה אתמול היא הסטאפ הכי רלוונטי שיש, גם אם השפל השני
 # שלה לפני חודש) המספרים השתנו: 10 ימים נתן 11 מתוך 20 — רופף מדי —
-# ו-5 ימים נתן 6 מתוך 20 עם פיזור טוב על כל ארבע התבניות. --
+# ו-5 ימים נתן 6 מתוך 20. אימות על היקום המלא: 49 מתוך 120 מניות, ואחרי
+# הסרת הדגל השורי 24 מתוך 120 (20 תחתית כפולה, 9 משולש עולה, 2 פסגה
+# כפולה; חלקן עם יותר מתבנית אחת) — חמישית מהיקום, וזה הטווח הנכון. --
 PATTERN_RECENCY_BARS = 5
 
 # -- מתחת לזה לא מוצג מספר אלא "אין מספיק תקדימים". אותו סף כמו במוצא
@@ -729,45 +741,14 @@ def _pat_ascending_triangle(closes, highs, lows, hi, lo):
     return out
 
 
-# -- דגל שורי: עלייה חדה ואז דשדוש צר. הפסקה, לא היפוך. --
-def _pat_bull_flag(closes, highs, lows, hi, lo):
-    out = []
-    n = len(closes)
-    for pole_start in range(n):
-        found = False
-        for pole_end in range(pole_start + 5, min(pole_start + 21, n)):
-            gain = _chg(closes[pole_start], closes[pole_end])
-            if gain < 15:
-                continue
-            for flag_end in range(pole_end + 5, min(pole_end + 26, n)):
-                seg_hi = max(highs[pole_end:flag_end + 1])
-                seg_lo = min(lows[pole_end:flag_end + 1])
-                if not seg_lo:
-                    continue
-                if _chg(seg_lo, seg_hi) > gain * 0.5:
-                    continue
-                # ירידה של יותר מחצי מהעלייה כבר אינה הפסקה אלא ביטול
-                if seg_lo < closes[pole_start] + (closes[pole_end] - closes[pole_start]) * 0.5:
-                    continue
-                # דגל הוא הפסקה, לא המשך. מגמה עולה חלקה מכילה תמיד קטע
-                # של 15% ואחריו קטע צר יותר, וזוהתה בטעות כדגל.
-                if closes[flag_end] > closes[pole_end] * 1.03:
-                    continue
-                out.append({
-                    "name": "דגל שורי", "dir": "up", "start": pole_start, "end": flag_end,
-                    "done": _first_cross(closes, flag_end, seg_hi, True),
-                    "detail": "עלייה של %.0f%% ב-%d ימים ואחריה דשדוש בטווח %.0f%%"
-                              % (gain, pole_end - pole_start, _chg(seg_lo, seg_hi)),
-                })
-                found = True
-                break
-            if found:
-                break
-    return out
-
-
+# -- היה כאן גם גלאי "דגל שורי", והוא הוסר אחרי מדידה. הוא ייצר 32 מתוך
+# 63 הזיהויים על היקום המלא — יותר מכל שאר התבניות יחד — ורובם היו שוליים:
+# חציון העלייה 18% מול סף של 15%, וחציון רוחב הדשדוש 8% מול תקרה של מחצית
+# מהעלייה. כלומר "מניה עלתה קצת ואז התנדנדה", לא דגל. במדידת תשואה קדימה
+# על 120 מניות ו-700 ימי מסחר הוא נתן יתרון של 0.15 נקודות אחוז מול קניית
+# יום אקראי באותה מניה (t=0.6) — אפס, בכל שילוב סף שנוסה. --
 PATTERN_DETECTORS = (_pat_double_bottom, _pat_double_top,
-                     _pat_ascending_triangle, _pat_bull_flag)
+                     _pat_ascending_triangle)
 
 
 def _all_patterns(closes, highs, lows):
@@ -809,32 +790,63 @@ def _active_patterns(closes, highs, lows):
     return sorted(best.values(), key=lambda x: -x["end"])
 
 
+def _pattern_entry(pat):
+    """היום הראשון שבו אפשר היה באמת לפעול על התבנית, או None אם לא היה כזה.
+
+    זו הנקודה הכי חשובה בכל הקובץ הזה, כי הגרסה הקודמת מדדה מ-end וזה
+    ייצר מספרים מומצאים לגמרי. שפל סווינג מוגדר כך שכל SWING_LOOKBACK
+    הימים אחריו גבוהים ממנו — ולכן "התשואה אחרי התבנית" מדדה את ההגדרה
+    של עצמה ולא את השוק. במדידה על 120 מניות ו-700 ימי מסחר תחתית כפולה
+    הראתה ככה יתרון של 3.63 נקודות אחוז ו-90% הצלחה; מהיום שבו אפשר היה
+    לדעת על התבנית היא הראתה 0.21- (t=0.79-). כל היתרון היה הצצה לעתיד.
+
+    לכן הכניסה היא המאוחר מבין שני אלה: היום שבו הסווינג האחרון התאשר,
+    והיום שבו המחיר פרץ את התבנית. תבנית שמעולם לא נפרצה אינה תקדים —
+    היא לא נתנה אות שאפשר היה לפעול לפיו.
+    """
+    if pat.get("done") is None:
+        return None
+    return max(pat["done"], pat["end"] + SWING_LOOKBACK)
+
+
 def _pattern_track_record(closes, highs, lows, name):
-    """מה קרה בעבר אחרי אותה תבנית באותה מניה.
+    """מה קרה בעבר אחרי אותה תבנית באותה מניה, מיום הכניסה האמיתי.
 
     המופעים חייבים להיות מופרדים זה מזה — שני חלונות בהפרש של יום-יומיים
     הם אותו אירוע שנספר פעמיים, אותו לקח בדיוק שנלמד במוצא התאום.
+
+    baseline הוא התשואה הממוצעת של חלון אקראי באותה מניה. בלעדיו המספר
+    חסר משמעות: 2%+ בעשרה ימים נשמע יפה עד שמגלים שהמניה עלתה ככה גם
+    בלי שום תבנית. מה שמעניין הוא ההפרש, וההפרש שנמדד הוא בערך אפס.
     """
     n = len(closes)
+    if n <= PATTERN_FORWARD_BARS:
+        return None
     same = sorted((p for p in _all_patterns(closes, highs, lows) if p["name"] == name),
                   key=lambda x: x["end"])
     chosen = []
     for pat in same:
-        end = pat["end"]
-        if end + PATTERN_FORWARD_BARS >= n:
-            continue  # אין מספיק ימים אחריו כדי למדוד תשואה
+        entry = _pattern_entry(pat)
+        if entry is None or entry + PATTERN_FORWARD_BARS >= n:
+            continue  # לא נפרצה, או שאין מספיק ימים אחריה כדי למדוד תשואה
         if _pattern_age(pat, n) <= PATTERN_RECENCY_BARS:
             continue  # זו התבנית הנוכחית, לא תקדים
-        if any(abs(c - end) < 15 for c in chosen):
+        if any(abs(c - entry) < 15 for c in chosen):
             continue
-        chosen.append(end)
+        chosen.append(entry)
     if len(chosen) < PATTERN_MIN_PRIORS:
         return None
     rets = [_chg(closes[e], closes[e + PATTERN_FORWARD_BARS]) for e in chosen]
+    window = [_chg(closes[i], closes[i + PATTERN_FORWARD_BARS])
+              for i in range(n - PATTERN_FORWARD_BARS)]
+    baseline = sum(window) / len(window)
+    avg = sum(rets) / len(rets)
     wins = sum(1 for r in rets if r > 0)
     return {
         "samples": len(rets),
-        "avg_fwd": round(sum(rets) / len(rets), 1),
+        "avg_fwd": round(avg, 1),
+        "baseline_fwd": round(baseline, 1),
+        "edge": round(avg - baseline, 1),
         "win_rate": round(wins * 100.0 / len(rets)),
         "forward_len": PATTERN_FORWARD_BARS,
     }
