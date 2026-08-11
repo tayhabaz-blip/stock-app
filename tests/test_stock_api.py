@@ -3107,15 +3107,21 @@ class TestPatternDetection:
         assert "תחתית כפולה" in _names(DB)
         assert "פסגה כפולה" in _names(DT)
         assert "משולש עולה" in _names(AT)
-        assert "דגל שורי" in _names(BF)
+
+    def test_the_bull_flag_detector_is_gone(self):
+        # הוסר אחרי מדידה: 32 מתוך 63 הזיהויים על היקום המלא, ויתרון של
+        # 0.15 נקודות אחוז (t=0.6) מול קניית יום אקראי — כלומר אפס. סדרה
+        # שנבנתה במיוחד עבורו אסור שתייצר יותר שום זיהוי.
+        assert "דגל שורי" not in _names(BF)
+        assert not hasattr(api, "_pat_bull_flag")
 
     def test_noise_produces_nothing(self):
         # מסור בעל משרעת קבועה נראה כמו תחתית כפולה לכל גלאי נאיבי
         assert _names(NOISE) == set()
 
     def test_a_smooth_trend_produces_nothing(self):
-        # מגמה עולה חלקה מכילה תמיד קטע של 15% ואחריו קטע צר יותר,
-        # וזוהתה בטעות כדגל שורי לפני שנוסף התנאי שדגל אינו ממשיך לעלות
+        # מגמה עולה חלקה היא המקרה שהפיל את גלאי הדגל השורי בעבר, והיא
+        # נשארת כאן כשומר סף: אף גלאי לא אמור לראות תבנית בעלייה ישרה
         assert _names(STEADY) == set()
 
     def test_a_short_series_does_not_crash(self):
@@ -3167,6 +3173,35 @@ class TestPatternRecency:
         assert len(active) == len(set(p["name"] for p in active))
 
 
+class TestPatternEntryHasNoLookahead:
+    """הבדיקות האלה שומרות על התיקון החשוב ביותר בגלאי התבניות.
+
+    שפל סווינג מוגדר כך שכל SWING_LOOKBACK הימים אחריו גבוהים ממנו. לכן
+    מדידת תשואה החל מסיום התבנית מודדת את ההגדרה של עצמה: על 120 מניות
+    אמיתיות זה הראה 3.63+ נקודות אחוז ו-90% הצלחה לתחתית כפולה, ואילו
+    מיום הכניסה האמיתי זה הראה 0.21-. מי שיחזיר את המדידה ל-end יחזיר
+    את המספר המומצא הזה לאתר.
+    """
+
+    def test_entry_is_never_before_the_swing_could_be_known(self):
+        h, l = _ohlc(FRESH_DB)
+        pats = [p for p in api._all_patterns(FRESH_DB, h, l) if p["done"] is not None]
+        assert pats
+        for pat in pats:
+            assert api._pattern_entry(pat) >= pat["end"] + api.SWING_LOOKBACK
+
+    def test_entry_is_never_before_the_breakout(self):
+        h, l = _ohlc(FRESH_DB)
+        for pat in api._all_patterns(FRESH_DB, h, l):
+            entry = api._pattern_entry(pat)
+            if entry is not None:
+                assert entry >= pat["done"]
+
+    def test_a_pattern_that_never_broke_out_is_not_a_precedent(self):
+        # תבנית שלא נפרצה לא נתנה שום אות שאפשר היה לפעול לפיו
+        assert api._pattern_entry({"end": 10, "done": None}) is None
+
+
 class TestPatternTrackRecord:
     def test_too_few_precedents_returns_nothing_rather_than_a_number(self):
         # ממוצע על שני מקרים אינו סטטיסטיקה — אותו סף כמו במוצא התאום
@@ -3174,16 +3209,44 @@ class TestPatternTrackRecord:
         assert api._pattern_track_record(DB, h, l, "תחתית כפולה") is None
 
     def test_enough_precedents_produce_a_consistent_statistic(self):
-        series = DB * 4
+        series = DB * 5
         h, l = _ohlc(series)
         rec = api._pattern_track_record(series, h, l, "תחתית כפולה")
         assert rec and rec["samples"] >= api.PATTERN_MIN_PRIORS
         assert 0 <= rec["win_rate"] <= 100
         assert rec["forward_len"] == api.PATTERN_FORWARD_BARS
 
+    def test_the_statistic_always_carries_its_baseline(self):
+        # "2%+ בעשרה ימים" חסר משמעות בלי לדעת שהמניה עלתה ככה גם בלי
+        # התבנית. המספר שמעניין הוא ההפרש, ולכן הוא חייב להיות שם תמיד.
+        series = DB * 5
+        h, l = _ohlc(series)
+        rec = api._pattern_track_record(series, h, l, "תחתית כפולה")
+        assert rec is not None
+        assert "baseline_fwd" in rec and "edge" in rec
+        assert abs(rec["edge"] - (rec["avg_fwd"] - rec["baseline_fwd"])) <= 0.1
+
+    def test_the_measurement_starts_from_the_entry_not_the_pattern_end(self):
+        # אותה בדיקה, מהצד של התוצאה: מדידה מ-end הייתה מנפחת את הממוצע
+        # כי היא תופסת את הקפיצה שמגדירה את השפל. אם מישהו יחזיר את הבאג,
+        # הממוצע יזנק והבדיקה הזו תיפול.
+        series = DB * 5
+        h, l = _ohlc(series)
+        n = len(series)
+        rec = api._pattern_track_record(series, h, l, "תחתית כפולה")
+        assert rec is not None
+        ends = sorted(set(p["end"] for p in api._all_patterns(series, h, l)
+                          if p["name"] == "תחתית כפולה" and p["end"] + api.PATTERN_FORWARD_BARS < n))
+        naive = [api._chg(series[e], series[e + api.PATTERN_FORWARD_BARS]) for e in ends]
+        assert naive
+        assert rec["avg_fwd"] < sum(naive) / len(naive)
+
     def test_an_unknown_pattern_name_is_safe(self):
         h, l = _ohlc(DB)
         assert api._pattern_track_record(DB, h, l, "לא קיים") is None
+
+    def test_a_series_shorter_than_the_forward_window_is_safe(self):
+        assert api._pattern_track_record([1, 2, 3], [1, 2, 3], [1, 2, 3], "תחתית כפולה") is None
 
 
 class TestScanUniverse:
