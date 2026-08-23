@@ -1,6 +1,7 @@
 import hashlib
 import os
 import re
+import threading
 import time
 import logging
 from datetime import datetime, time as dtime, timedelta
@@ -56,6 +57,19 @@ def cache_get(key, ttl):
     if item and (time.time() - item[0]) < ttl:
         return item[1]
     return None
+
+
+def cache_peek(key):
+    """הערך שבמטמון ובן כמה שניות הוא, גם אם פג תוקפו.
+
+    cache_get מחזירה None לערך שפג, וזה נכון לרוב השימושים. יש מקרה אחד
+    שבו עדיף ערך ישן על פני המתנה: הסריקה, שבה 98% מהזמן הוא משיכת
+    הנתונים החיצונית ולא החישוב.
+    """
+    item = _cache.get(key)
+    if not item:
+        return None, None
+    return item[1], time.time() - item[0]
 
 
 def cache_set(key, val):
@@ -852,6 +866,31 @@ def _pattern_track_record(closes, highs, lows, name):
     }
 
 
+# -- המיני-גרף נשלח כצורה מנורמלת ולא כמחירים. --
+SPARK_STEPS = 100
+
+
+def _spark_shape(values):
+    """מיני-גרף כצורה בלבד.
+
+    הדפדפן מנרמל ממילא את הסדרה לגובה ה-SVG לפני הציור, ולכן המחירים
+    המוחלטים באגורות הם דיוק שנזרק מיד אחרי שהגיע. נמדד: הם היו 47%
+    מכל תשובת הסריקה (17.8KB מתוך 37.6KB) — יותר מכל שאר השדות יחד.
+
+    הנרמול משמר את הצורה ואת סדר הערכים. זה חשוב לא רק לגרף: כלל
+    הצבע בדפדפן בודק אם הנקודה האחרונה גבוהה מהראשונה, והמרה מונוטונית
+    עולה אינה יכולה להפוך אותו. כלומר התצוגה זהה בדיוק, לא דומה.
+    """
+    vals = [v for v in values if isinstance(v, (int, float)) and v == v]
+    if len(vals) < 2:
+        return []
+    lo, hi = min(vals), max(vals)
+    span = hi - lo
+    if span <= 0:
+        return [SPARK_STEPS // 2] * len(vals)   # קו שטוח, לא סדרה ריקה
+    return [int(round((v - lo) / span * SPARK_STEPS)) for v in vals]
+
+
 # ── סורק מניות (מטמון 5 דקות) ──
 def _scan_one(ticker, hist):
     hist = hist.dropna(subset=["Close"])  # מונע שורה אחרונה ללא מחיר סגירה (שכיחה במשיכה מרוכזת) מקלקלת את החישובים
@@ -946,7 +985,7 @@ def _scan_one(ticker, hist):
     overbought = rsi > RSI_OVERBOUGHT
 
     # ── מיני-גרף: 20 נקודות אחרונות בלבד, לתצוגה בכרטיס הסריקה ──
-    spark = [round(v, 2) for v in closes[-20:]]
+    spark = _spark_shape(closes[-20:])
 
     # ── תבניות גרפיות פעילות. הנתונים כבר ביד, ולכן הזיהוי לא עולה
     # שום קריאת רשת נוספת — רק חישוב על מה שכבר נמשך. ──
@@ -973,6 +1012,39 @@ MAX_SCAN_TICKERS = 60
 MAX_INDIVIDUAL_FETCHES = 15
 
 
+SCAN_TTL = 300
+
+# -- מעבר לגיל הזה עדיף להמתין לנתון טרי מאשר להציג ישן. --
+SCAN_STALE_MAX = 1800
+
+_scan_refreshing = set()
+_scan_refresh_lock = threading.Lock()
+
+
+def _spawn_scan_refresh(cache_key, custom):
+    """מרענן סריקה שפג תוקפה ברקע, פעם אחת בכל רגע נתון.
+
+    בלי המנעול, עשרה משתמשים שנכנסים יחד היו מפעילים עשר משיכות
+    מקבילות של 127 טיקרים — בדיוק העומס שהמטמון נועד למנוע.
+    """
+    with _scan_refresh_lock:
+        if cache_key in _scan_refreshing:
+            return False
+        _scan_refreshing.add(cache_key)
+
+    def work():
+        try:
+            cache_set(cache_key, {"results": _run_scan(custom)})
+        except Exception:
+            log.exception("background scan refresh failed for %s", cache_key)
+        finally:
+            with _scan_refresh_lock:
+                _scan_refreshing.discard(cache_key)
+
+    threading.Thread(target=work, daemon=True).start()
+    return True
+
+
 @app.get("/scan")
 def scan(request: Request, tickers: str = ""):
     if not rate_ok(request, "scan", 10, 60):
@@ -990,10 +1062,27 @@ def scan(request: Request, tickers: str = ""):
             return err(400, "לא נמצאו טיקרים תקינים")
 
     cache_key = "scan:" + (",".join(sorted(custom)) if custom else "__universe__")
-    cached = cache_get(cache_key, 300)
+    cached = cache_get(cache_key, SCAN_TTL)
     if cached:
         return cached
 
+    # ── מטמון בן-חריגה: תשובה שפג תוקפה אך עדיין סבירה מוחזרת מיד,
+    # והרענון רץ ברקע. נמדד שהמשיכה מ-yfinance היא 98% מזמן הסריקה —
+    # 11 שניות בקריאה קרה מול 210ms בחמה — ולכן ההמתנה הזו נפלה על
+    # משתמש אקראי אחת לחמש דקות בלי שום סיבה.
+    #
+    # הגיל מוחזר במפורש ולא מוסתר. נתון בן שבע דקות שמוצג כאילו הוא
+    # של עכשיו הוא בדיוק סוג תצוגת השווא שאנחנו מנקים מהאתר. ──
+    stale, age = cache_peek(cache_key)
+    if stale and age is not None and age < SCAN_STALE_MAX:
+        _spawn_scan_refresh(cache_key, list(custom))
+        return dict(stale, age=int(age))
+
+    return cache_set(cache_key, {"results": _run_scan(custom)})
+
+
+def _run_scan(custom):
+    """הסריקה עצמה. מופרדת מנקודת הקצה כדי שתוכל לרוץ גם ברקע."""
     universe = custom or get_universe()
 
     # ── משיכה מרוכזת: בקשה אחת ליקום כולו במקום אחת לכל מניה ──
@@ -1048,7 +1137,7 @@ def scan(request: Request, tickers: str = ""):
 
     # ── מיון לפי חוזק ההזדמנות (הגבוה ביותר קודם) ──
     results.sort(key=lambda r: r["score"], reverse=True)
-    return cache_set(cache_key, {"results": results})
+    return results
 
 # ── סנטימנט אנליסטים (מטמון שעה) ──
 @app.get("/sentiment/{ticker}")
