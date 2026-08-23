@@ -606,3 +606,34 @@ test('נתון טרי אינו מקבל שום הערה', () => {
   eq(P.scanFreshness({}), '', 'בלי age');
   eq(P.scanFreshness({ age: null }), '', 'age ריק');
 });
+
+/* ---------------------------------------------------------------- */
+group('שדרוג מעטפת אינו משאיר מסך לבן');
+
+const SW = X.load(['swShouldReload']);
+
+test('לשונית שרצה עם מעטפת ישנה מתרעננת כשחדשה משתלטת', () => {
+  // נצפה בפועל בנייד אחרי המעבר v34→v36: ה-Service Worker קורא ל-skipWaiting
+  // ואז ל-clients.claim ומוחק את המטמונים הישנים, כלומר מעטפת חדשה משתלטת על
+  // דף שעדיין מריץ HTML ישן בדיוק כשהנכסים שלו נמחקים. התוצאה הייתה מסך לבן
+  // שנפתר רק בניקוי ידני של נתוני האתר.
+  assert(SW.swShouldReload(true, false), 'שדרוג חייב לגרור רענון');
+});
+
+test('מבקר ראשון אינו חוטף רענון מיותר', () => {
+  // בהתקנה ראשונה controllerchange נורה גם הוא, אבל אין מעטפת קודמת
+  // ולכן אין מה לסנכרן — רענון שם הוא סתם הבהוב לכל מבקר חדש
+  assert(!SW.swShouldReload(false, false), 'התקנה ראשונה אינה שדרוג');
+});
+
+test('אין לולאת רענון אינסופית', () => {
+  // הרענון עצמו עלול להצית controllerchange נוסף. בלי הדגל הדף
+  // היה נכנס ללולאה ומעולם לא מסיים להיטען — גרוע ממסך לבן.
+  assert(!SW.swShouldReload(true, true), 'רענון שכבר רץ לא מתחיל עוד אחד');
+  assert(!SW.swShouldReload(false, true), 'שני השומרים יחד');
+});
+
+test('ערכים חסרים אינם מפילים את ההחלטה', () => {
+  eq(SW.swShouldReload(undefined, false), false, 'controller לא ידוע');
+  eq(SW.swShouldReload(null, false), false, 'controller ריק');
+});
