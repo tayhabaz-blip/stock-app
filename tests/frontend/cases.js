@@ -637,3 +637,65 @@ test('ערכים חסרים אינם מפילים את ההחלטה', () => {
   eq(SW.swShouldReload(undefined, false), false, 'controller לא ידוע');
   eq(SW.swShouldReload(null, false), false, 'controller ריק');
 });
+
+/* ---------------------------------------------------------------- */
+group('שרשרת היעדים מרוסנת');
+
+const T = X.load(['trimTargets'],
+  'const MAX_TARGET_R=' + X.extractNumericConst('MAX_TARGET_R') +
+  ', MAX_TARGETS=' + X.extractNumericConst('MAX_TARGETS') + ';');
+
+// שרשרת NKE האמיתית שנמדדה בפרודקשן: מחיר 42.39, סטופ 40.56, סיכון 4.32%
+const NKE = [
+  { p: 45.01, pct: 6.18,   rr: 1.43 },
+  { p: 46.70, pct: 10.17,  rr: 2.36 },
+  { p: 59.85, pct: 41.19,  rr: 9.54 },
+  { p: 63.02, pct: 48.67,  rr: 11.27 },
+  { p: 65.78, pct: 55.18,  rr: 12.78 },
+  { p: 67.69, pct: 59.68,  rr: 13.83 },
+  { p: 77.99, pct: 83.98,  rr: 19.45 },
+  { p: 165.15, pct: 289.6, rr: 67.08 },
+];
+
+test('היעד של 290% נעלם', () => {
+  // "יעד 8 (שיא 5 שנים): $165.15 · +289.6% · סיכוי מול סיכון 67.08:1" —
+  // רמה שרחוקה שנים, שהוצגה כיעד לעסקה עם יחס שקורא לזה הימור משתלם
+  const kept = T.trimTargets(NKE);
+  assert(!kept.some(t => t.pct > 30), 'שרד יעד מופרך: ' + JSON.stringify(kept.map(t => t.pct)));
+  eq(kept.length, 2, 'מספר היעדים ל-NKE');
+  eq(kept[kept.length - 1].pct, 10.17, 'היעד הרחוק ביותר ששרד');
+});
+
+test('שרשרת ארוכה נחתכת לשלושה יעדים לכל היותר', () => {
+  const many = [1, 2, 2.5, 3, 3.5, 4].map((rr, i) => ({ p: i, pct: i, rr: rr }));
+  eq(T.trimTargets(many).length, 3, 'תקרת מספר היעדים');
+});
+
+test('יעדים סבירים אינם נפגעים', () => {
+  // שש מתוך 13 המניות שנמדדו לא השתנו כלל אחרי הקיצוץ
+  const sane = [{ p: 1, pct: 4.9, rr: 1.2 }];
+  eq(T.trimTargets(sane).length, 1, 'AAPL נשארת כשהייתה');
+});
+
+test('מניה בלי אף יעד מתחת לתקרה מקבלת רשימה ריקה', () => {
+  // INTC: יעד יחיד של +69.3% מעל 5 יחידות סיכון. "אין יעד סביר"
+  // הוא תשובה נכונה יותר מיעד מומצא.
+  eq(T.trimTargets([{ p: 1, pct: 69.33, rr: 8.4 }]).length, 0, 'INTC');
+});
+
+test('הסף הוא בדיוק חמש יחידות סיכון', () => {
+  // נבחר במדידה: ב-5 היעד הגרוע ביותר הוא 25.8%, ב-6 הוא קופץ ל-69.3%
+  eq(T.trimTargets([{ p: 1, pct: 20, rr: 5 }]).length, 1, 'בדיוק על הסף נשאר');
+  eq(T.trimTargets([{ p: 1, pct: 20, rr: 5.01 }]).length, 0, 'מעל הסף יוצא');
+});
+
+test('יעד בלי יחס מחושב אינו נזרק', () => {
+  // riskAmt<=0 משאיר rr ריק, וזו אינה סיבה למחוק את היעד
+  eq(T.trimTargets([{ p: 1, pct: 5, rr: null }]).length, 1, 'rr ריק');
+});
+
+test('קלט פגום אינו מפיל את התוכנית', () => {
+  eq(T.trimTargets([]).length, 0, 'רשימה ריקה');
+  eq(T.trimTargets(null).length, 0, 'null');
+  eq(T.trimTargets([null, { p: 1, pct: 5, rr: 1 }]).length, 1, 'איבר ריק');
+});
