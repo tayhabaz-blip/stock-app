@@ -499,7 +499,36 @@
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <script>
+/* האם רענון הדף נדרש כשה-Service Worker השולט התחלף.
+ *
+ * מופרדת לפונקציה בעלת שם כדי שתהיה ניתנת לבדיקה: הלוגיקה קצרה אבל שני
+ * התנאים שלה נולדו מכשלים אמיתיים, ובלי בדיקה קל למחוק אחד מהם בטעות.
+ *   hadController  — בהתקנה ראשונה אין מעטפת קודמת ולכן אין מה לסנכרן,
+ *                    ורענון שם הוא סתם הבהוב לכל מבקר חדש.
+ *   alreadyReloading — הרענון עצמו עלול להצית controllerchange נוסף,
+ *                    ובלי הדגל הדף נכנס ללולאת רענון אינסופית. */
+function swShouldReload(hadController, alreadyReloading) {
+  return !!hadController && !alreadyReloading;
+}
 if ('serviceWorker' in navigator) {
+  /* רענון יחיד כשמעטפת חדשה משתלטת.
+   *
+   * ה-Service Worker קורא ל-skipWaiting ומיד אחריו ל-clients.claim, ובשלב
+   * ה-activate הוא מוחק את כל המטמונים הישנים. כלומר מעטפת חדשה משתלטת על
+   * לשונית שעדיין מריצה את ה-HTML הישן, בדיוק ברגע שהנכסים שלה נמחקים.
+   * נצפה בפועל בנייד אחרי המעבר v34→v36: מסך לבן, שנפתר רק בניקוי ידני
+   * של נתוני האתר. טעינה אחת מסנכרנת את הדף עם המעטפת שהשתלטה.
+   *
+   * שני שומרים חיוניים. hadController: בהתקנה ראשונה controllerchange נורה
+   * גם הוא, ובלי הבדיקה כל מבקר חדש היה חוטף רענון מיותר. swReloading:
+   * בלעדיו רענון יכול להצית controllerchange נוסף ולהיכנס ללולאה אינסופית. */
+  var hadController = !!navigator.serviceWorker.controller;
+  var swReloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', function () {
+    if (!swShouldReload(hadController, swReloading)) return;
+    swReloading = true;
+    window.location.reload();
+  });
   window.addEventListener('load', function () {
     navigator.serviceWorker.register('sw.js')
       .then(function (reg) { console.log('SW ready:', reg.scope); })
