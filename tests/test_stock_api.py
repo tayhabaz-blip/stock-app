@@ -2988,6 +2988,67 @@ class TestRSIStateEnforcement:
         for bad in (None, "32", True):
             assert api._enforce_rsi_state(self.NEUTRAL, bad) == self.NEUTRAL
 
+
+class TestWeekPositionWording:
+    """המיקום בטווח 52 השבועות אינו יחס לשיא.
+
+    נמדד בפרודקשן על 8 מקרים: בשניים מהם המודל ניסח את המיקום 68% כ-"המניה
+    נסחרת ב-68% משיא השנתי". זו טענה הפוכה — 68% מהשיא פירושו 32% מתחת
+    אליו — ובאותו מקרה המודל גם הסיק ממנה "מה שמעלה את החשש", כלומר אותו
+    נתון בדיוק הוליד מסקנה הפוכה תלוי בניסוח שיצא לו.
+    """
+
+    def test_the_mislabelled_phrase_is_repaired(self):
+        t = "עם זאת, המניה נסחרת ב-68% משיא השנתי, מה שמעלה את החשש."
+        out = api._enforce_week_pos(t, 68)
+        assert "מטווח 52 השבועות" in out
+        assert "משיא השנתי" not in out
+
+    def test_every_wrong_variant_is_covered(self):
+        for t in ("המניה נסחרת ב-68% מהשיא השנתי.",
+                  "המחיר נמצא ב-68% משיא.",
+                  "המניה ב-68% מהשיא."):
+            out = api._enforce_week_pos(t, 68)
+            assert "מטווח 52 השבועות" in out, t
+
+    def test_the_rest_of_the_sentence_survives(self):
+        # בניגוד לאכיפת ה-RSI כאן לא מוחקים משפט אלא מתקנים תווית, כי
+        # המשפט נושא גם נתונים תקינים שאין סיבה לאבד
+        t = "המניה נסחרת ב-68% משיא השנתי, מכפיל רווח של 22 מצביע על תמחור גבוה."
+        out = api._enforce_week_pos(t, 68)
+        assert "מכפיל רווח של 22" in out
+
+    def test_a_real_distance_from_the_high_is_left_alone(self):
+        # "רחוק 12% משיא השנתי" הוא ניסוח נכון לחלוטין, וגם אם 12 במקרה
+        # שווה למיקום בטווח אסור לגעת בו
+        for t in ("המניה רחוקה 12% משיא השנתי.",
+                  "המחיר נמצא 12% מתחת לשיא השנתי.",
+                  "יש פער של 12% משיא השנתי."):
+            assert api._enforce_week_pos(t, 12) == t, t
+
+    def test_a_number_that_is_not_the_week_position_is_left_alone(self):
+        t = "המניה נסחרת ב-40% משיא השנתי."
+        assert api._enforce_week_pos(t, 68) == t
+
+    def test_the_correct_wording_is_left_alone(self):
+        t = "המניה נסחרת ב-82% מטווח 52 השבועות, קרוב לשיא השנתי."
+        assert api._enforce_week_pos(t, 82) == t
+
+    def test_missing_or_bad_week_pos_leaves_text_untouched(self):
+        t = "המניה נסחרת ב-68% משיא השנתי."
+        for bad in (None, "68", True):
+            assert api._enforce_week_pos(t, bad) == t
+        assert api._enforce_week_pos("", 68) == ""
+
+    def test_a_float_week_position_matches_its_rounded_form(self):
+        t = "המניה נסחרת ב-68% משיא השנתי."
+        assert "מטווח 52 השבועות" in api._enforce_week_pos(t, 67.6)
+
+    def test_the_system_prompt_names_the_wrong_phrasing(self):
+        # אותה שיטה שעבדה ל-RSI ולנפח היחסי: דוגמה שלילית מפורשת בהנחיות
+        assert "משיא השנתי" in api.AI_SYSTEM
+        assert "מטווח 52 השבועות" in api.AI_SYSTEM
+
     def test_empty_text_is_safe(self):
         assert api._enforce_rsi_state("", 32) == ""
 
