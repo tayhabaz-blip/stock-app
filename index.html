@@ -1812,6 +1812,21 @@ function reconcile52(apiVal,series,pick){
   if(api==null)return fromHist;
   return pick==='max'?Math.max(api,fromHist):Math.min(api,fromHist);
 }
+/* טווח ארוך חייב להכיל את הקצר.
+ *
+ * הסדרה השבועית של 5 שנים מפספסת את הקיצון התוך-שבועי של השבוע הנוכחי,
+ * ולכן "השיא של 5 שנים" יצא נמוך מהשיא של 52 השבועות — דבר בלתי אפשרי
+ * שהופיע ב-4 מתוך 12 מניות שנבדקו (AAPL 344.27 מול 344.57, MSFT 551.05
+ * מול 553.72, וכן NVDA ו-GOOGL). זו אינה קוסמטיקה: atMultiYearHigh נדלק
+ * מהמספר הזה, ויעד פריצה שנבנה ממנו היה נופל מתחת לשיא שהמשתמש רואה
+ * בכרטיס באותו מסך ממש. אותו עיקרון בדיוק כמו reconcile52. */
+function widenLongRange(ltVal,wkVal,pick){
+  const lt=(ltVal!=null&&!isNaN(ltVal))?ltVal:null;
+  const wk=(wkVal!=null&&!isNaN(wkVal)&&wkVal>0)?wkVal:null;
+  if(lt==null)return wk;
+  if(wk==null)return lt;
+  return parseFloat((pick==='max'?Math.max(lt,wk):Math.min(lt,wk)).toFixed(2));
+}
 function computeEventBadges(price,weekHigh,weekLow,prevClose,prevM200,lm200,rv_){
   const badges=[];
   if(weekHigh!=null){
@@ -2708,6 +2723,9 @@ async function analyze(){
         const hs=dh.highs.filter(v=>v!=null),ls=dh.lows.filter(v=>v!=null);
         if(hs.length)ltHigh=parseFloat(Math.max.apply(null,hs).toFixed(2));
         if(ls.length)ltLow=parseFloat(Math.min.apply(null,ls).toFixed(2));
+        // הטווח הארוך חייב להכיל את הטווח של 52 השבועות — ראו widenLongRange
+        ltHigh=widenLongRange(ltHigh,wHigh,'max');
+        ltLow=widenLongRange(ltLow,wLow,'min');
         ltYears=Math.round(dh.closes.length/52*10)/10;
         // "דבר לא שגרתי": המניה מעל כל מה שהיא עשתה בחמש השנים האחרונות
         if(ltHigh!=null&&price>=ltHigh*0.999)atMultiYearHigh=true;
