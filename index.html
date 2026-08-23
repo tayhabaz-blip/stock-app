@@ -280,6 +280,18 @@
   .sig-green{background:var(--up-soft);color:var(--up)}
   .sig-red{background:var(--dn-soft);color:var(--dn)}
   .sig-blue{background:var(--neutral-bar);color:var(--txt)}
+  /* ── תבניות גרפיות. צהוב ולא ירוק/אדום במכוון: התבנית מתארת מה
+     המחיר עשה, והיא נמדדה ככזו שאינה מנבאת דבר. צבע כיווני היה
+     קורא לה אות קנייה או מכירה, וזה בדיוק מה שהיא לא. ── */
+  .pat-row{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+  .pat{font-size:11px;font-weight:500;padding:4px 9px;border-radius:6px;cursor:help;
+    background:var(--neutral-bar);color:var(--txt2);border:1px dashed var(--line2)}
+  .pat-filters{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 4px;align-items:center}
+  .pat-chip{font-size:12px;padding:6px 12px;border-radius:8px;cursor:pointer;
+    background:transparent;border:1px solid var(--line2);color:var(--txt2);transition:all .15s}
+  .pat-chip:hover{border-color:var(--txt3);color:var(--txt)}
+  .pat-chip.on{background:var(--neutral-bar);border-color:var(--txt3);color:var(--txt)}
+  .scan-meta{font-size:12px;color:var(--txt3);margin:10px 0 0}
   .disclaimer{max-width:940px;margin:2.5rem auto 0;padding:1.25rem 1.5rem 2rem;font-size:12.5px;
     line-height:1.8;color:var(--txt2);border-top:1px solid var(--line);text-align:center}
 
@@ -1299,6 +1311,68 @@ function scanSignal(r){
   if(r.score>=1)return{g:'▲',c:'var(--warn)',l:'איתות חלש'};
   return{g:'·',c:'var(--txt3)',l:'איתות זניח'};
 }
+// ── תבניות גרפיות בכרטיסי הסורק.
+//
+// ניסוח תיאורי בלבד, בכוונה. נמדד על 120 מניות ו-700 ימי מסחר שאף אחת
+// משלוש התבניות אינה מנבאת דבר: היתרון מול קניית יום אקראי באותה מניה
+// היה 0.21- עד 0.45+ נקודות אחוז, כולם בתוך הרעש. לכן אין כאן "אות",
+// אין חץ, ואין צבע כיווני — רק "מה שרואים בגרף", עם המספרים שיצרו
+// את הזיהוי בתוך ה-tooltip כדי שהמשתמש יוכל לבדוק אותנו.
+let _scanData=null,_patFilter=null;
+
+function patternNames(rows){
+  const seen=new Map();
+  (rows||[]).forEach(r=>(r.patterns||[]).forEach(p=>seen.set(p.name,(seen.get(p.name)||0)+1)));
+  return [...seen.entries()].sort((a,b)=>b[1]-a[1]);
+}
+
+function scanFreshness(d){
+  // גיל הנתון מוצג ולא מוסתר. השרת מחזיר תשובה שפג תוקפה כדי לא
+  // להשאיר את המשתמש 11 שניות מול מסך טעינה, ומרענן ברקע — אבל
+  // להציג נתון בן שבע דקות כאילו הוא של עכשיו זו תצוגת שווא.
+  if(d.age==null)return'';
+  // Math.round היה הופך 30 שניות ל"לפני 1 דקות" — גם מספר לא נכון וגם
+  // עברית לא נכונה. עיגול כלפי מטה, וצורת יחיד וזוגי מפורשות.
+  const m=Math.floor(d.age/60);
+  const when=m===0?'פחות מדקה':m===1?'דקה':m===2?'שתי דקות':m+' דקות';
+  return '<div class="scan-meta">'+seg('נתונים מלפני '+when+', מתעדכנים ברקע')+'</div>';
+}
+
+function renderScan(){
+  const box=document.getElementById('scanResults');
+  const d=_scanData;
+  if(!d)return;
+  const names=patternNames(d.results);
+  let head='';
+  if(names.length){
+    head='<div class="pat-filters"><span style="font-size:12px;color:var(--txt3)">תבניות בגרף:</span>'+
+      names.map(([n,c])=>'<span class="pat-chip'+(_patFilter===n?' on':'')+'" onclick="togglePat('+JSON.stringify(n).replace(/"/g,'&quot;')+')">'+esc(n)+' '+num(c)+'</span>').join('')+
+      (_patFilter?'<span class="pat-chip" onclick="togglePat(null)">הצג הכל</span>':'')+'</div>';
+  }
+  const rows=_patFilter? d.results.filter(r=>(r.patterns||[]).some(p=>p.name===_patFilter)) : d.results;
+  const grid=document.createElement('div');grid.className='scan-grid';
+  rows.forEach(r=>{
+    const gr=scanSignal(r);
+    const card=document.createElement('div');
+    card.className='glass scan-card'+(r.overbought?' overbought':'');
+    const pats=(r.patterns||[]).map(p=>'<span class="pat" title="'+esc(p.detail||'')+'">'+esc(p.name)+'</span>').join('');
+    card.innerHTML=
+      '<div class="scan-ticker"><span class="scan-signal" title="'+esc(gr.l)+'" style="background:'+gr.c+'22;border:1.5px solid '+gr.c+';color:'+gr.c+'">'+esc(gr.g)+'</span>'+esc(r.ticker)+
+      (r.overbought?'<span class="overbought-badge">⚠️ מתוחה</span>':'')+'</div>'+
+      '<div class="scan-rsi">'+num('RSI: '+esc(r.rsi)+' · $'+esc(r.price))+'</div>'+
+      sparkSvg(r.spark)+
+      (pats?'<div class="pat-row">'+pats+'</div>':'')+
+      '<div class="scan-signals">'+(r.signals||[]).map(s=>'<span class="sig '+(String(s).includes('נמוך')?'sig-green':String(s).includes('גבוה')?'sig-red':'sig-blue')+'">'+esc(s)+'</span>').join('')+'</div>';
+    if(validTicker(r.ticker))card.addEventListener('click',()=>loadScan(r.ticker));
+    grid.append(card);
+  });
+  box.innerHTML=head;
+  box.append(grid);
+  box.insertAdjacentHTML('beforeend', scanFreshness(d));
+}
+
+function togglePat(n){_patFilter=(_patFilter===n?null:n);renderScan();}
+
 async function runScan(scope){
   const box=document.getElementById('scanResults');
   const wl=getWL();
@@ -1317,21 +1391,8 @@ async function runScan(scope){
     clearTimeout(slow);
     if(d.error){box.innerHTML='<div class="error-state">'+esc(d.error)+'</div>';return;}
     if(!d.results||!d.results.length){box.innerHTML='<div class="empty"><div class="empty-icon">😴</div><div class="empty-title">אין איתותים כרגע</div></div>';return;}
-    const grid=document.createElement('div');grid.className='scan-grid';
-    d.results.forEach(r=>{
-      const gr=scanSignal(r);
-      const card=document.createElement('div');
-      card.className='glass scan-card'+(r.overbought?' overbought':'');
-      card.innerHTML=
-        '<div class="scan-ticker"><span class="scan-signal" title="'+esc(gr.l)+'" style="background:'+gr.c+'22;border:1.5px solid '+gr.c+';color:'+gr.c+'">'+esc(gr.g)+'</span>'+esc(r.ticker)+
-        (r.overbought?'<span class="overbought-badge">⚠️ מתוחה</span>':'')+'</div>'+
-        '<div class="scan-rsi">'+num('RSI: '+esc(r.rsi)+' · $'+esc(r.price))+'</div>'+
-        sparkSvg(r.spark)+
-        '<div class="scan-signals">'+(r.signals||[]).map(s=>'<span class="sig '+(String(s).includes('נמוך')?'sig-green':String(s).includes('גבוה')?'sig-red':'sig-blue')+'">'+esc(s)+'</span>').join('')+'</div>';
-      if(validTicker(r.ticker))card.addEventListener('click',()=>loadScan(r.ticker));
-      grid.append(card);
-    });
-    box.textContent='';box.append(grid);
+    _scanData=d;_patFilter=null;
+    renderScan();
   }catch(e){clearTimeout(slow);box.innerHTML='<div class="error-state">שגיאה בסריקה</div>';}
 }
 function loadScan(t){showAnalyze();document.getElementById('ticker').value=t;analyze();}
