@@ -8,6 +8,7 @@ import math
 import os
 import sys
 import time
+import threading
 import types
 from datetime import datetime
 from unittest.mock import MagicMock, patch, PropertyMock
@@ -453,11 +454,15 @@ class TestScanOne:
         if result is not None:
             assert len(result["spark"]) == 20
 
-    def test_spark_values_are_float(self):
+    def test_spark_values_are_normalised_integers(self):
+        # המיני-גרף נשלח כצורה ולא כמחירים: הדפדפן מנרמל ממילא לפני
+        # הציור, ולכן המחירים המוחלטים היו 47% מהתשובה לחינם
         df = _make_hist(150, "up")
         result = _scan_one("AAPL", df)
         if result is not None:
-            assert all(isinstance(v, float) for v in result["spark"])
+            assert all(isinstance(v, int) and not isinstance(v, bool)
+                       for v in result["spark"])
+            assert all(0 <= v <= api.SPARK_STEPS for v in result["spark"])
 
     def test_rsi_range(self):
         df = _make_hist(200, "up")
@@ -3319,3 +3324,192 @@ class TestScanUniverse:
 
     def test_the_universe_has_no_duplicates(self):
         assert len(api.CORE_UNIVERSE) == len(set(api.CORE_UNIVERSE))
+
+
+class TestSparkShape:
+    """המיני-גרף חייב לשמר את מה שנראה, ורק אותו."""
+
+    def test_the_shape_is_preserved(self):
+        # אותה צורה בדיוק אחרי נרמול: המרחקים היחסיים נשמרים
+        prices = [100.0, 105.0, 110.0, 105.0, 100.0]
+        out = api._spark_shape(prices)
+        assert out == [0, 50, 100, 50, 0]
+
+    def test_the_order_is_preserved_so_the_colour_rule_cannot_flip(self):
+        # הדפדפן צובע לפי "האם האחרונה גבוהה מהראשונה". המרה מונוטונית
+        # עולה אינה יכולה להפוך את זה, וזו הסיבה שהנרמול בטוח.
+        for prices in ([10.0, 12.0, 11.0, 15.0], [50.0, 40.0, 45.0, 30.0],
+                       [7.1, 7.2, 7.15, 7.05]):
+            out = api._spark_shape(prices)
+            assert (out[-1] >= out[0]) == (prices[-1] >= prices[0]), prices
+
+    def test_a_flat_series_stays_a_flat_line(self):
+        # חלוקה בטווח אפס — הסכנה הקלאסית. חייב לצאת קו, לא רשימה ריקה
+        out = api._spark_shape([42.0] * 6)
+        assert len(out) == 6
+        assert len(set(out)) == 1
+
+    def test_a_series_too_short_to_draw_returns_nothing(self):
+        assert api._spark_shape([]) == []
+        assert api._spark_shape([5.0]) == []
+
+    def test_broken_values_are_dropped(self):
+        out = api._spark_shape([100.0, None, 110.0, float("nan"), 120.0])
+        assert out == [0, 50, 100]
+
+    def test_it_really_is_smaller_on_the_wire(self):
+        # הטענה שהובילה לשינוי, נמדדת ולא מונחת
+        import json
+        prices = [196.51 + i * 1.37 for i in range(20)]
+        before = len(json.dumps([round(v, 2) for v in prices]))
+        after = len(json.dumps(api._spark_shape(prices)))
+        assert after <= before * 0.55, (before, after)   # נמדד 79 מול 158
+
+
+class TestScanStaleWhileRevalidate:
+    """סריקה שפג תוקפה מוחזרת מיד, ומתרעננת ברקע.
+
+    נמדד: 11 שניות בקריאה קרה מול 210ms בחמה — כלומר 98% מהזמן הוא
+    המשיכה החיצונית. בלי זה, אחת לחמש דקות משתמש אקראי שילם 11 שניות.
+    """
+
+    def setup_method(self):
+        api._cache.clear()
+        api._scan_refreshing.clear()
+
+    def test_a_stale_entry_is_returned_with_its_age(self):
+        api.cache_set("scan:__universe__", {"results": [{"ticker": "AAPL"}]})
+        api._cache["scan:__universe__"] = (time.time() - 600,
+                                           api._cache["scan:__universe__"][1])
+        val, age = api.cache_peek("scan:__universe__")
+        assert val["results"][0]["ticker"] == "AAPL"
+        assert 590 < age < 610
+
+    def test_a_fresh_entry_is_not_stale(self):
+        api.cache_set("scan:__universe__", {"results": []})
+        assert api.cache_get("scan:__universe__", api.SCAN_TTL) is not None
+
+    def test_peeking_a_missing_key_is_safe(self):
+        assert api.cache_peek("scan:nothing") == (None, None)
+
+    def test_only_one_background_refresh_runs_at_a_time(self):
+        # בלי המנעול, עשרה משתמשים בו-זמנית היו מפעילים עשר משיכות
+        # מקבילות של 127 טיקרים — בדיוק העומס שהמטמון נועד למנוע
+        calls = []
+        original = api._run_scan
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow(custom):
+            calls.append(1)
+            started.set()
+            release.wait(2)
+            return []
+
+        api._run_scan = slow
+        try:
+            assert api._spawn_scan_refresh("scan:x", []) is True
+            started.wait(2)
+            assert api._spawn_scan_refresh("scan:x", []) is False
+            assert api._spawn_scan_refresh("scan:x", []) is False
+        finally:
+            release.set()
+            time.sleep(0.2)
+            api._run_scan = original
+        assert len(calls) == 1
+
+    def test_the_guard_clears_after_the_refresh_finishes(self):
+        original = api._run_scan
+        api._run_scan = lambda custom: []
+        try:
+            api._spawn_scan_refresh("scan:y", [])
+            deadline = time.time() + 3
+            while "scan:y" in api._scan_refreshing and time.time() < deadline:
+                time.sleep(0.05)
+            assert "scan:y" not in api._scan_refreshing
+        finally:
+            api._run_scan = original
+
+    def test_a_failing_refresh_still_clears_the_guard(self):
+        # אחרת כשל אחד היה מקפיא את הרענון לצמיתות
+        original = api._run_scan
+
+        def boom(custom):
+            raise RuntimeError("yfinance נפל")
+
+        api._run_scan = boom
+        try:
+            api._spawn_scan_refresh("scan:z", [])
+            deadline = time.time() + 3
+            while "scan:z" in api._scan_refreshing and time.time() < deadline:
+                time.sleep(0.05)
+            assert "scan:z" not in api._scan_refreshing
+        finally:
+            api._run_scan = original
+
+    def test_the_stale_window_is_bounded(self):
+        # ישן זה בסדר, עתיק זה לא
+        assert api.SCAN_STALE_MAX > api.SCAN_TTL
+        assert api.SCAN_STALE_MAX <= 3600
+
+
+class TestScanEndpointFreshness:
+    """המסלול המלא דרך נקודת הקצה, לא רק הפונקציות בנפרד."""
+
+    def setup_method(self):
+        api._cache.clear()
+        api._scan_refreshing.clear()
+        self._orig = api._run_scan
+        self.calls = []
+
+        def fake(custom):
+            self.calls.append(1)
+            return [{"ticker": "AAPL", "score": 9, "spark": [0, 50, 100]}]
+
+        api._run_scan = fake
+
+    def teardown_method(self):
+        api._run_scan = self._orig
+        api._cache.clear()
+        api._scan_refreshing.clear()
+
+    def _age(self, seconds):
+        k = "scan:__universe__"
+        api._cache[k] = (time.time() - seconds, api._cache[k][1])
+
+    def test_a_cold_call_computes_and_carries_no_age(self):
+        d = client.get("/scan").json()
+        assert d["results"] and "age" not in d
+        assert len(self.calls) == 1
+
+    def test_a_warm_call_serves_the_cache_without_recomputing(self):
+        client.get("/scan")
+        d = client.get("/scan").json()
+        assert "age" not in d
+        assert len(self.calls) == 1
+
+    def test_a_stale_call_answers_at_once_and_says_how_old_it_is(self):
+        client.get("/scan")
+        self._age(600)
+        d = client.get("/scan").json()
+        assert d["results"], "התוצאות חייבות לחזור מיד"
+        assert d["age"] == 600, "הגיל חייב להיות מפורש בתשובה"
+
+    def test_a_stale_call_triggers_exactly_one_background_refresh(self):
+        client.get("/scan")
+        self._age(600)
+        client.get("/scan")
+        client.get("/scan")
+        deadline = time.time() + 3
+        while len(self.calls) < 2 and time.time() < deadline:
+            time.sleep(0.05)
+        assert len(self.calls) == 2, "רענון אחד בדיוק, לא אחד לכל בקשה"
+        assert api.cache_get("scan:__universe__", api.SCAN_TTL) is not None
+
+    def test_a_call_past_the_stale_window_waits_for_fresh_data(self):
+        # ישן זה בסדר, עתיק זה לא: מעבר לתקרה עדיף להמתין
+        client.get("/scan")
+        self._age(api.SCAN_STALE_MAX + 100)
+        d = client.get("/scan").json()
+        assert "age" not in d
+        assert len(self.calls) == 2
