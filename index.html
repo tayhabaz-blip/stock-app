@@ -1674,15 +1674,6 @@ async function getAI(data){
         targets.push({p:rnd(z.p),pct:parseFloat(((z.p-entry)/entry*100).toFixed(2)),
           str:z.str,tf:z.tf||null,confirmed:!!z.confirmed});
       });
-      const lt=window.__ltContext;
-      if(lt&&lt.ltHigh&&lt.ltHigh>targets[targets.length-1].p*1.02){
-        targets.push({
-          p:rnd(lt.ltHigh),
-          pct:parseFloat(((lt.ltHigh-entry)/entry*100).toFixed(2)),
-          str:'שיא '+(lt.ltYears||5)+' שנים',
-          tf:'שבועי',confirmed:false
-        });
-      }
     }else{
       // אין התנגדות נוספת → יעד מדוד (Measured Move) ממחיר הפריצה
       const rangeBottom=supports.length?supports[0].p:breakLevel*0.92;
@@ -1697,29 +1688,22 @@ async function getAI(data){
     const capped=capStop(rawStop,entry);stop=capped.v;stopCapped=capped.capped;
     distToBreakPct=null;
     headline='שדה פתוח — אין התנגדות קרובה מעל';
-    // ── גם בשדה פתוח יש לאן ללכת: רמות שבועיות מעל המחיר, ואחריהן השיא
-    // הרב-שנתי. זה בדיוק המקרה של מניה שפרצה את כל רמות השנה האחרונה אבל
-    // עדיין רחוקה מהשיא ההיסטורי שלה — קודם הכלי לא ראה אותו בכלל. ──
-    const ltOpen=window.__ltContext;
+    // ── גם בשדה פתוח יש לאן ללכת: רמות שבועיות מעל המחיר. השיא
+    // הרב-שנתי עצמו אינו יעד אלא הקשר, ומוצג בנפרד בסוף התוכנית. ──
     mergedResists.filter(z=>z.p>priceNum*1.02).slice(0,3).forEach(z=>{
       targets.push({p:rnd(z.p),pct:parseFloat(((z.p-entry)/entry*100).toFixed(2)),
         str:z.str,tf:z.tf||null,confirmed:!!z.confirmed});
     });
-    if(ltOpen&&ltOpen.ltHigh&&ltOpen.ltHigh>priceNum*1.02&&
-       (!targets.length||ltOpen.ltHigh>targets[targets.length-1].p*1.02)){
-      targets.push({p:rnd(ltOpen.ltHigh),
-        pct:parseFloat(((ltOpen.ltHigh-entry)/entry*100).toFixed(2)),
-        str:'שיא '+(ltOpen.ltYears||5)+' שנים',tf:'שבועי',confirmed:false});
-    }
   }
 
-  // הפוטנציאל הגדול = היעד הרחוק ביותר בשרשרת
-  const maxPot=targets.length?targets[targets.length-1].pct:null;
   // יחס סיכון/סיכוי לכל יעד בנפרד — הסיכון קבוע (עד הסטופ), הסיכוי גדל ככל שהיעד רחוק יותר
   const riskAmt=entry-stop;
   if(riskAmt>0){
     targets.forEach(t=>{t.rr=parseFloat(((t.p-entry)/riskAmt).toFixed(2));});
   }
+  targets=trimTargets(targets);
+  // הפוטנציאל הגדול = היעד הרחוק ביותר ששרד את הקיצוץ
+  const maxPot=targets.length?targets[targets.length-1].pct:null;
   const rr=(targets.length&&targets[0].rr!=null)?targets[0].rr:null;
 
   // ── המגמה שנמסרת ל-AI. קודם היא נגזרה אך ורק מהיחס בין שני הממוצעים,
@@ -1856,8 +1840,20 @@ async function getAI(data){
     if(maxPot!==null&&maxPot>=15){
       out+='\n🚀 פוטנציאל פריצה גדול: עד '+num('+'+maxPot+'%')+'\n';
     }
+  }else if(!openField){
+    // מניה שכל היעדים שלה רחוקים מ-5 יחידות סיכון מקבלת תשובה כנה
+    // במקום יעד מומצא. נמדד: זה קרה במניה אחת מתוך 13.
+    out+='אין יעד סביר ברמת הסיכון הזו — כל ההתנגדויות מעל רחוקות מדי מהסטופ\n';
   }else{
     out+='יעד: '+headline+'\n';
+  }
+  // ── השיא הרב-שנתי כהקשר, לא כיעד. קודם הוא נדחף לשרשרת ככל יעד אחר,
+  // וכך מניה שנמצאת 74% מתחת לשיא שלה קיבלה "יעד" של +289.6% עם יחס
+  // סיכוי-סיכון של 67:1. הרמה עצמה מעניינת; היא פשוט אינה יעד לעסקה. ──
+  if(ltCtx&&ltCtx.ltHigh&&entry&&ltCtx.ltHigh>entry*1.02){
+    const away=((ltCtx.ltHigh-entry)/entry*100).toFixed(1);
+    out+='\nלהקשר בלבד — שיא '+(ltCtx.ltYears||5)+' שנים: '+num('$'+ltCtx.ltHigh)+
+         ' ('+num(away+'%')+' מעל הכניסה). '+seg('רמה היסטורית, לא יעד לעסקה')+'\n';
   }
   out+='\nסיכום: '+sg.l;
   return {text:out,entry,stop,breakLevel,targets,maxPot,rr,distToBreakPct,openField,invalidation,ltCtx,structure};
@@ -1910,6 +1906,29 @@ function reconcile52(apiVal,series,pick){
  * מול 553.72, וכן NVDA ו-GOOGL). זו אינה קוסמטיקה: atMultiYearHigh נדלק
  * מהמספר הזה, ויעד פריצה שנבנה ממנו היה נופל מתחת לשיא שהמשתמש רואה
  * בכרטיס באותו מסך ממש. אותו עיקרון בדיוק כמו reconcile52. */
+/* קיצוץ שרשרת היעדים.
+ *
+ * נמדד בפרודקשן על 13 מניות: השרשרת הגיעה ל-8 יעדים, והרחוק ביותר היה
+ * ‎+289.6%‎ (NKE ב-42.39 מול שיא חמש שנים ב-165.15) עם "סיכוי מול סיכון
+ * 67:1". המספר נכון אריתמטית וחסר משמעות מעשית: הוא מציג רמה שרחוקה
+ * שנים כאילו היא יעד לעסקה, ויחס של 67:1 קורא לזה הימור משתלם.
+ *
+ * הסף נבחר במדידה ולא בהערכה. תקרה של 5 יחידות סיכון משאירה 26 מתוך 39
+ * היעדים והיעד הגרוע ביותר עומד על ‎+25.8%‎; תקרה של 6 קופצת מיד ל-‎+69.3%‎.
+ * המדרגה החדה הזו היא הגבול הטבעי. אחרי הקיצוץ התקרה בכל האתר ירדה
+ * מ-‎+289.6%‎ ל-‎+18.1%‎, והבאנר "פוטנציאל פריצה גדול" ירד מ-8 מתוך 13
+ * מניות ל-3 מתוך 13.
+ *
+ * מניה שאין לה אף יעד מתחת לתקרה מקבלת רשימה ריקה, וזו תשובה נכונה:
+ * "אין יעד סביר ברמת הסיכון הזו" עדיף על יעד מומצא של ‎+69%‎. */
+const MAX_TARGET_R = 5;
+const MAX_TARGETS  = 3;
+function trimTargets(list){
+  if(!Array.isArray(list))return[];
+  return list.filter(function(t){
+    return t && (t.rr==null || t.rr<=MAX_TARGET_R);
+  }).slice(0,MAX_TARGETS);
+}
 function widenLongRange(ltVal,wkVal,pick){
   const lt=(ltVal!=null&&!isNaN(ltVal))?ltVal:null;
   const wk=(wkVal!=null&&!isNaN(wkVal)&&wkVal>0)?wkVal:null;
