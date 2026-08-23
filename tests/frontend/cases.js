@@ -556,3 +556,53 @@ test('אזהרת שיא רב-שנתי אינה נדלקת מוקדם מדי', ()
   assert(price >= before * 0.999, 'לפני התיקון התג היה נדלק');
   assert(!(price >= after), 'אחרי התיקון המחיר עדיין מתחת לשיא האמיתי');
 });
+
+/* ---------------------------------------------------------------- */
+group('התבניות בסורק — תיאור, לא איתות');
+
+const P = X.load(['patternNames', 'scanFreshness'], "function seg(v){return v==null||v===''?v:'\u2067'+v+'\u2069';}");
+
+const ROWS = [
+  { ticker: 'AAPL', patterns: [{ name: 'תחתית כפולה', dir: 'up', detail: 'שפל ב-100 ושפל ב-101' }] },
+  { ticker: 'MSFT', patterns: [{ name: 'תחתית כפולה', dir: 'up', detail: 'x' },
+                               { name: 'משולש עולה', dir: 'up', detail: 'y' }] },
+  { ticker: 'KO',   patterns: [] },
+  { ticker: 'BA' },
+];
+
+test('כל תבנית נספרת פעם אחת לכל מניה', () => {
+  const n = P.patternNames(ROWS);
+  eq(JSON.stringify(n), JSON.stringify([['תחתית כפולה', 2], ['משולש עולה', 1]]), 'ספירה');
+});
+
+test('התבניות מסודרות מהנפוצה לנדירה', () => {
+  const n = P.patternNames(ROWS);
+  assert(n[0][1] >= n[1][1], 'הסדר אינו יורד');
+});
+
+test('מניות בלי תבניות אינן שוברות את הספירה', () => {
+  eq(JSON.stringify(P.patternNames([{ ticker: 'X' }])), '[]', 'בלי שדה');
+  eq(JSON.stringify(P.patternNames([])), '[]', 'רשימה ריקה');
+  eq(JSON.stringify(P.patternNames(null)), '[]', 'null');
+});
+
+test('גיל הנתונים מוצג ולא מוסתר', () => {
+  // השרת מחזיר תשובה שפג תוקפה כדי לא להשאיר את המשתמש 11 שניות מול
+  // מסך טעינה. להציג נתון בן שבע דקות כאילו הוא של עכשיו זו תצוגת שווא.
+  assert(P.scanFreshness({ age: 420 }).includes('7 דקות'), 'חסר הגיל בדקות');
+  assert(P.scanFreshness({ age: 30 }).includes('פחות מדקה'), 'גיל קצר');
+  assert(P.scanFreshness({ age: 420 }).includes('מתעדכנים ברקע'), 'חסר ההסבר');
+});
+
+test('הניסוח תקין בעברית בכל טווח', () => {
+  // Math.round הפך 30 שניות ל"לפני 1 דקות" — מספר שגוי ועברית שגויה
+  assert(!/לפני 1 דקות/.test(P.scanFreshness({ age: 90 })), 'צורת יחיד שבורה');
+  assert(P.scanFreshness({ age: 90 }).includes('מלפני דקה'), 'דקה אחת');
+  assert(P.scanFreshness({ age: 150 }).includes('שתי דקות'), 'שתי דקות');
+  assert(P.scanFreshness({ age: 200 }).includes('3 דקות'), 'שלוש ומעלה');
+});
+
+test('נתון טרי אינו מקבל שום הערה', () => {
+  eq(P.scanFreshness({}), '', 'בלי age');
+  eq(P.scanFreshness({ age: null }), '', 'age ריק');
+});
