@@ -1146,6 +1146,9 @@ AI_SYSTEM = "\n".join([
     "  'נפח המסחר דל, 0.8 מהממוצע'. נצפה אצלך בפועל הצירוף 'נפח המסחר היחסי",
     "  של 0.8-ממוצע' — זו אינה עברית ואסור לכתוב כך.",
     "- מיקום נמוך בטווח 52 השבועות = המניה נסחרת קרוב לשפל השנתי.",
+    "  המספר הזה הוא מיקום בתוך הטווח, לא יחס לשיא. נצפה אצלך בפועל 'המניה",
+    "  נסחרת ב-68% משיא השנתי' — זו טענה הפוכה, כי 68% מהשיא פירושו 32%",
+    "  מתחת אליו. הניסוח היחיד המותר: 'ב-68% מטווח 52 השבועות'.",
     "- מכפיל רווח גבוה = תמחור שמגלם ציפיות צמיחה גבוהות, ולכן רגיש לאכזבה.",
     "- אם נמסר לך שדוח רבעוני קרוב, ציין זאת כעובדת תזמון בלבד — אסור לך לנחש",
     "  אם הדוח יהיה טוב או רע, זו מידע שאין לך.",
@@ -1574,6 +1577,7 @@ async def ai_analysis(req: Request):
             return {"text": "", "reason": "transient"}
         text = _normalize_hebrew_typography(_strip_filler_sentences(text))
         text = _enforce_rsi_state(text, body.get("rsiNum"))
+        text = _enforce_week_pos(text, body.get("weekPos"))
         return cache_set(ai_key, {"text": text})
     except Exception:
         log.exception("ai_analysis failed for %s", ticker)
@@ -1627,6 +1631,49 @@ def _enforce_rsi_state(text: str, rsi_num) -> str:
         return text
     log.warning("removed %s sentence(s) contradicting RSI %s", len(parts) - len(kept), rsi_num)
     return " ".join(kept).strip()
+
+
+# -- ניסוחים שבהם המודל הופך את משמעות המיקום בטווח 52 השבועות. --
+WEEK_POS_WRONG = re.compile(r"(ב-)?(\d{1,3})%\s*מ(?:ה)?שיא(\s+ה?שנתי|\s+ה?שנה)?")
+
+# -- מילים שמסמנות מרחק מהשיא. "רחוק 12% משיא השנתי" הוא ניסוח נכון
+# לחלוטין, ואסור לגעת בו גם אם 12 במקרה שווה למיקום בטווח. --
+WEEK_POS_DISTANCE_WORDS = ("רחוק", "מתחת", "נמוך", "הרחק", "פער", "פחות")
+
+
+def _enforce_week_pos(text: str, week_pos) -> str:
+    """מתקן ניסוח שהופך את משמעות המיקום בטווח 52 השבועות.
+
+    השרת מוסר את הנתון נכון ובמפורש: "מיקום המחיר בטווח 52 השבועות: 68%
+    (100% = שיא שנתי, 0% = שפל שנתי)". למרות זאת נמדד שב-2 מתוך 8 מקרים
+    המודל ניסח זאת "המניה נסחרת ב-68% משיא השנתי" — וזו טענה אחרת לגמרי.
+    68% *מהשיא* פירושו 32% מתחת אליו, מצב שלילי; 68% *מהטווח* פירושו החלק
+    העליון, מצב חיובי. באותו מקרה המודל אף הסיק "מה שמעלה את החשש" —
+    כלומר אותו מספר בדיוק הוליד מסקנה הפוכה.
+
+    כאן לא מוחקים משפט אלא מתקנים תווית, כי המספר שלנו והתווית הנכונה
+    ידועה. התיקון חל רק כשהמספר בטקסט זהה למיקום שמסרנו, ורק כשאין
+    לפניו מילת מרחק — אחרת מדובר בניסוח תקין שאין לגעת בו.
+    """
+    if not text or not isinstance(week_pos, (int, float)) or isinstance(week_pos, bool):
+        return text
+    target = int(round(week_pos))
+    fixed = 0
+
+    def repl(m):
+        nonlocal fixed
+        if int(m.group(2)) != target:
+            return m.group(0)
+        before = text[max(0, m.start() - 25):m.start()]
+        if any(w in before for w in WEEK_POS_DISTANCE_WORDS):
+            return m.group(0)
+        fixed += 1
+        return (m.group(1) or "") + m.group(2) + "% מטווח 52 השבועות"
+
+    out = WEEK_POS_WRONG.sub(repl, text)
+    if fixed:
+        log.warning("fixed %s phrase(s) mislabelling week position %s", fixed, target)
+    return out
 
 
 def _strip_filler_sentences(text: str) -> str:
@@ -1720,6 +1767,8 @@ async def ai_battle(req: Request):
         # חייב לציית לאותו סף RSI שהמשתמש רואה על המסך.
         bull = _enforce_rsi_state(bull, body.get("rsiNum"))
         bear = _enforce_rsi_state(bear, body.get("rsiNum"))
+        bull = _enforce_week_pos(bull, body.get("weekPos"))
+        bear = _enforce_week_pos(bear, body.get("weekPos"))
         return cache_set(battle_key, {"bull": bull, "bear": bear})
     except Exception:
         log.exception("ai_battle failed for %s", ticker)
