@@ -1882,6 +1882,120 @@ def _translate(txt: str, budget_left: float):
         return None
 
 
+# ══════════════════════════════════════════════════════════════════════
+# ניסוח כותרות חדשות בעברית
+#
+# עד כאן הכותרות עברו בנקודת קצה לא רשמית של Google Translate, מילה
+# במילה. מה שהוצג בפועל למשתמש: "בזמן שהמלחמה תקועה את הגז הקטארי"
+# ("strands" תורגם כפועל שגוי), "כמה חברות נפט להימנע מספינות" (בלי
+# הטיית פועל), ו-"הסנקציות הן יותר אנציו" — אזכור לנחיתה באנציו 1944
+# שאינו אומר דבר לקורא ישראלי.
+#
+# כאן המודל מנסח מחדש במקום לתרגם. הסיכון הברור הוא שמודל שפה יוסיף
+# עובדה שלא הייתה בכותרת, ולכן כל כותרת עוברת ולידציה, וכל כישלון
+# נופל בחזרה לתרגום ואז למקור האנגלי. עדיף מקור באנגלית על עברית
+# מומצאת.
+# ══════════════════════════════════════════════════════════════════════
+
+HEADLINE_SYSTEM = "\n".join([
+    "אתה עורך חדשות כלכליות שכותב עברית תקנית לקוראים ישראלים.",
+    "",
+    "אתה מקבל כותרות ממוספרות באנגלית. החזר את אותן כותרות בעברית,",
+    "באותו מספור ובאותו סדר, שורה אחת לכל כותרת ותו לא.",
+    "",
+    "כללים מחייבים:",
+    "- נסח כמו כתב, אל תתרגם מילה במילה. נצפה בפועל 'בזמן שהמלחמה תקועה",
+    "  את הגז הקטארי' — זו אינה עברית. הניסוח הנכון: 'המלחמה מקבעת את",
+    "  הגז הקטארי לחצי שנה'.",
+    "- חל איסור מוחלט להוסיף עובדה, מספר, שם או פרשנות שאינם בכותרת.",
+    "- חל איסור להשמיט מספר או שם שמופיעים בכותרת.",
+    "- שמות חברות, טיקרים ומדדים נשארים באנגלית: Nvidia, S&P 500, OPEC.",
+    "- אזכור היסטורי או צבאי שלא יובן לקורא ישראלי — כתוב את המשמעות",
+    "  במקום להעתיק את השם. נצפה בפועל 'הסנקציות הן יותר אנציו'.",
+    "- עברית תקנית בלבד. אסור לשלב אותיות לטיניות בתוך מילה עברית.",
+    "- בלי מרכאות מיותרות, בלי Markdown, בלי הסברים משלך.",
+    "- כותרת היא כותרת: אורך דומה למקור, לא פסקה.",
+])
+
+# -- מעל זה הניסוח כנראה הפך לפסקה, ואז זו כבר לא כותרת. --
+HEADLINE_MAX_RATIO = 2.5
+
+
+def _strip_source_suffix(headline: str, source: str) -> str:
+    """מסיר את שם המקור מסוף הכותרת. הוא מוצג ממילא בשורה נפרדת בכרטיס,
+    ובלי ההסרה המשתמש ראה 'רויטרס' פעמיים באותו כרטיס."""
+    if not headline or not source:
+        return headline or ""
+    tail = " - " + source
+    if headline.endswith(tail):
+        return headline[: -len(tail)].strip()
+    return headline
+
+
+def _valid_he_headline(he: str, en: str) -> bool:
+    """כותרת עברית מתקבלת רק אם היא באמת כותרת עברית."""
+    if not he or not he.strip():
+        return False
+    he = he.strip()
+    if not re.search(r"[\u0590-\u05FF]", he):
+        return False                      # בלי אות עברית אחת זה לא תרגום
+    if len(he) > max(40, len(en) * HEADLINE_MAX_RATIO):
+        return False                      # התפרש לפסקה
+    if re.search(r"[\u0590-\u05FF][A-Za-z]|[A-Za-z][\u0590-\u05FF]", he):
+        return False                      # אותיות לטיניות דבוקות לעברית
+    return True
+
+
+def _rewrite_headlines(headlines):
+    """מנסח את כל הכותרות בקריאה אחת, ומחזיר מיפוי אינדקס->עברית.
+
+    קריאה אחת ולא אחת לכותרת: זה גם זול יותר וגם שומר על סגנון אחיד
+    בין הכרטיסים. הכישלון רך — מה שלא עבר ולידציה פשוט אינו במיפוי,
+    והקורא נופל חזרה לתרגום ואז לאנגלית.
+    """
+    items = [(i, h) for i, h in enumerate(headlines) if h and h.strip()]
+    if not items or not GROQ_KEY:
+        return {}
+    numbered = "\n".join("%d. %s" % (n + 1, h) for n, (_, h) in enumerate(items))
+    payload = {
+        "model": AI_MODEL,
+        "max_completion_tokens": 60 * len(items) + 200,
+        "temperature": 0.2,
+        "messages": [
+            {"role": "system", "content": HEADLINE_SYSTEM},
+            {"role": "user", "content": numbered},
+        ],
+    }
+    if AI_IS_REASONING_MODEL:
+        payload["max_completion_tokens"] += AI_REASONING_HEADROOM
+        payload["reasoning_effort"] = AI_REASONING_EFFORT
+        payload["include_reasoning"] = False
+    try:
+        d = _call_groq_with_fallback(payload)
+        if not d or d is RATE_LIMITED:
+            return {}
+        text = d["choices"][0]["message"]["content"] or ""
+    except Exception:
+        log.exception("headline rewrite failed")
+        return {}
+
+    out = {}
+    for line in text.splitlines():
+        m = re.match(r"\s*(\d+)[.)]\s*(.+)", line.strip())
+        if not m:
+            continue
+        n = int(m.group(1)) - 1
+        if not (0 <= n < len(items)):
+            continue
+        idx, en = items[n]
+        he = m.group(2).strip().strip('"').strip("'")
+        if _valid_he_headline(he, en):
+            out[idx] = he
+    if len(out) < len(items):
+        log.warning("headline rewrite: %s of %s passed validation", len(out), len(items))
+    return out
+
+
 # ── פרוקסי לחדשות Finnhub: הטוקן נשאר בשרת (מטמון 5 דקות).
 # התרגום נעשה כאן ולא בדפדפן: כך זו קריאה אחת לכל 5 דקות עבור כל
 # המבקרים יחד, במקום שמונה קריאות אצל כל מבקר בנפרד. ──
@@ -1907,13 +2021,22 @@ def get_news(request: Request):
             return {"news": []}
         data = data[:8]
 
-        deadline = time.time() + 10  # תקציב זמן כולל לתרגום
+        # שם המקור מוצג בשורה נפרדת בכרטיס, ולכן הוא נחתך מהכותרת לפני
+        # הניסוח — אחרת "רויטרס" הופיע פעמיים באותו כרטיס.
+        clean = [_strip_source_suffix(n.get("headline", ""), n.get("source", ""))
+                 for n in data]
+        rewritten = _rewrite_headlines(clean)
+
+        deadline = time.time() + 10  # תקציב זמן כולל לנפילה חזרה לתרגום
         slim = []
-        for n in data:
-            headline = n.get("headline", "")
+        for i, n in enumerate(data):
+            headline = clean[i]
+            he = rewritten.get(i)
+            if he is None:
+                he = _translate(headline, deadline - time.time())
             slim.append({
                 "headline": headline,
-                "headline_he": _translate(headline, deadline - time.time()),
+                "headline_he": he,
                 "url": n.get("url", ""),
                 "source": n.get("source", ""),
                 "datetime": n.get("datetime", 0),
