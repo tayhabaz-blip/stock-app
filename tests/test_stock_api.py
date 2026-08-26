@@ -3513,3 +3513,133 @@ class TestScanEndpointFreshness:
         d = client.get("/scan").json()
         assert "age" not in d
         assert len(self.calls) == 2
+
+
+class TestHeadlineSourceSuffix:
+    """שם המקור מוצג בשורה נפרדת בכרטיס ולכן נחתך מהכותרת."""
+
+    def test_the_source_is_removed_from_the_end(self):
+        # בלי זה המשתמש ראה "רויטרס" פעמיים באותו כרטיס
+        assert api._strip_source_suffix("Oil prices rise - Reuters", "Reuters") == "Oil prices rise"
+
+    def test_a_different_source_is_left_alone(self):
+        h = "Oil prices rise - Bloomberg"
+        assert api._strip_source_suffix(h, "Reuters") == h
+
+    def test_a_headline_without_a_suffix_is_unchanged(self):
+        assert api._strip_source_suffix("Oil prices rise", "Reuters") == "Oil prices rise"
+
+    def test_missing_input_is_safe(self):
+        assert api._strip_source_suffix("", "Reuters") == ""
+        assert api._strip_source_suffix("Oil", "") == "Oil"
+        assert api._strip_source_suffix(None, "Reuters") == ""
+
+
+class TestHebrewHeadlineValidation:
+    """כותרת מתקבלת רק אם היא באמת כותרת עברית.
+
+    מודל שפה שמנסח מחדש עלול להחזיר פסקה, אנגלית, או עברית שבורה.
+    עדיף המקור באנגלית על עברית מומצאת.
+    """
+
+    EN = "As war strands Qatari gas for 6 months, US sales rise"
+
+    def test_a_proper_hebrew_headline_passes(self):
+        assert api._valid_he_headline("המלחמה מקבעת את הגז הקטארי לחצי שנה", self.EN)
+
+    def test_an_empty_answer_is_rejected(self):
+        assert not api._valid_he_headline("", self.EN)
+        assert not api._valid_he_headline("   ", self.EN)
+        assert not api._valid_he_headline(None, self.EN)
+
+    def test_an_answer_without_hebrew_is_rejected(self):
+        # המודל שכח לתרגם והחזיר את המקור
+        assert not api._valid_he_headline("As war strands Qatari gas", self.EN)
+
+    def test_latin_glued_to_hebrew_is_rejected(self):
+        # אותה מחלה שנאסרה בניתוח עצמו — אות לטינית דבוקה למילה עברית
+        assert not api._valid_he_headline("מניית NVDAעלתה היום", self.EN)
+        assert not api._valid_he_headline("עלייה בNvidia", self.EN)
+
+    def test_a_separated_ticker_is_fine(self):
+        # שמות חברות נשארים באנגלית במכוון, וזה תקין כשהם מופרדים
+        assert api._valid_he_headline("מניית Nvidia עלתה ב-4%", self.EN)
+
+    def test_a_paragraph_is_rejected(self):
+        # כותרת היא כותרת. ניסוח שהתפרש לפסקה אינו כותרת.
+        assert not api._valid_he_headline("א" * 300, self.EN)
+
+    def test_a_short_headline_is_not_punished_for_being_short(self):
+        assert api._valid_he_headline("הנפט עלה", self.EN)
+
+
+class TestHeadlineRewrite:
+    """הניסוח מחדש, כולל כל מסלולי הנפילה."""
+
+    HEADS = ["Oil prices rise on supply fears", "Fed holds rates steady"]
+
+    def _reply(self, text):
+        return {"choices": [{"message": {"content": text}}]}
+
+    def test_a_clean_answer_is_parsed_into_a_map(self):
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback",
+                          return_value=self._reply("1. מחירי הנפט עולים על רקע חשש להיצע\n2. הפדרל ריזרv")):
+            out = api._rewrite_headlines(self.HEADS)
+        assert out[0] == "מחירי הנפט עולים על רקע חשש להיצע"
+
+    def test_only_valid_lines_survive(self):
+        # שורה שנייה חזרה באנגלית — היא נופלת, הראשונה נשארת
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback",
+                          return_value=self._reply("1. מחירי הנפט עולים\n2. Fed holds rates steady")):
+            out = api._rewrite_headlines(self.HEADS)
+        assert 0 in out and 1 not in out
+
+    def test_numbering_maps_to_the_right_headline(self):
+        # סדר הפוך בתשובה אינו מבלבל את המיפוי
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback",
+                          return_value=self._reply("2. הפדרל ריזרב הותיר את הריבית\n1. מחירי הנפט עולים")):
+            out = api._rewrite_headlines(self.HEADS)
+        assert out[0] == "מחירי הנפט עולים"
+        assert out[1] == "הפדרל ריזרב הותיר את הריבית"
+
+    def test_a_line_number_out_of_range_is_ignored(self):
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback",
+                          return_value=self._reply("7. כותרת מומצאת\n1. מחירי הנפט עולים")):
+            out = api._rewrite_headlines(self.HEADS)
+        assert list(out) == [0]
+
+    def test_a_rate_limited_call_falls_back_quietly(self):
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback", return_value=api.RATE_LIMITED):
+            assert api._rewrite_headlines(self.HEADS) == {}
+
+    def test_a_crash_falls_back_quietly(self):
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback", side_effect=RuntimeError("boom")):
+            assert api._rewrite_headlines(self.HEADS) == {}
+
+    def test_without_a_key_nothing_is_attempted(self):
+        with patch.object(api, "GROQ_KEY", ""):
+            assert api._rewrite_headlines(self.HEADS) == {}
+
+    def test_empty_input_is_safe(self):
+        assert api._rewrite_headlines([]) == {}
+        assert api._rewrite_headlines(["", "   "]) == {}
+
+    def test_it_is_one_call_for_all_headlines(self):
+        # קריאה אחת ולא אחת לכותרת: זול יותר, ומשמר סגנון אחיד בין הכרטיסים
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback",
+                          return_value=self._reply("1. א\n2. ב")) as m:
+            api._rewrite_headlines(self.HEADS)
+        assert m.call_count == 1
+
+    def test_the_system_prompt_names_the_observed_failures(self):
+        # אותה שיטה שעבדה ל-RSI, לנפח ולמיקום בטווח: דוגמה שלילית מפורשת
+        assert "תקועה" in api.HEADLINE_SYSTEM
+        assert "אנציו" in api.HEADLINE_SYSTEM
+        assert "אסור להוסיף עובדה" in api.HEADLINE_SYSTEM or "איסור מוחלט להוסיף עובדה" in api.HEADLINE_SYSTEM
