@@ -3643,3 +3643,48 @@ class TestHeadlineRewrite:
         assert "תקועה" in api.HEADLINE_SYSTEM
         assert "אנציו" in api.HEADLINE_SYSTEM
         assert "אסור להוסיף עובדה" in api.HEADLINE_SYSTEM or "איסור מוחלט להוסיף עובדה" in api.HEADLINE_SYSTEM
+
+
+class TestHeadlineFactualGuards:
+    """שמירה מפני המצאת שמות — הכשל שנצפה בפרודקשן ביום הראשון.
+
+    "Strait of Hormuz" תורגם "מצר תבור" (תבור הוא הר בגליל), ו-impasse
+    (קיפאון) תורגם "מתקפה". הוולידציה המבנית אינה יכולה לתפוס שם שגוי,
+    ולכן ההגנה היא בהנחיות: בספק — משאירים באנגלית.
+    """
+
+    def test_the_prompt_forbids_guessing_a_hebrew_name(self):
+        assert "מצר תבור" in api.HEADLINE_SYSTEM
+        assert "השאר" in api.HEADLINE_SYSTEM
+
+    def test_the_prompt_names_the_impasse_error(self):
+        assert "impasse" in api.HEADLINE_SYSTEM
+
+    def test_the_prompt_requires_a_plain_hyphen(self):
+        assert "מקף רגיל" in api.HEADLINE_SYSTEM
+
+
+class TestHyphenNormalisation:
+    """מקף טיפוגרפי הוא פגם מבני, ולכן מתקנים אותו במקום לפסול כותרת."""
+
+    def test_every_fancy_hyphen_becomes_a_plain_one(self):
+        for ch in api.FANCY_HYPHENS:
+            out = api._normalise_hyphens("מחירי הנפט יורדים ב" + ch + "2 דולר")
+            assert out == "מחירי הנפט יורדים ב-2 דולר", repr(ch)
+
+    def test_a_plain_hyphen_is_untouched(self):
+        t = "מחירי הנפט יורדים ב-2 דולר"
+        assert api._normalise_hyphens(t) == t
+
+    def test_missing_input_is_safe(self):
+        assert api._normalise_hyphens("") == ""
+        assert api._normalise_hyphens(None) is None
+
+    def test_a_headline_is_not_rejected_over_a_hyphen(self):
+        # לפני התיקון כותרת תקינה לחלוטין הגיעה עם מקף טיפוגרפי
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback",
+                          return_value={"choices": [{"message": {"content":
+                              "1. מחירי הנפט יורדים ב\u20112 דולר"}}]}):
+            out = api._rewrite_headlines(["Oil prices fall $2 on talks"])
+        assert out[0] == "מחירי הנפט יורדים ב-2 דולר"
