@@ -1912,6 +1912,13 @@ HEADLINE_SYSTEM = "\n".join([
     "- שמות חברות, טיקרים ומדדים נשארים באנגלית: Nvidia, S&P 500, OPEC.",
     "- אזכור היסטורי או צבאי שלא יובן לקורא ישראלי — כתוב את המשמעות",
     "  במקום להעתיק את השם. נצפה בפועל 'הסנקציות הן יותר אנציו'.",
+    "- שם מקום, ארגון או אדם שאינך בטוח בצורתו העברית המקובלת — השאר",
+    "  אותו באנגלית. שם באנגלית הוא מידע חסר; שם עברי שגוי הוא מידע כוזב.",
+    "  נצפה אצלך בפועל: Strait of Hormuz תורגם 'מצר תבור'. תבור הוא הר",
+    "  בגליל. הצורה הנכונה היא 'מצר הורמוז', ובספק — 'מצר Hormuz'.",
+    "- אל תנחש משמעות של מילה שאינך מזהה. נצפה אצלך בפועל שהמילה",
+    "  impasse (קיפאון, מבוי סתום) תורגמה 'מתקפה' — משמעות הפוכה.",
+    "- השתמש במקף רגיל (-) בלבד, לא במקפים טיפוגרפיים.",
     "- עברית תקנית בלבד. אסור לשלב אותיות לטיניות בתוך מילה עברית.",
     "- בלי מרכאות מיותרות, בלי Markdown, בלי הסברים משלך.",
     "- כותרת היא כותרת: אורך דומה למקור, לא פסקה.",
@@ -1930,6 +1937,19 @@ def _strip_source_suffix(headline: str, source: str) -> str:
     if headline.endswith(tail):
         return headline[: -len(tail)].strip()
     return headline
+
+
+# -- מקפים טיפוגרפיים שהמודל מייצר לפעמים במקום מקף רגיל. זה פגם שניתן
+# לזהות מבנית, ולכן מתקנים אותו ולא פוסלים בגללו כותרת תקינה. --
+FANCY_HYPHENS = "\u2010\u2011\u2012\u2013\u2014\u2015"
+
+
+def _normalise_hyphens(txt: str) -> str:
+    if not txt:
+        return txt
+    for ch in FANCY_HYPHENS:
+        txt = txt.replace(ch, "-")
+    return txt
 
 
 def _valid_he_headline(he: str, en: str) -> bool:
@@ -1988,7 +2008,7 @@ def _rewrite_headlines(headlines):
         if not (0 <= n < len(items)):
             continue
         idx, en = items[n]
-        he = m.group(2).strip().strip('"').strip("'")
+        he = _normalise_hyphens(m.group(2).strip().strip('"').strip("'"))
         if _valid_he_headline(he, en):
             out[idx] = he
     if len(out) < len(items):
