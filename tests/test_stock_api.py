@@ -1958,9 +1958,11 @@ class TestEarningsProximityInFacts:
 
 
 class TestHistoricalPrecedentInFacts:
-    """התקדים ההיסטורי ("תאום מוזר בזמן") מוזרם ל-AI. זהו מדגם קטן במכוון
-    (3 תקדימים, אותם פרמטרים כמו החלון שהמשתמש רואה), ולכן הוא חייב להימסר
-    עם גודל המדגם ועם הסתייגות מפורשת — אסור שהמודל יציג אותו כתחזית."""
+    """התקדים ההיסטורי ("תאום מוזר בזמן") מוזרם ל-AI.
+
+    מדדנו את הכלי: 20 מניות, 2,344 מקרים — 50.8% פגיעה בכיוון לעומת 54.1%
+    למי שהימר תמיד על עלייה. אין יתרון. לכן התקדים חייב להימסר עם שיעור
+    הבסיס של אותה מניה ועם המשפט שאומר שלא נמצא לו יתרון."""
 
     BASE = {"ticker": "AAPL", "trend": "עולה", "rsiTxt": "נייטרלי", "rsiNum": 55,
             "bullPct": 60, "bearPct": 10}
@@ -1980,12 +1982,32 @@ class TestHistoricalPrecedentInFacts:
         joined = " ".join(facts)
         assert "ב-3 התקופות" in joined
 
-    def test_precedent_carries_explicit_disclaimer(self):
+    def test_precedent_carries_the_measured_verdict(self):
         """בלי המשפט הזה המודל עלול להציג שלושה מקרים כהסתברות לעתיד."""
         _, facts, _ = api._extract_stock_facts(dict(self.BASE, **self.TWIN))
         joined = " ".join(facts)
-        assert "מדגם קטן" in joined
-        assert "אינו תחזית" in joined
+        assert api.PRECEDENT_NO_EDGE in joined
+        assert "לא נמצא" in joined and "יתרון מדיד" in joined
+        assert "כתחזית" in joined
+
+    def test_the_base_rate_travels_with_the_precedent(self):
+        # "עלייה של 4.2%" בלי לדעת ש-חלון אקראי החזיר 4.0% הוא מספר שמטעה
+        body = dict(self.BASE, twinBaseFwd=0.7, **self.TWIN)
+        _, facts, _ = api._extract_stock_facts(body)
+        joined = " ".join(facts)
+        assert "חלון אקראי" in joined
+        assert "0.7%" in joined
+
+    def test_without_a_base_rate_the_verdict_still_travels(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE, **self.TWIN))
+        joined = " ".join(facts)
+        assert "חלון אקראי" not in joined
+        assert api.PRECEDENT_NO_EDGE in joined
+
+    def test_the_measured_numbers_are_named_in_the_verdict(self):
+        # אותה שיטה כמו בתבניות: המספר שמדדנו נשמר בקוד, לא בזיכרון שלי
+        assert "2,344" in api.PRECEDENT_NO_EDGE
+        assert "20 מניות" in api.PRECEDENT_NO_EDGE
 
     def test_negative_precedent_shown_as_decline_with_absolute_value(self):
         body = dict(self.BASE, twinAvgFwd=-3.7, twinWinRate=33,
@@ -2079,7 +2101,7 @@ class TestPrecedentIsGivenItsOwnSentence:
         p = self._captured_prompt(dict(self.BASE, ticker="NUMS", **self.TWIN))
         assert "4.2%" in p
         assert "67%" in p
-        assert "מדגם קטן" in p
+        assert "יתרון מדיד" in p
 
 
 class TestFillerSentenceStripping:
