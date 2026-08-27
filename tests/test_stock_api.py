@@ -4178,3 +4178,60 @@ class TestBriefPromptSecondRound:
 
     def test_the_prompt_names_the_observed_verb_error(self):
         assert "שהפקידה" in api.BRIEF_SYSTEM
+
+
+class TestBriefFillerAndPhrases:
+    """ההגנה השנייה על הפסקה: מבנית, אחרי שהפרומפט לבדו לא הספיק.
+
+    נצפה בפרודקשן על ידיעה אחת: אחרי משפט אמיתי, המודל הוסיף שני
+    משפטי פרשנות שאינם בכותרת ואינם בתקציר, וחזר על שתי שגיאות
+    ניסוח שהפרומפט כבר נקב בהן בשמן.
+    """
+
+    OBSERVED = ("הקבוצה השקעתית הצליחה בשלוש עסקאות במניות Nvidia ו-Salesforce, "
+                "והציגה את המסקנות שהפקידה מההצלחות. "
+                "הפידבק מהעסקאות מדגיש את החשיבות של בחירת מניות. "
+                "המשקיעים יכולים ללמוד מהאסטרטגיה שהובילה להצלחה.")
+
+    def test_the_observed_filler_sentences_are_removed(self):
+        out = api._strip_brief_filler(self.OBSERVED)
+        assert "מדגיש את החשיבות" not in out
+        assert "יכולים ללמוד" not in out
+        assert "Nvidia" in out, "המשפט האמיתי חייב להישאר"
+
+    def test_the_first_sentence_is_never_dropped(self):
+        # גם אם היא בעצמה נשמעת כללית — פסקה ריקה גרועה מפסקה חלשה
+        one = "חשוב לציין שהשוק עלה."
+        assert api._strip_brief_filler(one) == one
+
+    def test_a_sentence_with_a_number_is_kept(self):
+        t = "הנפט עלה. חשוב לציין שהמחיר הגיע ל-80 דולר."
+        assert api._strip_brief_filler(t) == t
+
+    def test_ordinary_content_is_untouched(self):
+        t = "מחירי הנפט עלו על רקע חשש להיצע. המהלך מגיע אחרי שבוע של ירידות."
+        assert api._strip_brief_filler(t) == t
+
+    def test_missing_input_is_safe(self):
+        assert api._strip_brief_filler("") == ""
+        assert api._strip_brief_filler(None) is None
+        assert api._fix_brief_phrases("") == ""
+        assert api._fix_brief_phrases(None) is None
+
+    def test_the_observed_wordings_are_corrected(self):
+        out = api._fix_brief_phrases(self.OBSERVED)
+        assert "קבוצת ההשקעות" in out and "הקבוצה השקעתית" not in out
+        assert "המסקנות שהפיקה" in out
+
+    def test_a_legitimate_use_of_the_same_word_is_not_corrupted(self):
+        # "הפקידה" לבדה היא מילה תקינה — התיקון חייב להיות על הצירוף המלא
+        t = "הפקידה בבנק אישרה את ההעברה."
+        assert api._fix_brief_phrases(t) == t
+
+    def test_the_pipeline_runs_inside_the_brief(self):
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback",
+                          return_value={"choices": [{"message": {"content": self.OBSERVED}}]}):
+            out = api._brief_what("Three wins", "")
+        assert "יכולים ללמוד" not in out
+        assert "קבוצת ההשקעות" in out
