@@ -892,23 +892,17 @@ def _spark_shape(values):
 
 
 # ── סורק מניות (מטמון 5 דקות) ──
-def _scan_one(ticker, hist):
-    hist = hist.dropna(subset=["Close"])  # מונע שורה אחרונה ללא מחיר סגירה (שכיחה במשיכה מרוכזת) מקלקלת את החישובים
-    if len(hist) < 20:
-        return None
-    closes = [float(v) for v in hist["Close"].tolist()]
-    highs = [float(v) for v in hist["High"].tolist()]
-    lows = [float(v) for v in hist["Low"].tolist()]
-    price = closes[-1]
-    if price != price:  # NaN safety (NaN != NaN מחזיר True)
-        return None
-    ma9 = sum(closes[-9:]) / 9
-    ma20 = sum(closes[-20:]) / 20
+RSI_PERIOD = 14
 
-    # ── RSI בהחלקת Wilder — התקן המקובל בפלטפורמות מסחר (TradingView וכו').
-    # ממוצע פשוט על 14 ימים נותן מספר שונה מהותית ולעיתים חוצה את סף ה-70. ──
-    period = 14
-    if len(closes) < period + 1:
+
+def _wilder_rsi(closes, period=RSI_PERIOD):
+    """RSI בהחלקת Wilder — התקן המקובל בפלטפורמות מסחר (TradingView וכו').
+    ממוצע פשוט על 14 ימים נותן מספר שונה מהותית ולעיתים חוצה את סף ה-70.
+
+    מוגדר פעם אחת בכוונה: הסורק והתדריך חייבים להציג את אותו מספר לאותה
+    מניה, ושתי מימושים נפרדים נוטים להיפרד זה מזה עם הזמן.
+    """
+    if not closes or len(closes) < period + 1:
         return None
     gain_sum = loss_sum = 0.0
     for i in range(1, period + 1):
@@ -923,7 +917,41 @@ def _scan_one(ticker, hist):
         d = closes[i] - closes[i - 1]
         avg_gain = (avg_gain * (period - 1) + (d if d > 0 else 0.0)) / period
         avg_loss = (avg_loss * (period - 1) + (-d if d < 0 else 0.0)) / period
-    rsi = 100 - 100 / (1 + avg_gain / (avg_loss or 0.0001))
+    return 100 - 100 / (1 + avg_gain / (avg_loss or 0.0001))
+
+
+def _rsi_state(rsi_num):
+    """הסיווג המילולי של RSI. מקור אמת יחיד — הפרומפט של הניתוח והתדריך
+    של החדשות חייבים לתאר את אותו מספר באותן מילים."""
+    if not isinstance(rsi_num, (int, float)) or isinstance(rsi_num, bool):
+        return None
+    if rsi_num < RSI_OVERSOLD:
+        return "מכירת יתר"
+    if rsi_num > RSI_OVERBOUGHT:
+        return "קניית יתר"
+    if rsi_num < 40:
+        return "נייטרלי, בחלק התחתון של הטווח"
+    if rsi_num > 60:
+        return "נייטרלי, בחלק העליון של הטווח"
+    return "נייטרלי"
+
+
+def _scan_one(ticker, hist):
+    hist = hist.dropna(subset=["Close"])  # מונע שורה אחרונה ללא מחיר סגירה (שכיחה במשיכה מרוכזת) מקלקלת את החישובים
+    if len(hist) < 20:
+        return None
+    closes = [float(v) for v in hist["Close"].tolist()]
+    highs = [float(v) for v in hist["High"].tolist()]
+    lows = [float(v) for v in hist["Low"].tolist()]
+    price = closes[-1]
+    if price != price:  # NaN safety (NaN != NaN מחזיר True)
+        return None
+    ma9 = sum(closes[-9:]) / 9
+    ma20 = sum(closes[-20:]) / 20
+
+    rsi = _wilder_rsi(closes)
+    if rsi is None:
+        return None
 
     # ── זיהוי אזורי תמיכה/התנגדות לפי נגיעות (clustering) ──
     lookback = 5
@@ -1450,17 +1478,8 @@ def _extract_stock_facts(body: dict):
     # RSI נמוך כ"תנודתיות יתר" — טעות מקצועית — ולכן אומרים לו במפורש. ──
     # הספים הם 30/70 התקניים — אותם ספים שכרטיס המדד באפליקציה כבר מציג,
     # כך שה-AI לא יסתור את מה שהמשתמש רואה במסך ממש לידו.
-    if isinstance(rsi_num, (int, float)):
-        if rsi_num < RSI_OVERSOLD:
-            rsi_state = "מכירת יתר"
-        elif rsi_num > RSI_OVERBOUGHT:
-            rsi_state = "קניית יתר"
-        elif rsi_num < 40:
-            rsi_state = "נייטרלי, בחלק התחתון של הטווח"
-        elif rsi_num > 60:
-            rsi_state = "נייטרלי, בחלק העליון של הטווח"
-        else:
-            rsi_state = "נייטרלי"
+    rsi_state = _rsi_state(rsi_num)
+    if rsi_state:
         facts.append("RSI: " + str(round(rsi_num, 1)) + " — " + rsi_state + ".")
     else:
         facts.append("RSI: לא זמין.")
@@ -2016,6 +2035,254 @@ def _rewrite_headlines(headlines):
     return out
 
 
+# ── תדריך משלנו לידיעה ────────────────────────────────────────────────
+# הכתבה עצמה שייכת למפרסם ואיננו מציגים אותה. מה שכן שלנו: פסקה קצרה
+# בעברית שאנחנו כותבים על בסיס הכותרת והתקציר שמגיעים מ-Finnhub עצמו,
+# ומיד אחריה שורות עובדתיות על המניה הרלוונטית שמחושבות כאן בקוד.
+#
+# החלוקה הזו מכוונת ואינה קוסמטית: מודל השפה כותב את "מה קרה", ורק אותו.
+# כל מספר שמוצג למשתמש נוצר בקוד מנתונים שמשכנו בעצמנו, כי מספר שמודל
+# ממציא נראה בדיוק כמו מספר נכון, ואי אפשר לתפוס אותו בוולידציה מבנית.
+BRIEF_SYSTEM = "\n".join([
+    "אתה כתב כלכלי שכותב עברית תקנית לקוראים ישראלים.", "",
+    "אתה מקבל כותרת באנגלית ולעיתים גם תקציר קצר. כתוב פסקה אחת בעברית,",
+    "שניים עד שלושה משפטים, שמסבירה מה קרה ולמה זה מעניין משקיע.", "",
+    "כללים מחייבים:",
+    "- מותר להשתמש אך ורק במידע שמופיע בכותרת ובתקציר שקיבלת. חל איסור",
+    "  מוחלט להוסיף מספר, תאריך, שם או אירוע שאינם שם.",
+    "- אם פרט חסר לך — אל תשלים אותו. פסקה קצרה ונכונה עדיפה על פסקה",
+    "  מלאה ומומצאת.",
+    "- אסור לתת המלצה, לחזות מחיר או לכתוב 'כדאי לקנות' או 'כדאי למכור'.",
+    "- שמות חברות, טיקרים ומדדים נשארים באנגלית: Nvidia, S&P 500, OPEC.",
+    "- שם מקום, ארגון או אדם שאינך בטוח בצורתו העברית המקובלת — השאר",
+    "  אותו באנגלית. שם באנגלית הוא מידע חסר; שם עברי שגוי הוא מידע כוזב.",
+    "  נצפה אצלך בפועל: Strait of Hormuz תורגם 'מצר תבור'. תבור הוא הר",
+    "  בגליל. הצורה הנכונה היא 'מצר הורמוז', ובספק — 'מצר Hormuz'.",
+    "- אל תנחש משמעות של מילה שאינך מזהה. נצפה אצלך בפועל שהמילה",
+    "  impasse (קיפאון, מבוי סתום) תורגמה 'מתקפה' — משמעות הפוכה.",
+    "- השתמש במקף רגיל (-) בלבד, לא במקפים טיפוגרפיים.",
+    "- עברית תקנית בלבד. אסור לשלב אותיות לטיניות בתוך מילה עברית.",
+    "- בלי כותרת, בלי Markdown, בלי רשימה, בלי הסבר על עצמך. החזר את",
+    "  הפסקה ותו לא.",
+])
+
+# -- תקרה לאורך הפסקה. מדוד: כותרת ותקציר של Finnhub מניבים 180-320 תווים
+# בעברית; 600 משאיר מרווח נוח ועדיין פוסל מודל שהחליט לכתוב מאמר. --
+BRIEF_MAX_CHARS = 600
+
+# -- סימני רשימה בתחילת שורה. פסקה שמתחילה ב-"- " או ב-"1. " אינה פסקה. --
+BRIEF_LIST_MARKER = re.compile(r"(^|\n)\s*(?:[-*\u2022]\s|\d{1,2}[.)]\s)")
+
+
+def _valid_he_brief(he: str) -> bool:
+    """פסקה עברית מתקבלת רק אם היא באמת פסקה עברית."""
+    if not he or not he.strip():
+        return False
+    he = he.strip()
+    if not re.search(r"[\u0590-\u05FF]", he):
+        return False                      # בלי אות עברית אחת זה לא תדריך
+    if len(he) > BRIEF_MAX_CHARS:
+        return False                      # התפרש למאמר
+    if re.search(r"[\u0590-\u05FF][A-Za-z]|[A-Za-z][\u0590-\u05FF]", he):
+        return False                      # אותיות לטיניות דבוקות לעברית
+    if BRIEF_LIST_MARKER.search(he):
+        return False
+    if "**" in he or "##" in he:
+        return False
+    return True
+
+
+# -- תקרה לאורך התקציר שנשלח למודל. תקצירי Finnhub קצרים, אבל מקור חריג
+# לא יבזבז לנו את חלון ההקשר. --
+BRIEF_SUMMARY_MAX = 1200
+
+
+def _brief_what(headline: str, summary: str) -> str:
+    """הפסקה שלנו על מה שקרה. כישלון רך: מחרוזת ריקה, והלקוח מציג רק
+    את השורות העובדתיות."""
+    if not GROQ_KEY or not headline or not headline.strip():
+        return ""
+    parts = ["כותרת: " + headline.strip()]
+    s = (summary or "").strip()
+    if s:
+        parts.append("תקציר: " + s[:BRIEF_SUMMARY_MAX])
+    payload = {
+        "model": AI_MODEL,
+        "max_completion_tokens": 400,
+        "temperature": 0.2,
+        "messages": [
+            {"role": "system", "content": BRIEF_SYSTEM},
+            {"role": "user", "content": "\n".join(parts)},
+        ],
+    }
+    if AI_IS_REASONING_MODEL:
+        payload["max_completion_tokens"] += AI_REASONING_HEADROOM
+        payload["reasoning_effort"] = AI_REASONING_EFFORT
+        payload["include_reasoning"] = False
+    try:
+        d = _call_groq_with_fallback(payload)
+        if not d or d is RATE_LIMITED:
+            return ""
+        text = (d["choices"][0]["message"]["content"] or "").strip()
+    except Exception:
+        log.exception("news brief failed")
+        return ""
+    text = _normalise_hyphens(_strip_md_wrap(text)).strip()
+    if not _valid_he_brief(text):
+        log.warning("news brief failed validation: %s", text[:120])
+        return ""
+    return text
+
+
+# -- כמה מניות מוצגות בתדריך. שתיים: Finnhub מחזיר לפעמים רשימת related
+# ארוכה, ומשיכה לכל טיקר בה היא קריאת רשת נוספת לכל לחיצה. --
+NEWS_TICKERS_MAX = 2
+
+
+def _related_tickers(raw):
+    """הטיקרים שהידיעה נוגעת להם, לפי שדה related של Finnhub."""
+    out = []
+    for part in re.split(r"[,;\s]+", str(raw or "")):
+        t = norm_ticker(part)
+        if t and t not in out:
+            out.append(t)
+        if len(out) >= NEWS_TICKERS_MAX:
+            break
+    return out
+
+
+def _news_id(item) -> str:
+    """מזהה יציב לידיעה. מזהה Finnhub כשיש, אחרת גיבוב של הכתובת —
+    הלקוח מבקש תדריך לפי המזהה הזה ולא שולח לנו טקסט חופשי, כך שאין
+    דרך להזרים דרך הנתיב הזה טקסט שרירותי למודל."""
+    raw = item.get("id")
+    if isinstance(raw, bool):
+        raw = None
+    if isinstance(raw, int) and raw > 0:
+        return str(raw)
+    if isinstance(raw, str) and raw.strip():
+        s = re.sub(r"[^A-Za-z0-9_-]", "", raw.strip())[:40]
+        if s:
+            return s
+    url = (item.get("url") or "").strip()
+    if url:
+        return hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
+    return ""
+
+
+NEWS_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
+
+# -- כמה ידיעות נשמרות לצורך התדריך. הפיד מתחדש כל 5 דקות עם 8 ידיעות,
+# ולכן 40 מכסים כרבע שעה אחורה — יותר מכל מה שמוצג במסך. --
+NEWS_SRC_MAX = 40
+_news_src = {}
+_news_src_order = []
+_news_src_lock = threading.Lock()
+
+
+def _news_src_put(item_id, rec):
+    if not item_id:
+        return
+    with _news_src_lock:
+        if item_id not in _news_src:
+            _news_src_order.append(item_id)
+        _news_src[item_id] = rec
+        while len(_news_src_order) > NEWS_SRC_MAX:
+            _news_src.pop(_news_src_order.pop(0), None)
+
+
+def _news_src_get(item_id):
+    with _news_src_lock:
+        return _news_src.get(item_id)
+
+
+# -- הקשר המניה מחושב אצלנו, לא נשאל ממודל. TTL זהה ל-/stock. --
+TICKER_CTX_TTL = 300
+
+
+def _ticker_context(ticker):
+    """המספרים שאנחנו יודעים לחשב על מניה: מחיר, שינוי יומי, RSI,
+    מיקום בטווח 52 השבועות ויחס הממוצעים הנעים."""
+    key = "ctx:" + ticker
+    cached = cache_get(key, TICKER_CTX_TTL)
+    if cached is not None:
+        return cached
+    try:
+        bulk = yf.download(
+            tickers=ticker, period="1y", interval="1d", group_by="ticker",
+            auto_adjust=True, threads=False, progress=False, session=session,
+        )
+    except Exception:
+        log.warning("ticker context download failed for %s", ticker)
+        return None
+    if bulk is None or len(bulk) == 0:
+        return None
+    df = _frame_for(bulk, ticker)
+    if df is None:
+        return None
+    try:
+        closes = [c for c in (clean(v) for v in df["Close"].tolist()) if c is not None]
+        highs = [c for c in (clean(v) for v in df["High"].tolist()) if c is not None]
+        lows = [c for c in (clean(v) for v in df["Low"].tolist()) if c is not None]
+    except Exception:
+        return None
+    if len(closes) < 20 or not highs or not lows:
+        return None
+    price, prev = closes[-1], closes[-2]
+    hi, lo = max(highs), min(lows)
+    rsi = _wilder_rsi(closes)
+    ctx = {
+        "ticker": ticker,
+        "price": round(price, 2),
+        "pct": round((price - prev) / prev * 100, 2) if prev else 0.0,
+        "rsi": round(rsi, 1) if rsi is not None else None,
+        "week_high": round(hi, 2),
+        "week_low": round(lo, 2),
+        "week_pos": int(round((price - lo) / (hi - lo) * 100)) if hi > lo else None,
+        "ma9": round(sum(closes[-9:]) / 9, 2),
+        "ma20": round(sum(closes[-20:]) / 20, 2),
+    }
+    return cache_set(key, ctx)
+
+
+# -- שינוי יומי שקטן מזה הוא רעש ולא תנועה, ו"עלתה 0.04%" מייצר תחושת
+# דיוק שאין לה כיסוי. --
+FLAT_PCT = 0.2
+
+
+def _impact_lines(ctx):
+    """השורות העובדתיות. נכתבות בקוד ולא במודל, ולכן אינן יכולות לשקר.
+    הניסוח 'ב-X% מטווח 52 השבועות' זהה לניסוח שהאפליקציה מציגה במקומות
+    אחרים במכוון — אותה מניה לא תתואר בשני מספרים שנשמעים סותרים."""
+    if not ctx:
+        return []
+    lines = []
+    pct = ctx.get("pct")
+    price = ctx.get("price")
+    if pct is not None and price is not None:
+        if abs(pct) < FLAT_PCT:
+            move = "כמעט ללא שינוי מאז הסגירה הקודמת"
+        elif pct > 0:
+            move = "עלייה של " + str(abs(pct)) + "% מאז הסגירה הקודמת"
+        else:
+            move = "ירידה של " + str(abs(pct)) + "% מאז הסגירה הקודמת"
+        lines.append("המניה נסחרת ב-$" + str(price) + " — " + move + ".")
+    wp = ctx.get("week_pos")
+    if wp is not None:
+        lines.append("המחיר נמצא ב-" + str(wp) + "% מטווח 52 השבועות (שפל $"
+                     + str(ctx.get("week_low")) + ", שיא $" + str(ctx.get("week_high")) + ").")
+    state = _rsi_state(ctx.get("rsi"))
+    if state:
+        lines.append("RSI " + str(ctx.get("rsi")) + " — " + state + ".")
+    ma9, ma20 = ctx.get("ma9"), ctx.get("ma20")
+    if isinstance(ma9, (int, float)) and isinstance(ma20, (int, float)):
+        if ma9 > ma20:
+            lines.append("הממוצע הנע ל-9 ימים מעל הממוצע ל-20 — המומנטום הקצר חיובי.")
+        else:
+            lines.append("הממוצע הנע ל-9 ימים מתחת לממוצע ל-20 — המומנטום הקצר שלילי.")
+    return lines
+
+
 # ── פרוקסי לחדשות Finnhub: הטוקן נשאר בשרת (מטמון 5 דקות).
 # התרגום נעשה כאן ולא בדפדפן: כך זו קריאה אחת לכל 5 דקות עבור כל
 # המבקרים יחד, במקום שמונה קריאות אצל כל מבקר בנפרד. ──
@@ -2054,17 +2321,70 @@ def get_news(request: Request):
             he = rewritten.get(i)
             if he is None:
                 he = _translate(headline, deadline - time.time())
+            item_id = _news_id(n)
+            tickers = _related_tickers(n.get("related"))
+            # התקציר של Finnhub נשמר בשרת ואינו נשלח ללקוח: הוא חומר גלם
+            # לפסקה שאנחנו כותבים, לא טקסט שאנחנו מציגים.
+            _news_src_put(item_id, {
+                "headline": headline,
+                "summary": n.get("summary", "") or "",
+                "source": n.get("source", "") or "",
+                "url": n.get("url", "") or "",
+                "tickers": tickers,
+            })
             slim.append({
+                "id": item_id,
                 "headline": headline,
                 "headline_he": he,
                 "url": n.get("url", ""),
                 "source": n.get("source", ""),
                 "datetime": n.get("datetime", 0),
+                "tickers": tickers,
             })
         return cache_set("news", {"news": slim})
     except Exception:
         log.exception("get_news failed")
         return {"news": []}
+
+
+# -- שעה: ידיעה שכבר פורסמה אינה משתנה, ואין טעם לשלם על אותה פסקה פעמיים. --
+NEWS_BRIEF_TTL = 3600
+
+
+@app.get("/news/brief/{item_id}")
+def get_news_brief(item_id: str, request: Request):
+    """התדריך שלנו לידיעה בודדת: פסקה שאנחנו כותבים, ומתחתיה שורות
+    עובדתיות על המניות שהידיעה נוגעת להן. הכתבה המקורית אינה מוחזרת
+    ואינה נמשכת — היא של המפרסם, והלקוח מקבל קישור אליה."""
+    if not NEWS_ID_RE.match(item_id or ""):
+        return err(400, "מזהה ידיעה לא תקין")
+    if not rate_ok(request, "news_brief", 20, 60):
+        return err(429, "יותר מדי בקשות — נסה שוב בעוד רגע")
+    key = "news_brief:" + item_id
+    cached = cache_get(key, NEWS_BRIEF_TTL)
+    if cached is not None:
+        return cached
+    rec = _news_src_get(item_id)
+    if not rec:
+        return err(404, "הידיעה כבר לא בפיד — רענן את החדשות ונסה שוב")
+    what = _brief_what(rec.get("headline", ""), rec.get("summary", "")) if ai_budget_ok() else ""
+    impact = []
+    for t in rec.get("tickers", [])[:NEWS_TICKERS_MAX]:
+        lines = _impact_lines(_ticker_context(t))
+        if lines:
+            impact.append({"ticker": t, "lines": lines})
+    out = {
+        "id": item_id,
+        "what": what,
+        "impact": impact,
+        "source": rec.get("source", ""),
+        "url": rec.get("url", ""),
+    }
+    # תדריך ריק לחלוטין הוא כישלון רגעי (מכסה, timeout) — לא שומרים אותו
+    # לשעה, אחרת לחיצה חוזרת אחרי דקה תחזיר את אותו ריק.
+    if what or impact:
+        return cache_set(key, out)
+    return out
 
 
 # ── חדשות ספציפיות למניה בודדת (7 הימים האחרונים), משמשות להעשרת פרומפט
