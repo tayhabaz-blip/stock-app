@@ -2102,6 +2102,55 @@ def _valid_he_brief(he: str) -> bool:
 BRIEF_SUMMARY_MAX = 1200
 
 
+# -- משפטי מילוי בתדריך. נצפו בפרודקשן על ידיעה אחת: אחרי משפט אמיתי
+# על שלוש עסקאות, המודל הוסיף "הפידבק מהעסקאות מדגיש את החשיבות של
+# בחירת מניות בעלות פוטנציאל צמיחה גבוה" ו"המשקיעים יכולים ללמוד
+# מהאסטרטגיה" — שני משפטים שאינם בכותרת ואינם בתקציר. ההנחיה בפרומפט
+# לא עצרה את זה, ולכן ההגנה השנייה היא מבנית.
+#
+# משפט נמחק רק אם אין בו מספר: מספר מגיע מהמקור, ולכן משפט שיש בו
+# מספר הוא כמעט תמיד תוכן ולא פרשנות. ותמיד נשאר לפחות משפט אחד.
+BRIEF_FILLER = [
+    "מדגיש את החשיבות", "יכולים ללמוד", "ניתן ללמוד", "חשוב להבין",
+    "מזכיר לנו", "יש לזכור", "חשוב לציין", "כל משקיע",
+    "פוטנציאל צמיחה גבוה", "לטובת רווחים", "תמונה מורכבת",
+]
+
+
+def _strip_brief_filler(text: str) -> str:
+    if not text:
+        return text
+    parts = [p for p in re.split(r"(?<=[.!?])\s+", text.strip()) if p.strip()]
+    if len(parts) < 2:
+        return text
+    kept = [parts[0]] + [
+        s for s in parts[1:]
+        if not (any(b in s for b in BRIEF_FILLER) and not re.search(r"\d", s))
+    ]
+    if len(kept) == len(parts):
+        return text
+    log.warning("brief: dropped %s filler sentence(s)", len(parts) - len(kept))
+    return " ".join(kept).strip()
+
+
+# -- צירופים שגויים שהמודל חזר עליהם גם אחרי שהפרומפט נקב בהם בשמם.
+# מתקנים ולא פוסלים: זהו פגם שניתן לזהות בוודאות בצירוף המדויק הזה,
+# בדיוק כמו מקף טיפוגרפי. הצירוף מלא בכוונה — "הפקידה" לבדה היא מילה
+# תקינה בעברית, ותיקון עיוור שלה היה הורס משפט כשר. --
+BRIEF_PHRASE_FIXES = (
+    ("הקבוצה השקעתית", "קבוצת ההשקעות"),
+    ("המסקנות שהפקידה", "המסקנות שהפיקה"),
+)
+
+
+def _fix_brief_phrases(text: str) -> str:
+    if not text:
+        return text
+    for wrong, right in BRIEF_PHRASE_FIXES:
+        text = text.replace(wrong, right)
+    return text
+
+
 def _brief_what(headline: str, summary: str) -> str:
     """הפסקה שלנו על מה שקרה. כישלון רך: מחרוזת ריקה, והלקוח מציג רק
     את השורות העובדתיות."""
@@ -2133,6 +2182,7 @@ def _brief_what(headline: str, summary: str) -> str:
         log.exception("news brief failed")
         return ""
     text = _normalise_hyphens(_strip_md_wrap(text)).strip()
+    text = _fix_brief_phrases(_strip_brief_filler(text)).strip()
     if not _valid_he_brief(text):
         log.warning("news brief failed validation: %s", text[:120])
         return ""
