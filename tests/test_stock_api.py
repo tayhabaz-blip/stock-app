@@ -4498,3 +4498,49 @@ class TestBriefSpeculationFilter:
     def test_the_first_sentence_survives_even_if_it_speculates(self):
         one = "ההסכם עשוי להשפיע על ההכנסות."
         assert api._strip_brief_filler(one) == one
+
+
+class TestHebrewTypographyGuards:
+    """פגמים מבניים בטקסט העברי: מתקנים, לא פוסלים.
+
+    נצפה בפיד החי: השם Schmid חזר כ-"שׁמִיד" עם ניקוד, והכותרת הכילה
+    מרכאות מסולסלות. שניהם נראים שבורים לקורא עברית, ושניהם ניתנים
+    לזיהוי בוודאות — בדיוק כמו מקף טיפוגרפי.
+    """
+
+    def test_niqqud_is_stripped(self):
+        assert api._strip_niqqud("שׁמִיד") == "שמיד"
+        assert api._strip_niqqud("בָּרָק") == "ברק"
+
+    def test_plain_hebrew_is_untouched(self):
+        t = "מחירי הנפט עולים על רקע חשש להיצע"
+        assert api._strip_niqqud(t) == t
+
+    def test_fancy_quotes_become_plain(self):
+        assert api._normalise_quotes("“עולה”") == '"עולה"'
+        assert api._normalise_quotes("‘עולה’") == "'עולה'"
+
+    def test_the_shared_cleaner_does_all_three(self):
+        raw = "“שׁמִיד” אמר ב‑2 דולר"
+        assert api._clean_he_line(raw) == '"שמיד" אמר ב-2 דולר'
+
+    def test_missing_input_is_safe(self):
+        for f in (api._strip_niqqud, api._normalise_quotes, api._clean_he_line):
+            assert f("") == ""
+            assert f(None) is None
+
+    def test_a_vocalised_headline_survives_instead_of_being_dropped(self):
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback",
+                          return_value={"choices": [{"message": {"content":
+                              "1. שׁמִיד מהפד אמר שהאינפלציה עיקשת"}}]}):
+            out = api._rewrite_headlines(["Schmid says inflation stubborn"])
+        assert out[0]["he"] == "שמיד מהפד אמר שהאינפלציה עיקשת"
+
+    def test_the_brief_is_cleaned_too(self):
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback",
+                          return_value={"choices": [{"message": {"content":
+                              "“שׁמִיד” מהפד אמר שהאינפלציה עיקשת ושהריבית תישאר גבוהה."}}]}):
+            out = api._brief_what("Schmid speaks", "")
+        assert out == '"שמיד" מהפד אמר שהאינפלציה עיקשת ושהריבית תישאר גבוהה.'
