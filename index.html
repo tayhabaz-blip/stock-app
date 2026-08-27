@@ -96,6 +96,19 @@
   .news-card-content{flex:1;min-width:0}
   .news-card-title{font-size:13.5px;color:var(--txt);line-height:1.6;margin-bottom:3px}
   .news-card-meta{font-size:11.5px;color:var(--txt3)}
+  .news-chev{color:var(--txt3);font-size:11px;flex-shrink:0;margin-top:4px;transition:transform 0.2s}
+  .news-card.open .news-chev{transform:rotate(180deg)}
+  /* התדריך שלנו. הכתבה עצמה אינה מוצגת כאן — היא של המפרסם, ויש קישור אליה. */
+  .news-brief{padding:2px 33px 15px 16px;border-bottom:1px solid var(--line)}
+  .brief-what{margin:0 0 4px;font-size:13.5px;line-height:1.8;color:var(--txt)}
+  .brief-imp{margin-top:9px;padding:9px 11px;border-radius:9px;background:var(--raised)}
+  .brief-tk{font-size:10.5px;font-weight:700;letter-spacing:0.08em;color:var(--txt3);margin-bottom:5px}
+  .brief-line{font-size:12.5px;line-height:1.75;color:var(--txt2)}
+  .brief-src{margin-top:11px;font-size:12.5px}
+  .brief-src a{color:var(--accent);text-decoration:none}
+  .brief-src a:hover{text-decoration:underline}
+  .brief-note{margin-top:7px;font-size:11px;line-height:1.6;color:var(--txt3)}
+  .brief-empty{font-size:13px;line-height:1.7;color:var(--txt2)}
   .loading-state{text-align:center;padding:2rem;color:var(--txt2);font-size:13.5px}
 
   .empty{text-align:center;padding:4rem 0}
@@ -1028,9 +1041,67 @@ document.addEventListener('visibilitychange',()=>{
   }
 });
 
+// ── התדריך שלנו לידיעה ────────────────────────────────────────────────
+// מה שמוצג כאן אינו הכתבה. הכתבה שייכת למפרסם ואנחנו רק מקשרים אליה.
+// מה שכן שלנו: פסקת "מה קרה" שהשרת מנסח, ומתחתיה מספרים שחושבו אצלנו
+// מנתוני המניה. שתי השורות הללו מופרדות בכוונה גם בתצוגה, כדי שהקורא
+// ידע איזה חלק נוסח במילים ואיזה חלק נמדד.
+let _openBrief=null;
+const _briefCache={};
+
+// לחיצה חוזרת על אותה ידיעה סוגרת. מופרד לפונקציה טהורה כדי שייבדק.
+function nextOpenBrief(cur,id){return cur===id?null:id;}
+
+// תדריך ריק אינו נשמר: כישלון רגעי לא אמור להינעל עד לרענון הדף.
+function briefWorthCaching(d){
+  return !!(d&&(d.what||(Array.isArray(d.impact)&&d.impact.length)));
+}
+
+function briefHtml(d){
+  let body='';
+  if(d&&d.what)body+='<p class="brief-what">'+esc(d.what)+'</p>';
+  const imp=(d&&Array.isArray(d.impact))?d.impact:[];
+  imp.forEach(function(it){
+    if(!it||!Array.isArray(it.lines)||!it.lines.length)return;
+    body+='<div class="brief-imp"><div class="brief-tk">'+esc(it.ticker)+'</div>';
+    it.lines.forEach(function(l){body+='<div class="brief-line">'+seg(esc(l))+'</div>';});
+    body+='</div>';
+  });
+  let out=body||'<div class="brief-empty">לא הצלחנו להכין תדריך לידיעה הזו כרגע.</div>';
+  const u=d?safeUrl(d.url):null;
+  if(u)out+='<div class="brief-src"><a href="'+esc(u)+'" target="_blank" rel="noopener">לכתבה המלאה'+(d.source?' ב-'+esc(d.source):'')+' ↗</a></div>';
+  if(body)out+='<div class="brief-note">התדריך נכתב אצלנו על בסיס הכותרת. המספרים מחושבים מנתוני המניה ולא מהכתבה.</div>';
+  return out;
+}
+
+async function toggleBrief(n,card,panel){
+  const id=n&&n.id;
+  if(!id){const u=safeUrl(n&&n.url);if(u)window.open(u,'_blank','noopener');return;}
+  _openBrief=nextOpenBrief(_openBrief,id);
+  if(_openBrief!==id){panel.hidden=true;card.classList.remove('open');return;}
+  document.querySelectorAll('.news-brief').forEach(function(p){if(p!==panel)p.hidden=true;});
+  document.querySelectorAll('.news-card.open').forEach(function(c){if(c!==card)c.classList.remove('open');});
+  panel.hidden=false;card.classList.add('open');
+  if(_briefCache[id]){panel.innerHTML=briefHtml(_briefCache[id]);return;}
+  panel.innerHTML=spinnerRow('מכינים תדריך...');
+  try{
+    const r=await fetch(API+'/news/brief/'+encodeURIComponent(id));
+    const d=await r.json();
+    if(d&&d.error){panel.innerHTML='<div class="brief-empty">'+esc(d.error)+'</div>';return;}
+    if(!d.url)d.url=n.url;
+    if(!d.source)d.source=n.source;
+    if(briefWorthCaching(d))_briefCache[id]=d;
+    panel.innerHTML=briefHtml(d);
+  }catch(e){
+    panel.innerHTML='<div class="brief-empty">לא ניתן לטעון את התדריך כרגע.</div>';
+  }
+}
+
 // ── NEWS — התרגום מגיע מהשרת (headline_he), עם נפילה רכה למקור באנגלית ──
 async function loadNews(){
   const box=document.getElementById('newsBox');
+  // הפאנלים נמחקים יחד עם הכרטיסים, ולכן הסימון הפתוח חייב להתאפס איתם
+  _openBrief=null;
   box.innerHTML='<div class="loading-state">טוען חדשות...</div>';
   // אותו סיפור כמו בניתוח: אחרי שינה של Render הטעינה הראשונה איטית,
   // ובלי חיווי זה נראה כאילו האתר תקוע.
@@ -1055,11 +1126,15 @@ async function loadNews(){
       title.textContent=n.headline_he||n.headline||'';
       const meta=document.createElement('div');meta.className='news-card-meta';
       meta.textContent=when+' · '+(n.source||'');
-      content.append(title,meta);card.append(dot,content);
+      content.append(title,meta);
+      const chev=document.createElement('div');chev.className='news-chev';chev.textContent='⌄';
+      card.append(dot,content,chev);
+      const panel=document.createElement('div');panel.className='news-brief';panel.hidden=true;
       const url=safeUrl(n.url);
-      if(url)card.addEventListener('click',()=>window.open(url,'_blank','noopener'));
-      else card.style.cursor='default';
-      box.append(card);
+      if(n.id||url)card.addEventListener('click',()=>toggleBrief(n,card,panel));
+      else{card.style.cursor='default';chev.style.display='none';}
+      if(!n.id)chev.style.display='none';
+      box.append(card,panel);
     });
   }catch(e){clearTimeout(slowNews);box.innerHTML='<div class="loading-state">לא ניתן לטעון חדשות</div>';}
 }
