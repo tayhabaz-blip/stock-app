@@ -4257,3 +4257,120 @@ class TestBriefFillerAndPhrases:
             out = api._brief_what("Three wins", "")
         assert "יכולים ללמוד" not in out
         assert "קבוצת ההשקעות" in out
+
+
+class TestWatchlistNews:
+    """חדשות רשימת המעקב.
+
+    ההבדל מהפיד הכללי אינו קוסמטי: כאן מושכים לפי טיקר, ולכן המניה של
+    כל ידיעה ידועה בוודאות ולא בזיהוי משוער מהטקסט. זה מה שהופך את
+    התדריך כאן לשימושי.
+    """
+
+    def setup_method(self):
+        api._cache.clear()
+        api._news_src.clear()
+        del api._news_src_order[:]
+        self.calls = []
+        self._orig = api._company_news_raw
+
+        def fake(t):
+            self.calls.append(t)
+            return [{"id": 100 + len(self.calls), "headline": t + " beats estimates",
+                     "summary": "s", "url": "https://x.com/" + t,
+                     "source": "Reuters", "datetime": 1000 + len(self.calls)}]
+
+        api._company_news_raw = fake
+
+    def teardown_method(self):
+        api._company_news_raw = self._orig
+        api._cache.clear()
+        api._news_src.clear()
+        del api._news_src_order[:]
+
+    def _get(self, q):
+        with patch.object(api, "_rewrite_headlines", return_value={}), \
+             patch.object(api, "_translate", side_effect=lambda t, b: "עברית: " + t):
+            return client.get("/news/watchlist?tickers=" + q).json()
+
+    def test_the_route_is_not_swallowed_by_the_ticker_route(self):
+        # "/news/watchlist" חייב להגיע לכאן ולא ל-/news/{ticker} עם ticker=WATCHLIST
+        d = self._get("AAPL")
+        assert "tickers" in d and d["tickers"] == ["AAPL"]
+
+    def test_every_item_carries_the_ticker_it_came_from(self):
+        d = self._get("AAPL,MSFT")
+        assert d["news"], "צריכות לחזור ידיעות"
+        for n in d["news"]:
+            assert n["tickers"], "ידיעה בלי מניה מפספסת את כל הנקודה"
+            assert n["tickers"][0] in ("AAPL", "MSFT")
+
+    def test_items_are_sorted_newest_first(self):
+        d = self._get("AAPL,MSFT,NVDA")
+        stamps = [n["datetime"] for n in d["news"]]
+        assert stamps == sorted(stamps, reverse=True)
+
+    def test_the_number_of_tickers_is_capped(self):
+        self._get("A,B,C,D,E,F,G,H,I,J,K,L")
+        assert len(self.calls) <= api.WATCHLIST_NEWS_MAX_TICKERS
+
+    def test_an_empty_watchlist_asks_finnhub_nothing(self):
+        d = self._get("")
+        assert d["news"] == [] and self.calls == []
+
+    def test_junk_tickers_are_dropped(self):
+        self._get("AAPL,,$$$,MSFT")
+        assert self.calls == ["AAPL", "MSFT"]
+
+    def test_duplicates_are_asked_once(self):
+        self._get("AAPL,AAPL,AAPL")
+        assert self.calls == ["AAPL"]
+
+    def test_a_second_call_is_served_from_the_cache(self):
+        self._get("AAPL,MSFT")
+        n = len(self.calls)
+        self._get("AAPL,MSFT")
+        assert len(self.calls) == n, "המטמון חייב לחסוך את הקריאות ל-Finnhub"
+
+    def test_the_cache_key_ignores_ticker_order(self):
+        self._get("AAPL,MSFT")
+        n = len(self.calls)
+        self._get("MSFT,AAPL")
+        assert len(self.calls) == n
+
+    def test_one_story_shared_by_two_tickers_appears_once(self):
+        shared = {"id": 777, "headline": "Chip deal", "summary": "", "url": "u",
+                  "source": "Reuters", "datetime": 5}
+        api._company_news_raw = lambda t: [shared]
+        d = self._get("AAPL,MSFT")
+        assert len(d["news"]) == 1
+        assert set(d["news"][0]["tickers"]) == {"AAPL", "MSFT"}
+
+    def test_each_item_is_stored_so_the_brief_can_find_it(self):
+        d = self._get("AAPL")
+        rec = api._news_src_get(d["news"][0]["id"])
+        assert rec is not None
+        assert rec["tickers"] == ["AAPL"]
+
+    def test_the_hebrew_falls_back_to_translation(self):
+        d = self._get("AAPL")
+        assert d["news"][0]["headline_he"].startswith("עברית: ")
+
+    def test_headlines_are_rewritten_in_one_call(self):
+        with patch.object(api, "_rewrite_headlines", return_value={}) as m, \
+             patch.object(api, "_translate", side_effect=lambda t, b: t):
+            client.get("/news/watchlist?tickers=AAPL,MSFT,NVDA")
+        assert m.call_count == 1
+
+    def test_an_item_without_a_headline_is_skipped(self):
+        api._company_news_raw = lambda t: [
+            {"id": 1, "headline": "   ", "url": "u", "source": "s", "datetime": 1},
+            {"id": 2, "headline": "Real news", "url": "u2", "source": "s", "datetime": 2},
+        ]
+        d = self._get("AAPL")
+        assert len(d["news"]) == 1 and d["news"][0]["headline"] == "Real news"
+
+    def test_no_news_at_all_is_a_quiet_empty_answer(self):
+        api._company_news_raw = lambda t: []
+        d = self._get("AAPL,MSFT")
+        assert d["news"] == [] and d["tickers"] == ["AAPL", "MSFT"]
