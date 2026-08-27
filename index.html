@@ -96,6 +96,8 @@
   .news-card-content{flex:1;min-width:0}
   .news-card-title{font-size:13.5px;color:var(--txt);line-height:1.6;margin-bottom:3px}
   .news-card-meta{font-size:11.5px;color:var(--txt3)}
+  .twin-noedge{margin:10px 0 2px;padding:10px 12px;border-radius:9px;background:var(--raised);
+    border-right:2px solid var(--line2);font-size:12px;line-height:1.75;color:var(--txt2)}
   .news-chev{color:var(--txt3);font-size:11px;flex-shrink:0;margin-top:4px;transition:transform 0.2s}
   .news-card.open .news-chev{transform:rotate(180deg)}
   /* התדריך שלנו. הכתבה עצמה אינה מוצגת כאן — היא של המפרסם, ויש קישור אליה. */
@@ -1867,6 +1869,7 @@ async function getAI(data){
     twinWinRate:twinStats?twinStats.winRate:null,
     twinSamples:twinStats?twinStats.samples:null,
     twinForwardLen:twinStats?twinStats.forwardLen:null,
+    twinBaseFwd:twinStats?twinStats.baseFwd:null,
     // התרחיש השלילי — רמות אמיתיות שחושבו, כדי שה-AI לא ימציא מספרים
     invalidationLevel:invalidation?invalidation.level:null,
     invalidationPct:invalidation?invalidation.pct:null,
@@ -2428,9 +2431,42 @@ function computeTwins(closes,labels,windowLen,forwardLen,topK){
   }
   if(top.length<3)return null;
   const avgFwd=top.reduce((s,c)=>s+c.fwdReturn,0)/top.length;
-  const winRate=Math.round(top.filter(c=>c.fwdReturn>0).length/top.length*100);
-  return{curPct,top,avgFwd,winRate,windowLen,forwardLen,totalCandidates:candidates.length};
+  const hits=top.filter(c=>c.fwdReturn>0).length;
+  const winRate=Math.round(hits/top.length*100);
+  // ── שיעור הבסיס של המניה עצמה: מה החזיר חלון forwardLen ימים אקראי.
+  // בלי המספר הזה "+2.1% בממוצע" נשמע כמו יתרון גם כשהמניה הזו החזירה
+  // +2.0% בכל חלון אקראי. ──
+  let bSum=0,bCnt=0,bPos=0;
+  for(let i=0;i+forwardLen<n;i++){
+    const b0=clean[i];
+    if(!b0||b0<=0)continue;
+    const r=(clean[i+forwardLen]/b0-1)*100;
+    bSum+=r;bCnt++;if(r>0)bPos++;
+  }
+  const baseFwd=bCnt?bSum/bCnt:null;
+  const baseWin=bCnt?Math.round(bPos/bCnt*100):null;
+  return{curPct,top,avgFwd,winRate,hits,baseFwd,baseWin,
+    windowLen,forwardLen,totalCandidates:candidates.length};
 }
+// ── מה שמדדנו על התאום, ולא מה שהיינו רוצים שיהיה נכון.
+// המחקר: 20 מניות, היסטוריה של 5 שנים, חלון של 20 ימי מסחר, 10 ימים
+// קדימה, עוגן כל 10 ימים — 2,344 מקרים. בכל מקרה נבחרו שלושת התקדימים
+// הקרובים ביותר מתוך העבר בלבד (בלי הצצה קדימה), והושווה כיוון התחזית
+// לתנועה שקרתה בפועל.
+//
+// התוצאה: 50.8% פגיעה בכיוון, לעומת 54.1% למי שפשוט הימר תמיד על עלייה.
+// היתרון על שיעור הבסיס היה 0.03- נקודת אחוז, t=0.39-. כלומר אין יתרון,
+// ואם כבר הוא שלילי. הרחבת המדגם ל-5, 10, 20 ו-40 תקדימים לא שיפרה, וגם
+// הידוק סף הדמיון לא. לכן המספרים נשארים על המסך — אבל לצד שיעור הבסיס
+// ולצד המשפט הזה, ולא כאילו הם איתות.
+const TWIN_STUDY={stocks:20,cases:2344,hit:50.8,base:54.1};
+function twinNoEdgeText(){
+  return 'מדדנו את זה בעצמנו על '+num(TWIN_STUDY.stocks)+' מניות ו-'+num(TWIN_STUDY.cases)+
+    ' מקרים: הכיוון שהתקדימים הצביעו עליו צדק ב-'+num(TWIN_STUDY.hit+'%')+' מהמקרים, לעומת '+
+    num(TWIN_STUDY.base+'%')+' למי שפשוט הימר תמיד על עלייה. לתאום אין יתרון מדיד על ניחוש — '+
+    'הוא כלי להסתכל על צורות דומות בעבר, לא לחזות מה יקרה.';
+}
+
 let twinChart=null;
 async function openTwinFinder(){
   const ph=window.__priceHist;
@@ -2473,9 +2509,12 @@ async function openTwinFinder(){
       '<button class="dna-close" id="twinCloseBtn">✕</button></div>'+
       '<div class="twin-intro">מצאנו את '+tw.top.length+' התקופות (מתוך '+tw.totalCandidates+' שנבדקו בהיסטוריה של '+esc(tkr)+') שבהן תבנית המחיר הכי דמתה ל-'+tw.windowLen+' ימי המסחר האחרונים. הקו המודגש הוא התבנית של היום; הקווים הצבעוניים ממשיכים אל מה שקרה בפועל אחריה.</div>'+
       '<div style="position:relative;height:240px"><canvas id="twinCanvas"></canvas></div>'+
-      '<div class="mc-summary">תשואה ממוצעת קדימה ('+tw.forwardLen+' ימי מסחר): '+
+      '<div class="mc-summary">'+seg('אחרי התקדימים האלה: '+
         '<b style="color:'+(tw.avgFwd>=0?'var(--up)':'var(--dn)')+'">'+num((tw.avgFwd>=0?'+':'')+tw.avgFwd.toFixed(1)+'%')+'</b>'+
-        ' · אחוז ניצחון: <b>'+tw.winRate+'%</b></div>'+
+        ' בממוצע ב-'+num(tw.forwardLen)+' ימי מסחר')+
+        (tw.baseFwd!=null?' · '+seg('חלון אקראי באותה מניה: <b>'+num((tw.baseFwd>=0?'+':'')+tw.baseFwd.toFixed(1)+'%')+'</b>'):'')+
+        ' · '+seg(num(tw.hits)+' מתוך '+num(tw.top.length)+' היו חיוביים')+'</div>'+
+      '<div class="twin-noedge">'+twinNoEdgeText()+'</div>'+
       '<div class="twin-list">'+listHtml+'</div>'+
       '<div class="dna-hint">⚠️ זו התאמת תבנית סטטיסטית בתוך ההיסטוריה של המניה עצמה — דמיון בעבר אינו ערובה שהעתיד יחזור על עצמו. אינה תחזית, המלצה או ייעוץ השקעות.</div>'+
     '</div>';
@@ -2867,7 +2906,10 @@ async function analyze(){
           avgFwd:parseFloat(tw.avgFwd.toFixed(1)),
           winRate:tw.winRate,
           samples:tw.top.length,
-          forwardLen:tw.forwardLen
+          forwardLen:tw.forwardLen,
+          // שיעור הבסיס נוסע יחד עם התקדים: בלעדיו "+4.2%" נשמע כמו יתרון
+          // גם כשחלון אקראי באותה מניה החזיר +4.0%.
+          baseFwd:(tw.baseFwd!=null)?parseFloat(tw.baseFwd.toFixed(1)):null
         };
       }
     }catch(e){}
