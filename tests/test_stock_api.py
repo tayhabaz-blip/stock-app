@@ -3608,7 +3608,7 @@ class TestHeadlineRewrite:
              patch.object(api, "_call_groq_with_fallback",
                           return_value=self._reply("1. מחירי הנפט עולים על רקע חשש להיצע\n2. הפדרל ריזרv")):
             out = api._rewrite_headlines(self.HEADS)
-        assert out[0] == "מחירי הנפט עולים על רקע חשש להיצע"
+        assert out[0]["he"] == "מחירי הנפט עולים על רקע חשש להיצע"
 
     def test_only_valid_lines_survive(self):
         # שורה שנייה חזרה באנגלית — היא נופלת, הראשונה נשארת
@@ -3624,8 +3624,8 @@ class TestHeadlineRewrite:
              patch.object(api, "_call_groq_with_fallback",
                           return_value=self._reply("2. הפדרל ריזרב הותיר את הריבית\n1. מחירי הנפט עולים")):
             out = api._rewrite_headlines(self.HEADS)
-        assert out[0] == "מחירי הנפט עולים"
-        assert out[1] == "הפדרל ריזרב הותיר את הריבית"
+        assert out[0]["he"] == "מחירי הנפט עולים"
+        assert out[1]["he"] == "הפדרל ריזרב הותיר את הריבית"
 
     def test_a_line_number_out_of_range_is_ignored(self):
         with patch.object(api, "GROQ_KEY", "k"), \
@@ -3709,7 +3709,7 @@ class TestHyphenNormalisation:
                           return_value={"choices": [{"message": {"content":
                               "1. מחירי הנפט יורדים ב\u20112 דולר"}}]}):
             out = api._rewrite_headlines(["Oil prices fall $2 on talks"])
-        assert out[0] == "מחירי הנפט יורדים ב-2 דולר"
+        assert out[0]["he"] == "מחירי הנפט יורדים ב-2 דולר"
 
 
 class TestSharedRsi:
@@ -4374,3 +4374,127 @@ class TestWatchlistNews:
         api._company_news_raw = lambda t: []
         d = self._get("AAPL,MSFT")
         assert d["news"] == [] and d["tickers"] == ["AAPL", "MSFT"]
+
+
+class TestWhyItMatters:
+    """שורת 'למה זה חשוב' שמתחת לכותרת.
+
+    היא נכתבת באותה קריאה שמנסחת את הכותרות — קריאה אחת לכל הפיד ולא
+    אחת לכותרת. זה גם זול וגם שומר על סגנון אחיד, אבל זה אומר שכשל
+    בפורמט חייב להיות רך: הכותרת שורדת גם כשההסבר נופל.
+    """
+
+    HEADS = ["Oil prices rise on supply fears"]
+
+    def _reply(self, text):
+        return {"choices": [{"message": {"content": text}}]}
+
+    def _run(self, text, heads=None):
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback", return_value=self._reply(text)):
+            return api._rewrite_headlines(heads or self.HEADS)
+
+    def test_both_parts_come_back(self):
+        out = self._run("1. מחירי הנפט עולים || מחירי אנרגיה גבוהים לוחצים על חברות תעופה")
+        assert out[0]["he"] == "מחירי הנפט עולים"
+        assert out[0]["why"] == "מחירי אנרגיה גבוהים לוחצים על חברות תעופה"
+
+    def test_a_line_without_the_separator_is_all_headline(self):
+        out = self._run("1. מחירי הנפט עולים")
+        assert out[0]["he"] == "מחירי הנפט עולים"
+        assert out[0]["why"] == ""
+
+    def test_a_bad_explanation_does_not_sink_the_headline(self):
+        # כשל רך: הכותרת שורדת, ההסבר נעלם
+        out = self._run("1. מחירי הנפט עולים || Oil is up and this matters a lot")
+        assert out[0]["he"] == "מחירי הנפט עולים"
+        assert out[0]["why"] == ""
+
+    def test_advice_is_rejected(self):
+        out = self._run("1. מחירי הנפט עולים || כדאי לקנות מניות אנרגיה עכשיו")
+        assert out[0]["why"] == ""
+
+    def test_a_prediction_is_rejected(self):
+        # כל הטיות המין והמספר: "צפוי לעלות" לבדו החמיץ את "צפויה לעלות"
+        for w in ("צפוי לעלות", "צפויה לעלות", "צפויים לרדת", "צפויות לצנוח"):
+            out = self._run("1. מחירי הנפט עולים || המניה " + w + " בקרוב")
+            assert out[0]["why"] == "", w
+
+    def test_repeating_the_headline_is_not_an_explanation(self):
+        out = self._run("1. מחירי הנפט עולים || מחירי הנפט עולים")
+        assert out[0]["why"] == ""
+
+    def test_a_paragraph_is_rejected(self):
+        out = self._run("1. מחירי הנפט עולים || " + "מילה " * 60)
+        assert out[0]["why"] == ""
+
+    def test_the_headline_itself_is_still_validated(self):
+        out = self._run("1. Oil prices rise || מחירי אנרגיה לוחצים על חברות תעופה")
+        assert 0 not in out, "כותרת באנגלית נפסלת גם כשההסבר תקין"
+
+    def test_it_is_still_a_single_call(self):
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback",
+                          return_value=self._reply("1. א || ב\n2. ג || ד")) as m:
+            api._rewrite_headlines(["one", "two"])
+        assert m.call_count == 1
+
+    def test_the_prompt_forbids_advice_in_the_explanation(self):
+        assert "אסור לחזות מחיר" in api.HEADLINE_SYSTEM
+        assert "||" in api.HEADLINE_SYSTEM
+
+    def test_the_splitter_is_tolerant(self):
+        assert api._split_headline_why("א || ב") == ("א", "ב")
+        assert api._split_headline_why("א||ב") == ("א", "ב")
+        assert api._split_headline_why("א") == ("א", "")
+        assert api._split_headline_why("א || ב || ג") == ("א", "ב || ג")
+
+    ONE_ITEM = [{"id": 5, "headline": "Oil rises", "url": "u", "source": "R",
+                 "datetime": 1, "summary": "", "related": ""}]
+
+    def test_the_feed_carries_the_explanation(self):
+        api._cache.clear()
+        with patch.object(api, "FINNHUB_KEY", "k"), \
+             patch.object(api, "_rewrite_headlines",
+                          return_value={0: {"he": "כותרת", "why": "הסבר"}}), \
+             patch("stock_api.crequests") as mock_r:
+            mock_r.get.return_value = MagicMock(json=lambda: self.ONE_ITEM)
+            d = client.get("/news").json()
+        assert d["news"][0]["why"] == "הסבר"
+
+    def test_a_missing_explanation_is_an_empty_string_not_missing(self):
+        # הלקוח בודק n.why; None היה מייצר "undefined" על המסך
+        api._cache.clear()
+        with patch.object(api, "FINNHUB_KEY", "k"), \
+             patch.object(api, "_rewrite_headlines", return_value={}), \
+             patch.object(api, "_translate", side_effect=lambda t, b: "עברית"), \
+             patch("stock_api.crequests") as mock_r:
+            mock_r.get.return_value = MagicMock(json=lambda: self.ONE_ITEM)
+            d = client.get("/news").json()
+        assert d["news"][0]["why"] == ""
+
+
+class TestBriefSpeculationFilter:
+    """השערות מנוסחות בזהירות. נצפו בתדריך החי אחרי הסבב הראשון של הסינון."""
+
+    def test_the_observed_speculation_is_removed(self):
+        t = ("Micron מעלה שני מנהלים בתפקידי מפתח. "
+             "בנוסף, הסכם עם Meta עשוי להשפיע על ההכנסות של החברה.")
+        out = api._strip_brief_filler(t)
+        assert "עשוי להשפיע" not in out
+        assert "Micron" in out
+
+    def test_generic_investor_interest_is_removed(self):
+        t = ("שלוש חברות רובוטיקה פרסמו דוחות. "
+             "זהו נושא שמעניין משקיעים שמחפשים להבין את הכיוון של המגזר.")
+        out = api._strip_brief_filler(t)
+        assert "זהו נושא" not in out
+
+    def test_a_factual_sentence_with_a_number_survives_the_filter(self):
+        # "מצביע על" חוקי לגמרי כשיש מאחוריו מספר מהמקור
+        t = "הדוח פורסם. הנתונים מצביעים על ירידה של 12% בהכנסות."
+        assert api._strip_brief_filler(t) == t
+
+    def test_the_first_sentence_survives_even_if_it_speculates(self):
+        one = "ההסכם עשוי להשפיע על ההכנסות."
+        assert api._strip_brief_filler(one) == one
