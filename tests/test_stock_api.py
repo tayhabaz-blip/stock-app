@@ -4113,3 +4113,68 @@ class TestNewsBriefEndpoint:
              patch.object(api, "_ticker_context", return_value=None) as m:
             client.get("/news/brief/many")
         assert m.call_count <= api.NEWS_TICKERS_MAX
+
+
+class TestTickersFromText:
+    """זיהוי מניות מתוך טקסט הידיעה.
+
+    נמדד בפרודקשן: שדה related של Finnhub חזר ריק בכל שמונה הידיעות
+    בפיד הכללי. בלי זיהוי משלנו החצי שהופך את התדריך לשלנו — מה זה
+    אומר למניה — לא היה מופיע אף פעם.
+    """
+
+    def test_a_company_name_becomes_its_ticker(self):
+        assert api._tickers_from_text("Intel cuts jobs") == ["INTC"]
+
+    def test_the_order_follows_the_text(self):
+        out = api._tickers_from_text("wins in Nvidia, Salesforce and CrowdStrike")
+        assert out == ["NVDA", "CRM"]
+
+    def test_an_explicit_ticker_in_parentheses_is_picked_up(self):
+        assert api._tickers_from_text("Apple (AAPL) unveils a chip") == ["AAPL"]
+
+    def test_a_name_inside_a_longer_word_is_not_a_match(self):
+        # "artificial intelligence" הכיל את intel לפני התיקון
+        assert api._tickers_from_text("Artificial intelligence spending soars") == []
+        assert api._tickers_from_text("The stock zoomed higher") == []
+
+    def test_an_ambiguous_english_word_is_not_a_ticker(self):
+        # מניה שגויה בתדריך גרועה בהרבה ממניה חסרה
+        assert api._tickers_from_text("Travel visa rules tighten") == []
+        assert api._tickers_from_text("Analysts cut the price target") == []
+        assert api._tickers_from_text("The company closed the gap") == []
+
+    def test_general_news_with_no_company_yields_nothing(self):
+        assert api._tickers_from_text("Oil prices climb as OPEC holds output") == []
+
+    def test_the_list_is_capped_like_the_related_field(self):
+        out = api._tickers_from_text("Apple Microsoft Nvidia Tesla Amazon")
+        assert len(out) == api.NEWS_TICKERS_MAX
+
+    def test_duplicates_collapse(self):
+        assert api._tickers_from_text("Nvidia beat; Nvidia rose") == ["NVDA"]
+
+    def test_missing_input_is_safe(self):
+        assert api._tickers_from_text("") == []
+        assert api._tickers_from_text(None) == []
+
+    def test_no_language_model_is_involved(self):
+        with patch.object(api, "GROQ_KEY", ""), \
+             patch.object(api, "_call_groq_with_fallback", side_effect=AssertionError("לא אמור להיקרא")):
+            assert api._tickers_from_text("Intel cuts jobs") == ["INTC"]
+
+    def test_every_alias_maps_to_a_valid_ticker(self):
+        for name, tk in api.COMPANY_ALIASES.items():
+            assert api.norm_ticker(tk) == tk, name
+            assert name == name.lower(), name
+
+
+class TestBriefPromptSecondRound:
+    """הכשלים שנצפו בתדריך החי ביום הראשון."""
+
+    def test_the_prompt_rejects_the_publishers_own_promo(self):
+        # נצפה בפועל: משפט על שעת השידור של תוכנית המקור בתוך התדריך
+        assert "פרסומת" in api.BRIEF_SYSTEM
+
+    def test_the_prompt_names_the_observed_verb_error(self):
+        assert "שהפקידה" in api.BRIEF_SYSTEM
