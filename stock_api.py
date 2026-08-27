@@ -2053,6 +2053,11 @@ BRIEF_SYSTEM = "\n".join([
     "- אם פרט חסר לך — אל תשלים אותו. פסקה קצרה ונכונה עדיפה על פסקה",
     "  מלאה ומומצאת.",
     "- אסור לתת המלצה, לחזות מחיר או לכתוב 'כדאי לקנות' או 'כדאי למכור'.",
+    "- דלג על משפטי פרסומת של המקור עצמו — שעות שידור, הזמנה להצטרף",
+    "  למועדון, קישור להרשמה. הם אינם חדשות ואין להם ערך לקורא.",
+    "- אל תמציא צורת פועל. בספק, בחר ניסוח פשוט יותר. נצפה אצלך בפועל",
+    "  'המסקנות שהפקידה' במקום 'שהפיקה', ו'הקבוצה השקעתית' במקום",
+    "  'קבוצת ההשקעות'.",
     "- שמות חברות, טיקרים ומדדים נשארים באנגלית: Nvidia, S&P 500, OPEC.",
     "- שם מקום, ארגון או אדם שאינך בטוח בצורתו העברית המקובלת — השאר",
     "  אותו באנגלית. שם באנגלית הוא מידע חסר; שם עברי שגוי הוא מידע כוזב.",
@@ -2109,7 +2114,7 @@ def _brief_what(headline: str, summary: str) -> str:
     payload = {
         "model": AI_MODEL,
         "max_completion_tokens": 400,
-        "temperature": 0.2,
+        "temperature": 0.1,
         "messages": [
             {"role": "system", "content": BRIEF_SYSTEM},
             {"role": "user", "content": "\n".join(parts)},
@@ -2146,6 +2151,94 @@ def _related_tickers(raw):
         t = norm_ticker(part)
         if t and t not in out:
             out.append(t)
+        if len(out) >= NEWS_TICKERS_MAX:
+            break
+    return out
+
+
+# -- שמות חברות לזיהוי בתוך טקסט הידיעה.
+#
+# שדה related של Finnhub ריק כמעט תמיד בפיד הכללי — נמדד בפרודקשן: בכל
+# שמונה הידיעות שהוחזרו הוא חזר ריק. בלי זיהוי משלנו, החצי שהופך את
+# התדריך לשלנו (מה זה אומר למניה) פשוט לא היה מופיע אף פעם.
+#
+# הזיהוי מכוון להיות זהיר ולא רחב: רק שמות שאינם מילה אנגלית רגילה.
+# Visa, Target, Block, Arm, Unity, Gap וכדומה אינם ברשימה בכוונה — הם
+# היו נדלקים על "travel visa" או "price target" ומצמידים לידיעה מניה
+# שאין לה כל קשר אליה. מניה שגויה בתדריך גרועה בהרבה ממניה חסרה.
+COMPANY_ALIASES = {
+    "apple": "AAPL", "microsoft": "MSFT", "nvidia": "NVDA", "google": "GOOGL",
+    "alphabet": "GOOGL", "amazon": "AMZN", "meta platforms": "META",
+    "facebook": "META", "tesla": "TSLA", "broadcom": "AVGO", "netflix": "NFLX",
+    "palantir": "PLTR", "coinbase": "COIN", "robinhood": "HOOD",
+    "paypal": "PYPL", "airbnb": "ABNB", "shopify": "SHOP",
+    "crowdstrike": "CRWD", "snowflake": "SNOW", "datadog": "DDOG",
+    "cloudflare": "NET", "mongodb": "MDB", "palo alto networks": "PANW",
+    "scaler": "ZS", "micron": "MU", "intel": "INTC", "qualcomm": "QCOM",
+    "marvell": "MRVL", "supermicro": "SMCI", "super micro": "SMCI",
+    "oracle": "ORCL", "adobe": "ADBE", "salesforce": "CRM",
+    "servicenow": "NOW", "intuit": "INTU", "disney": "DIS", "boeing": "BA",
+    "jpmorgan": "JPM", "walmart": "WMT", "costco": "COST", "pepsico": "PEP",
+    "coca-cola": "KO", "exxon": "XOM", "chevron": "CVX", "eli lilly": "LLY",
+    "unitedhealth": "UNH", "rivian": "RIVN", "cisco": "CSCO",
+    "texas instruments": "TXN", "okta": "OKTA", "atlassian": "TEAM",
+    "workday": "WDAY", "roku": "ROKU", "pinterest": "PINS",
+    "snap inc": "SNAP", "trade desk": "TTD", "lyft": "LYFT",
+    "doordash": "DASH", "roblox": "RBLX", "twilio": "TWLO", "zoom": "ZM",
+    "docusign": "DOCU", "etsy": "ETSY", "ebay": "EBAY", "booking": "BKNG",
+    "marriott": "MAR", "hilton": "HLT", "wells fargo": "WFC",
+    "goldman sachs": "GS", "morgan stanley": "MS", "charles schwab": "SCHW",
+    "american express": "AXP", "blackrock": "BLK", "johnson & johnson": "JNJ",
+    "pfizer": "PFE", "merck": "MRK", "abbvie": "ABBV", "amgen": "AMGN",
+    "gilead": "GILD", "mcdonald": "MCD", "starbucks": "SBUX",
+    "home depot": "HD", "procter & gamble": "PG", "colgate": "CL",
+    "conocophillips": "COP", "schlumberger": "SLB", "occidental": "OXY",
+    "caterpillar": "CAT", "deere": "DE", "honeywell": "HON",
+    "lockheed": "LMT", "raytheon": "RTX", "northrop": "NOC",
+    "general motors": "GM", "delta air": "DAL", "united airlines": "UAL",
+    "southwest airlines": "LUV", "advanced micro devices": "AMD",
+    "uber technologies": "UBER", "moderna": "MRNA",
+}
+
+# -- טיקר שנכתב במפורש בטקסט, למשל "(NVDA)". שתיים עד חמש אותיות גדולות
+# כדי לא להידלק על ראשי תיבות של סוכנויות ומטבעות. --
+EXPLICIT_TICKER_RE = re.compile(r"\(([A-Z]{2,5})\)")
+
+# -- התאמה על גבול מילה בלבד. בלי זה "artificial intelligence" הכיל את
+# "intel" והידיעה הייתה מקבלת את INTC בטעות, ו-"zoomed" את ZM. --
+_ALIAS_CACHE = {}
+
+
+def _alias_re(name):
+    r = _ALIAS_CACHE.get(name)
+    if r is None:
+        r = re.compile(r"(?<![a-z0-9])" + re.escape(name) + r"(?![a-z0-9])")
+        _ALIAS_CACHE[name] = r
+    return r
+
+
+def _tickers_from_text(text):
+    """מזהה מניות מתוך טקסט הידיעה כשהמקור לא סיפק אותן.
+
+    דטרמיניסטי לגמרי, בלי מודל שפה: התאמת שם או טיקר מפורש. הסדר הוא
+    סדר ההופעה בטקסט, כדי שהמניה שהידיעה פותחת בה תוצג ראשונה.
+    """
+    if not text:
+        return []
+    low = str(text).lower()
+    hits = []
+    for name, tk in COMPANY_ALIASES.items():
+        m = _alias_re(name).search(low)
+        if m:
+            hits.append((m.start(), tk))
+    for m in EXPLICIT_TICKER_RE.finditer(str(text)):
+        tk = norm_ticker(m.group(1))
+        if tk:
+            hits.append((m.start(), tk))
+    out = []
+    for _, tk in sorted(hits):
+        if tk not in out:
+            out.append(tk)
         if len(out) >= NEWS_TICKERS_MAX:
             break
     return out
@@ -2322,12 +2415,15 @@ def get_news(request: Request):
             if he is None:
                 he = _translate(headline, deadline - time.time())
             item_id = _news_id(n)
-            tickers = _related_tickers(n.get("related"))
+            summary = n.get("summary", "") or ""
+            # related של Finnhub ריק כמעט תמיד בפיד הכללי — ואז מזהים לבד
+            tickers = (_related_tickers(n.get("related"))
+                       or _tickers_from_text(headline + " " + summary))
             # התקציר של Finnhub נשמר בשרת ואינו נשלח ללקוח: הוא חומר גלם
             # לפסקה שאנחנו כותבים, לא טקסט שאנחנו מציגים.
             _news_src_put(item_id, {
                 "headline": headline,
-                "summary": n.get("summary", "") or "",
+                "summary": summary,
                 "source": n.get("source", "") or "",
                 "url": n.get("url", "") or "",
                 "tickers": tickers,
