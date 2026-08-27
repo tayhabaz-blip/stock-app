@@ -2001,6 +2001,36 @@ def _normalise_hyphens(txt: str) -> str:
     return txt
 
 
+# -- ניקוד. נצפה בפועל בפיד החי: השם Schmid הוחזר כ-"שׁמִיד" עם שין
+# ימנית וחיריק. עברית מנוקדת בכותרת חדשות נראית שבורה, וזה פגם שאפשר
+# לזהות בוודאות ולכן מתקנים ולא פוסלים. הטווח U+0591-U+05C7 הוא טעמי
+# המקרא, הניקוד והמתג — כולם סימנים משולבים שאינם אותיות. --
+NIQQUD_RE = re.compile(r"[\u0591-\u05C7]")
+
+# -- מרכאות טיפוגרפיות. באותה משפחה: פגם מבני ולא שגיאת תוכן. --
+FANCY_QUOTES = {"\u201c": '"', "\u201d": '"', "\u201e": '"',
+                "\u2018": "'", "\u2019": "'", "\u201a": "'"}
+
+
+def _strip_niqqud(txt: str) -> str:
+    if not txt:
+        return txt
+    return NIQQUD_RE.sub("", txt)
+
+
+def _normalise_quotes(txt: str) -> str:
+    if not txt:
+        return txt
+    for ch, plain in FANCY_QUOTES.items():
+        txt = txt.replace(ch, plain)
+    return txt
+
+
+def _clean_he_line(txt: str) -> str:
+    """כל התיקונים המבניים במקום אחד, כדי שכותרת והסבר יעברו את אותו נתיב."""
+    return _normalise_quotes(_strip_niqqud(_normalise_hyphens(txt)))
+
+
 def _valid_he_headline(he: str, en: str) -> bool:
     """כותרת עברית מתקבלת רק אם היא באמת כותרת עברית."""
     if not he or not he.strip():
@@ -2098,7 +2128,7 @@ def _rewrite_headlines(headlines):
         if not (0 <= n < len(items)):
             continue
         idx, en = items[n]
-        he, why = _split_headline_why(_normalise_hyphens(m.group(2).strip()))
+        he, why = _split_headline_why(_clean_he_line(m.group(2).strip()))
         if _valid_he_headline(he, en):
             out[idx] = {"he": he, "why": why if _valid_he_why(why, he) else ""}
     if len(out) < len(items):
@@ -2259,7 +2289,7 @@ def _brief_what(headline: str, summary: str) -> str:
     except Exception:
         log.exception("news brief failed")
         return ""
-    text = _normalise_hyphens(_strip_md_wrap(text)).strip()
+    text = _clean_he_line(_strip_md_wrap(text)).strip()
     text = _fix_brief_phrases(_strip_brief_filler(text)).strip()
     if not _valid_he_brief(text):
         log.warning("news brief failed validation: %s", text[:120])
