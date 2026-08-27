@@ -2551,6 +2551,132 @@ def get_news_brief(item_id: str, request: Request):
     return out
 
 
+# ── חדשות רשימת המעקב ─────────────────────────────────────────────────
+# הפיד הכללי הוא בעיקר מאקרו, ולכן ברוב הידיעות בו אין מניה כלל. כאן
+# הפוך: מושכים לפי טיקר, ולכן לכל ידיעה יש מניה ידועה בוודאות ולא
+# בזיהוי משוער מהטקסט. זה מה שהופך את התדריך כאן לשימושי באמת.
+#
+# העלות היא קריאת Finnhub לכל טיקר, ולכן: תקרה על מספר הטיקרים, מטמון
+# נפרד לכל טיקר (חצי שעה, כמו /news/{ticker}) ומטמון על התוצאה המאוחדת.
+WATCHLIST_NEWS_MAX_TICKERS = 8
+WATCHLIST_NEWS_PER_TICKER = 3
+WATCHLIST_NEWS_TOTAL = 12
+WATCHLIST_NEWS_TTL = 900
+WATCHLIST_NEWS_DAYS = 7
+
+
+def _company_news_raw(ticker):
+    """הידיעות הגולמיות של טיקר בודד, עם מטמון משלו."""
+    key = "cnews_raw:" + ticker
+    cached = cache_get(key, 1800)
+    if cached is not None:
+        return cached
+    if not FINNHUB_KEY:
+        return []
+    try:
+        today = datetime.now(ZoneInfo("America/New_York")).date()
+        frm = today - timedelta(days=WATCHLIST_NEWS_DAYS)
+        r = crequests.get(
+            "https://finnhub.io/api/v1/company-news",
+            params={"symbol": ticker, "from": str(frm), "to": str(today),
+                    "token": FINNHUB_KEY},
+            impersonate="chrome",
+            timeout=15,
+        )
+        data = r.json()
+    except Exception:
+        log.exception("company news failed for %s", ticker)
+        return []
+    if not isinstance(data, list):
+        log.warning("company news unexpected payload for %s: %s", ticker, str(data)[:200])
+        return []
+    data = sorted(data, key=lambda x: x.get("datetime", 0) or 0,
+                  reverse=True)[:WATCHLIST_NEWS_PER_TICKER]
+    return cache_set(key, data)
+
+
+@app.get("/news/watchlist")
+def get_watchlist_news(request: Request, tickers: str = ""):
+    """חדשות רק על המניות שברשימת המעקב, ממוינות לפי זמן."""
+    if not rate_ok(request, "news_wl", 20, 60):
+        return err(429, "יותר מדי בקשות — נסה שוב בעוד רגע")
+    syms = []
+    for raw in (tickers or "").split(","):
+        t = norm_ticker(raw)
+        if t and t not in syms:
+            syms.append(t)
+        if len(syms) >= WATCHLIST_NEWS_MAX_TICKERS:
+            break
+    if not syms:
+        return {"news": [], "tickers": []}
+    key = "news_wl:" + ",".join(sorted(syms))
+    cached = cache_get(key, WATCHLIST_NEWS_TTL)
+    if cached is not None:
+        return cached
+
+    items = []
+    for t in syms:
+        for n in _company_news_raw(t):
+            headline = _strip_source_suffix((n.get("headline") or "").strip(),
+                                            n.get("source", "") or "")
+            if not headline:
+                continue
+            items.append({"raw": n, "ticker": t, "headline": headline})
+    if not items:
+        return cache_set(key, {"news": [], "tickers": syms})
+
+    # ידיעה אחת יכולה להופיע אצל שני טיקרים; מאחדים ושומרים את שניהם.
+    by_id = {}
+    order = []
+    for it in items:
+        iid = _news_id(it["raw"])
+        if not iid:
+            continue
+        if iid in by_id:
+            if it["ticker"] not in by_id[iid]["tickers"]:
+                by_id[iid]["tickers"].append(it["ticker"])
+            continue
+        by_id[iid] = {
+            "id": iid,
+            "headline": it["headline"],
+            "summary": it["raw"].get("summary", "") or "",
+            "url": it["raw"].get("url", "") or "",
+            "source": it["raw"].get("source", "") or "",
+            "datetime": it["raw"].get("datetime", 0) or 0,
+            "tickers": [it["ticker"]],
+        }
+        order.append(iid)
+
+    merged = sorted((by_id[i] for i in order),
+                    key=lambda x: x["datetime"], reverse=True)[:WATCHLIST_NEWS_TOTAL]
+
+    # קריאה אחת לכל הכותרות, בדיוק כמו בפיד הכללי
+    rewritten = _rewrite_headlines([m["headline"] for m in merged])
+    deadline = time.time() + 10
+    out = []
+    for i, m in enumerate(merged):
+        he = rewritten.get(i)
+        if he is None:
+            he = _translate(m["headline"], deadline - time.time())
+        _news_src_put(m["id"], {
+            "headline": m["headline"],
+            "summary": m["summary"],
+            "source": m["source"],
+            "url": m["url"],
+            "tickers": m["tickers"][:NEWS_TICKERS_MAX],
+        })
+        out.append({
+            "id": m["id"],
+            "headline": m["headline"],
+            "headline_he": he,
+            "url": m["url"],
+            "source": m["source"],
+            "datetime": m["datetime"],
+            "tickers": m["tickers"][:NEWS_TICKERS_MAX],
+        })
+    return cache_set(key, {"news": out, "tickers": syms})
+
+
 # ── חדשות ספציפיות למניה בודדת (7 הימים האחרונים), משמשות להעשרת פרומפט
 # ה-AI כדי שהניתוח יתייחס למה שקרה בפועל סביב המניה, לא רק לאינדיקטורים
 # טכניים. מטמון ארוך יותר מ-/news הכללי (30 דקות) — חדשות ברמת חברה
