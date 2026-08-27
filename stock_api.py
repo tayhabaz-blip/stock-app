@@ -1958,7 +1958,19 @@ HEADLINE_SYSTEM = "\n".join([
     "- השתמש במקף רגיל (-) בלבד, לא במקפים טיפוגרפיים.",
     "- עברית תקנית בלבד. אסור לשלב אותיות לטיניות בתוך מילה עברית.",
     "- בלי מרכאות מיותרות, בלי Markdown, בלי הסברים משלך.",
-    "- כותרת היא כותרת: אורך דומה למקור, לא פסקה.",
+    "- כותרת היא כותרת: אורך דומה למקור, לא פסקה.", "",
+    "אחרי כל כותרת הוסף ' || ' ואז משפט קצר אחד שמסביר למה זה מעניין",
+    "משקיע. הפורמט המדויק: מספר, נקודה, כותרת, רווח, שני קווים אנכיים,",
+    "רווח, המשפט. לדוגמה:",
+    "1. מחירי הנפט עולים על רקע חשש להיצע || מחירי אנרגיה גבוהים לוחצים",
+    "על מרווחי הרווח של חברות תעופה ותחבורה.", "",
+    "כללי המשפט השני:",
+    "- הוא נשען אך ורק על מה שכתוב בכותרת. אסור להוסיף מספר, שם או",
+    "  אירוע שאינם בה.",
+    "- אסור לחזות מחיר ואסור לכתוב 'כדאי', 'מומלץ', 'צפוי לעלות'.",
+    "- אסור לחזור על הכותרת במילים אחרות. אם אין לך מה להוסיף מעבר",
+    "  לכותרת עצמה, השאר את החלק הזה ריק.",
+    "- משפט אחד קצר, עד כשתים עשרה מילים.",
 ])
 
 # -- מעל זה הניסוח כנראה הפך לפסקה, ואז זו כבר לא כותרת. --
@@ -2003,6 +2015,47 @@ def _valid_he_headline(he: str, en: str) -> bool:
     return True
 
 
+# -- תקרה לאורך שורת "למה זה חשוב". מדוד: משפט של עד 12 מילים בעברית
+# יוצא 60-95 תווים; 130 משאיר מרווח ועדיין פוסל פסקה. --
+WHY_MAX_CHARS = 130
+
+# -- ניסוחים שהופכים הסבר להמלצה או לתחזית. --
+WHY_BANNED = ("כדאי", "מומלץ", "הזדמנות קנייה", "שווה לקנות", "שווה למכור")
+
+# -- תחזית מחיר בכל הטיות המין והמספר. הצורה "צפוי לעלות" לבדה החמיצה
+# את "צפויה לעלות", ובבדיקה זה עבר. --
+WHY_FORECAST = re.compile(r"צפוי(?:ה|ים|ות)?\s+ל(?:עלות|רדת|זנק|צנוח|התרסק)")
+
+
+def _valid_he_why(why: str, he: str) -> bool:
+    """שורת ההסבר מתקבלת רק אם היא מוסיפה משהו ואינה המלצה."""
+    if not why or not why.strip():
+        return False
+    why = why.strip()
+    if not re.search(r"[\u0590-\u05FF]", why):
+        return False
+    if len(why) > WHY_MAX_CHARS:
+        return False
+    if re.search(r"[\u0590-\u05FF][A-Za-z]|[A-Za-z][\u0590-\u05FF]", why):
+        return False
+    if any(b in why for b in WHY_BANNED):
+        return False
+    if WHY_FORECAST.search(why):
+        return False
+    # חזרה על הכותרת אינה הסבר
+    if why == (he or "").strip():
+        return False
+    return True
+
+
+def _split_headline_why(text: str):
+    """מפצל 'כותרת || למה'. בלי המפריד, כל השורה היא הכותרת."""
+    parts = text.split("||", 1)
+    he = parts[0].strip().strip('"').strip("'")
+    why = parts[1].strip().strip('"').strip("'") if len(parts) > 1 else ""
+    return he, why
+
+
 def _rewrite_headlines(headlines):
     """מנסח את כל הכותרות בקריאה אחת, ומחזיר מיפוי אינדקס->עברית.
 
@@ -2045,9 +2098,9 @@ def _rewrite_headlines(headlines):
         if not (0 <= n < len(items)):
             continue
         idx, en = items[n]
-        he = _normalise_hyphens(m.group(2).strip().strip('"').strip("'"))
+        he, why = _split_headline_why(_normalise_hyphens(m.group(2).strip()))
         if _valid_he_headline(he, en):
-            out[idx] = he
+            out[idx] = {"he": he, "why": why if _valid_he_why(why, he) else ""}
     if len(out) < len(items):
         log.warning("headline rewrite: %s of %s passed validation", len(out), len(items))
     return out
@@ -2132,6 +2185,13 @@ BRIEF_FILLER = [
     "מדגיש את החשיבות", "יכולים ללמוד", "ניתן ללמוד", "חשוב להבין",
     "מזכיר לנו", "יש לזכור", "חשוב לציין", "כל משקיע",
     "פוטנציאל צמיחה גבוה", "לטובת רווחים", "תמונה מורכבת",
+    # -- השערות מנוסחות בזהירות. נצפו בפרודקשן: "הסכם עם Meta עשוי
+    # להשפיע על ההכנסות, שכן הוא נוגע לתחום הפעילות המרכזי שלה" ו-"זהו
+    # נושא שמעניין משקיעים שמחפשים להבין את הכיוון של המגזר". שניהם
+    # נשמעים כמו ניתוח ואינם נשענים על שום דבר שהיה בכותרת. --
+    "עשוי להשפיע", "עשויה להשפיע", "עשויים להשפיע", "עשוי לתמוך",
+    "מצביע על", "מצביעה על", "זהו נושא", "שמחפשים להבין",
+    "משקף את היכולת", "משקפת את היכולת",
 ]
 
 
@@ -2479,9 +2539,9 @@ def get_news(request: Request):
         slim = []
         for i, n in enumerate(data):
             headline = clean[i]
-            he = rewritten.get(i)
-            if he is None:
-                he = _translate(headline, deadline - time.time())
+            r = rewritten.get(i)
+            he = r["he"] if r else _translate(headline, deadline - time.time())
+            why = r["why"] if r else ""
             item_id = _news_id(n)
             summary = n.get("summary", "") or ""
             # related של Finnhub ריק כמעט תמיד בפיד הכללי — ואז מזהים לבד
@@ -2500,6 +2560,7 @@ def get_news(request: Request):
                 "id": item_id,
                 "headline": headline,
                 "headline_he": he,
+                "why": why,
                 "url": n.get("url", ""),
                 "source": n.get("source", ""),
                 "datetime": n.get("datetime", 0),
@@ -2655,9 +2716,9 @@ def get_watchlist_news(request: Request, tickers: str = ""):
     deadline = time.time() + 10
     out = []
     for i, m in enumerate(merged):
-        he = rewritten.get(i)
-        if he is None:
-            he = _translate(m["headline"], deadline - time.time())
+        r = rewritten.get(i)
+        he = r["he"] if r else _translate(m["headline"], deadline - time.time())
+        why = r["why"] if r else ""
         _news_src_put(m["id"], {
             "headline": m["headline"],
             "summary": m["summary"],
@@ -2669,6 +2730,7 @@ def get_watchlist_news(request: Request, tickers: str = ""):
             "id": m["id"],
             "headline": m["headline"],
             "headline_he": he,
+            "why": why,
             "url": m["url"],
             "source": m["source"],
             "datetime": m["datetime"],
