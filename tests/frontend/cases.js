@@ -809,3 +809,92 @@ group('החדשות מובילות לתדריך ולא החוצה');
     assert(X.has('_openBrief=null;'), 'הסימון חייב להתאפס יחד עם הכרטיסים');
   });
 }
+
+/* ── התאום: מספר נכון בהקשר שהופך אותו למטעה ─────────────────────────
+ * המדידה שלנו: 20 מניות, 2,344 מקרים, פגיעה בכיוון 50.8% מול 54.1%
+ * למי שהימר תמיד על עלייה. לכן הסטטיסטיקה נשארת על המסך רק לצד שיעור
+ * הבסיס ולצד המשפט שאומר שאין כאן יתרון.
+ */
+group('התאום — סטטיסטיקה עם הקשר, לא איתות');
+{
+  const TW = X.load(['computeTwins', 'twinNoEdgeText', 'num'],
+                    "var TWIN_STUDY={stocks:20,cases:2344,hit:50.8,base:54.1};");
+
+  function series(n) {
+    const c = [], lb = [];
+    let p = 100;
+    for (let i = 0; i < n; i++) {
+      p *= 1 + (Math.sin(i / 3) + Math.cos(i / 7)) / 100;
+      c.push(p);
+      lb.push('d' + i);
+    }
+    return { c, lb };
+  }
+
+  test('שיעור הבסיס של המניה מוחזר לצד הממוצע', () => {
+    const s = series(300);
+    const tw = TW.computeTwins(s.c, s.lb, 20, 10, 3);
+    assert(tw !== null, 'צריך להימצא תקדים');
+    assert(typeof tw.baseFwd === 'number', 'baseFwd חייב להיות מספר');
+    assert(typeof tw.baseWin === 'number', 'baseWin חייב להיות מספר');
+  });
+
+  test('שיעור הבסיס מחושב על כל חלונות המניה', () => {
+    const s = series(300);
+    const tw = TW.computeTwins(s.c, s.lb, 20, 10, 3);
+    let sum = 0, cnt = 0;
+    for (let i = 0; i + 10 < s.c.length; i++) { sum += (s.c[i + 10] / s.c[i] - 1) * 100; cnt++; }
+    close(tw.baseFwd, sum / cnt, 1e-9, 'baseFwd');
+  });
+
+  test('מספר התקדימים החיוביים מוחזר כספירה ולא רק כאחוז', () => {
+    // "100%" מתוך שלושה נשמע כמו ידע; "3 מתוך 3" הוא מה שבאמת נמדד
+    const s = series(300);
+    const tw = TW.computeTwins(s.c, s.lb, 20, 10, 3);
+    eq(tw.hits, tw.top.filter(c => c.fwdReturn > 0).length, 'hits');
+    assert(tw.hits <= tw.top.length, 'אי אפשר יותר חיוביים מתקדימים');
+  });
+
+  test('הממוצע והספירה עקביים זה עם זה', () => {
+    const s = series(300);
+    const tw = TW.computeTwins(s.c, s.lb, 20, 10, 3);
+    close(tw.avgFwd, tw.top.reduce((a, c) => a + c.fwdReturn, 0) / tw.top.length, 1e-9, 'avgFwd');
+    eq(tw.winRate, Math.round(tw.hits / tw.top.length * 100), 'winRate');
+  });
+
+  test('המשפט המדוד נוקב במספרים האמיתיים של המחקר', () => {
+    const t = TW.twinNoEdgeText();
+    assert(t.includes('50.8'), 'שיעור הפגיעה חייב להופיע');
+    assert(t.includes('54.1'), 'שיעור הבסיס חייב להופיע');
+    assert(t.includes('2,344') || t.includes('2344'), 'מספר המקרים חייב להופיע');
+  });
+
+  test('המשפט אומר במפורש שאין יתרון', () => {
+    const t = TW.twinNoEdgeText();
+    assert(t.includes('אין יתרון'), 'זו כל הנקודה של המשפט');
+    assert(!t.includes('חיזוי אמין') && !t.includes('מנבא'), 'אסור שיישמע כמו הבטחה');
+  });
+
+  test('המסך מציג את שיעור הבסיס ואת המשפט', () => {
+    assert(X.has('חלון אקראי באותה מניה'), 'הממוצע חייב להופיע מול שיעור בסיס');
+    assert(X.has('twinNoEdgeText()'), 'המשפט המדוד חייב להיות מוצג');
+    assert(X.has('היו חיוביים'), 'ספירה במקום אחוז מתוך שלושה');
+  });
+
+  test('אחוז ניצחון עירום כבר אינו מוצג ככותרת', () => {
+    // הניסוח הישן: "אחוז ניצחון: 100%" על שלושה מקרים
+    assert(!X.has('אחוז ניצחון: <b>'), 'הניסוח המטעה הוסר');
+  });
+}
+
+group('התקדים נוסע ל-AI עם שיעור הבסיס');
+{
+  test('twinStats כולל את שיעור הבסיס', () => {
+    assert(X.has('baseFwd:(tw.baseFwd!=null)?parseFloat(tw.baseFwd.toFixed(1)):null'),
+      'בלי זה השרת מקבל מספר בלי נקודת השוואה');
+  });
+
+  test('הגוף שנשלח ל-AI כולל twinBaseFwd', () => {
+    assert(X.has('twinBaseFwd:twinStats?twinStats.baseFwd:null'));
+  });
+}
