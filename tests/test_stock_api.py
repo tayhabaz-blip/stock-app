@@ -3688,3 +3688,428 @@ class TestHyphenNormalisation:
                               "1. מחירי הנפט יורדים ב\u20112 דולר"}}]}):
             out = api._rewrite_headlines(["Oil prices fall $2 on talks"])
         assert out[0] == "מחירי הנפט יורדים ב-2 דולר"
+
+
+class TestSharedRsi:
+    """RSI מוגדר פעם אחת. הסורק והתדריך חייבים להציג את אותו מספר
+    לאותה מניה, ושני מימושים נפרדים נוטים להיפרד זה מזה עם הזמן."""
+
+    def _series(self, n=60):
+        # סדרה דטרמיניסטית עם עליות וירידות לסירוגין
+        out, p = [], 100.0
+        for i in range(n):
+            p += 1.5 if i % 3 else -2.0
+            out.append(round(p, 4))
+        return out
+
+    def _reference(self, closes, period=14):
+        """המימוש כפי שהיה משובץ בתוך _scan_one לפני החילוץ."""
+        gain_sum = loss_sum = 0.0
+        for i in range(1, period + 1):
+            d = closes[i] - closes[i - 1]
+            if d > 0:
+                gain_sum += d
+            else:
+                loss_sum -= d
+        avg_gain = gain_sum / period
+        avg_loss = loss_sum / period
+        for i in range(period + 1, len(closes)):
+            d = closes[i] - closes[i - 1]
+            avg_gain = (avg_gain * (period - 1) + (d if d > 0 else 0.0)) / period
+            avg_loss = (avg_loss * (period - 1) + (-d if d < 0 else 0.0)) / period
+        return 100 - 100 / (1 + avg_gain / (avg_loss or 0.0001))
+
+    def test_the_extracted_function_returns_exactly_the_old_number(self):
+        c = self._series()
+        assert api._wilder_rsi(c) == self._reference(c)
+
+    def test_a_series_too_short_returns_none_instead_of_crashing(self):
+        assert api._wilder_rsi([1.0, 2.0, 3.0]) is None
+        assert api._wilder_rsi([]) is None
+        assert api._wilder_rsi(None) is None
+
+    def test_a_flat_series_does_not_divide_by_zero(self):
+        assert api._wilder_rsi([50.0] * 40) is not None
+
+    def test_the_state_words_follow_the_shared_thresholds(self):
+        assert api._rsi_state(api.RSI_OVERSOLD - 0.1) == "מכירת יתר"
+        assert api._rsi_state(api.RSI_OVERBOUGHT + 0.1) == "קניית יתר"
+        assert api._rsi_state(api.RSI_OVERSOLD) == "נייטרלי, בחלק התחתון של הטווח"
+        assert api._rsi_state(api.RSI_OVERBOUGHT) == "נייטרלי, בחלק העליון של הטווח"
+        assert api._rsi_state(50) == "נייטרלי"
+
+    def test_a_non_number_has_no_state(self):
+        assert api._rsi_state(None) is None
+        assert api._rsi_state("70") is None
+        assert api._rsi_state(True) is None, "bool הוא int בפייתון — חייב להיפסל"
+
+    def test_the_analysis_prompt_and_the_brief_describe_a_number_alike(self):
+        # אותו RSI לא יתואר במילים שונות בשני מסכים
+        facts = api._extract_stock_facts({"ticker": "AAPL", "rsiNum": 24.0})
+        text = str(facts)
+        lines = api._impact_lines({"price": 10.0, "pct": 0.0, "rsi": 24.0,
+                                   "week_high": 20.0, "week_low": 5.0,
+                                   "week_pos": 33, "ma9": 1.0, "ma20": 2.0})
+        assert "מכירת יתר" in text
+        assert any("מכירת יתר" in l for l in lines)
+
+
+class TestNewsId:
+    """המזהה חייב להיות יציב ובטוח: הלקוח מבקש תדריך לפיו, ולא שולח טקסט."""
+
+    def test_a_finnhub_numeric_id_is_used_as_is(self):
+        assert api._news_id({"id": 7412334}) == "7412334"
+
+    def test_a_string_id_is_stripped_of_anything_unsafe(self):
+        assert api._news_id({"id": "ab/../cd 12"}) == "abcd12"
+
+    def test_a_boolean_is_not_mistaken_for_an_id(self):
+        assert api._news_id({"id": True, "url": "https://x.com/a"}) == api._news_id({"url": "https://x.com/a"})
+
+    def test_without_an_id_the_url_hash_is_stable(self):
+        a = api._news_id({"url": "https://reuters.com/x"})
+        b = api._news_id({"url": "https://reuters.com/x"})
+        assert a == b and len(a) == 16
+        assert a != api._news_id({"url": "https://reuters.com/y"})
+
+    def test_with_nothing_at_all_the_id_is_empty(self):
+        assert api._news_id({}) == ""
+
+    def test_every_produced_id_passes_the_route_validation(self):
+        for item in ({"id": 7412334}, {"id": "ab/../cd 12"}, {"url": "https://x.com/a"}):
+            assert api.NEWS_ID_RE.match(api._news_id(item))
+
+    def test_the_route_rejects_a_path_traversal_attempt(self):
+        assert not api.NEWS_ID_RE.match("../../etc/passwd")
+        assert not api.NEWS_ID_RE.match("")
+
+
+class TestRelatedTickers:
+    """שדה related של Finnhub מגיע במבנים שונים ולעיתים עם זבל."""
+
+    def test_a_comma_list_is_parsed_and_uppercased(self):
+        assert api._related_tickers("nvda,amd") == ["NVDA", "AMD"]
+
+    def test_junk_between_symbols_is_dropped(self):
+        assert api._related_tickers("NVDA $$$ AMD") == ["NVDA", "AMD"]
+
+    def test_duplicates_collapse(self):
+        assert api._related_tickers("NVDA,NVDA") == ["NVDA"]
+
+    def test_the_list_is_capped(self):
+        out = api._related_tickers("A,B,C,D,E,F")
+        assert len(out) == api.NEWS_TICKERS_MAX
+
+    def test_missing_input_is_safe(self):
+        assert api._related_tickers("") == []
+        assert api._related_tickers(None) == []
+
+
+class TestNewsSourceStore:
+    """מאגר המקורות חסום בגודלו — אחרת הוא גדל בלי גבול לאורך ימים."""
+
+    def setup_method(self):
+        api._news_src.clear()
+        del api._news_src_order[:]
+
+    teardown_method = setup_method
+
+    def test_what_goes_in_comes_out(self):
+        api._news_src_put("a1", {"headline": "x"})
+        assert api._news_src_get("a1")["headline"] == "x"
+
+    def test_an_unknown_id_returns_nothing(self):
+        assert api._news_src_get("nope") is None
+
+    def test_an_empty_id_is_ignored(self):
+        api._news_src_put("", {"headline": "x"})
+        assert not api._news_src
+
+    def test_the_oldest_entries_are_evicted(self):
+        for i in range(api.NEWS_SRC_MAX + 5):
+            api._news_src_put("id%d" % i, {"headline": str(i)})
+        assert len(api._news_src) == api.NEWS_SRC_MAX
+        assert api._news_src_get("id0") is None
+        assert api._news_src_get("id%d" % (api.NEWS_SRC_MAX + 4)) is not None
+
+    def test_rewriting_the_same_id_does_not_grow_the_store(self):
+        for _ in range(10):
+            api._news_src_put("same", {"headline": "x"})
+        assert len(api._news_src_order) == 1
+
+
+class TestBriefValidation:
+    """פסקה עברית מתקבלת רק אם היא באמת פסקה עברית."""
+
+    GOOD = "מחירי הנפט עלו על רקע חשש להיצע. המהלך מגיע אחרי שבוע של ירידות."
+
+    def test_a_clean_paragraph_passes(self):
+        assert api._valid_he_brief(self.GOOD)
+
+    def test_an_empty_answer_fails(self):
+        assert not api._valid_he_brief("")
+        assert not api._valid_he_brief("   ")
+        assert not api._valid_he_brief(None)
+
+    def test_an_english_answer_fails(self):
+        assert not api._valid_he_brief("Oil prices rose on supply fears.")
+
+    def test_an_article_length_answer_fails(self):
+        assert not api._valid_he_brief("מילה " * 400)
+
+    def test_latin_glued_into_a_hebrew_word_fails(self):
+        assert not api._valid_he_brief("מחירי הנפטrose על רקע חשש להיצע ממושך.")
+
+    def test_a_separate_english_name_is_allowed(self):
+        # השם באנגלית הוא בדיוק ההתנהגות שביקשנו בפרומפט
+        assert api._valid_he_brief("Nvidia הודיעה על שיתוף פעולה חדש עם OPEC.")
+
+    def test_a_bullet_list_is_not_a_paragraph(self):
+        assert not api._valid_he_brief("- מחירי הנפט עלו\n- הפד הותיר את הריבית")
+        assert not api._valid_he_brief("1. מחירי הנפט עלו\n2. הפד הותיר")
+
+    def test_markdown_emphasis_fails(self):
+        assert not api._valid_he_brief("**מחירי הנפט** עלו על רקע חשש להיצע.")
+
+    def test_a_sentence_that_merely_starts_with_a_number_still_passes(self):
+        assert api._valid_he_brief("12 מיליארד דולר הוזרמו לשוק אתמול, לפי הדיווח.")
+
+
+class TestBriefWhat:
+    """הפסקה שאנחנו כותבים, כולל כל מסלולי הנפילה."""
+
+    def _reply(self, text):
+        return {"choices": [{"message": {"content": text}}]}
+
+    GOOD = "מחירי הנפט עלו על רקע חשש להיצע. המהלך מגיע אחרי שבוע של ירידות."
+
+    def test_a_clean_answer_comes_back(self):
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback", return_value=self._reply(self.GOOD)):
+            assert api._brief_what("Oil rises", "") == self.GOOD
+
+    def test_an_invalid_answer_becomes_an_empty_brief(self):
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback",
+                          return_value=self._reply("Oil prices rose on supply fears.")):
+            assert api._brief_what("Oil rises", "") == ""
+
+    def test_a_rate_limited_call_falls_back_quietly(self):
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback", return_value=api.RATE_LIMITED):
+            assert api._brief_what("Oil rises", "") == ""
+
+    def test_a_crash_falls_back_quietly(self):
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback", side_effect=RuntimeError("boom")):
+            assert api._brief_what("Oil rises", "") == ""
+
+    def test_without_a_key_nothing_is_attempted(self):
+        with patch.object(api, "GROQ_KEY", ""), \
+             patch.object(api, "_call_groq_with_fallback") as m:
+            assert api._brief_what("Oil rises", "") == ""
+        assert m.call_count == 0
+
+    def test_an_empty_headline_is_not_sent(self):
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback") as m:
+            assert api._brief_what("", "summary") == ""
+        assert m.call_count == 0
+
+    def test_the_summary_is_given_to_the_model_as_raw_material(self):
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback",
+                          return_value=self._reply(self.GOOD)) as m:
+            api._brief_what("Oil rises", "OPEC said output would stay flat.")
+        sent = m.call_args[0][0]["messages"][1]["content"]
+        assert "OPEC said output would stay flat." in sent
+        assert "Oil rises" in sent
+
+    def test_a_very_long_summary_is_truncated(self):
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback",
+                          return_value=self._reply(self.GOOD)) as m:
+            api._brief_what("Oil rises", "x" * 5000)
+        sent = m.call_args[0][0]["messages"][1]["content"]
+        assert len(sent) < api.BRIEF_SUMMARY_MAX + 200
+
+    def test_a_fancy_hyphen_does_not_sink_a_good_paragraph(self):
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback",
+                          return_value=self._reply("מחירי הנפט ירדו ב‑2 דולר אתמול בהמשך למגמה.")):
+            out = api._brief_what("Oil falls", "")
+        assert out == "מחירי הנפט ירדו ב-2 דולר אתמול בהמשך למגמה."
+
+    def test_it_is_a_single_call(self):
+        with patch.object(api, "GROQ_KEY", "k"), \
+             patch.object(api, "_call_groq_with_fallback",
+                          return_value=self._reply(self.GOOD)) as m:
+            api._brief_what("Oil rises", "s")
+        assert m.call_count == 1
+
+
+class TestBriefPromptGuards:
+    """אותה שיטה שעבדה בכותרות: דוגמה שלילית מפורשת לכל כשל שנצפה."""
+
+    def test_the_prompt_forbids_adding_facts(self):
+        assert "איסור" in api.BRIEF_SYSTEM and "להוסיף" in api.BRIEF_SYSTEM
+
+    def test_the_prompt_forbids_recommendations(self):
+        assert "כדאי לקנות" in api.BRIEF_SYSTEM
+
+    def test_the_prompt_keeps_naming_the_observed_failures(self):
+        assert "מצר תבור" in api.BRIEF_SYSTEM
+        assert "impasse" in api.BRIEF_SYSTEM
+
+
+class TestImpactLines:
+    """השורות העובדתיות נכתבות בקוד ולא במודל, ולכן אינן יכולות לשקר."""
+
+    CTX = {"ticker": "NVDA", "price": 180.5, "pct": -1.34, "rsi": 28.4,
+           "week_high": 212.19, "week_low": 86.62, "week_pos": 75,
+           "ma9": 178.2, "ma20": 181.9}
+
+    def test_no_language_model_is_involved(self):
+        with patch.object(api, "GROQ_KEY", ""), \
+             patch.object(api, "_call_groq_with_fallback", side_effect=AssertionError("לא אמור להיקרא")):
+            assert api._impact_lines(self.CTX)
+
+    def test_the_price_line_states_the_direction(self):
+        lines = api._impact_lines(self.CTX)
+        assert "ירידה של 1.34%" in lines[0] and "$180.5" in lines[0]
+
+    def test_a_rise_is_not_written_as_a_negative_number(self):
+        lines = api._impact_lines(dict(self.CTX, pct=2.1))
+        assert "עלייה של 2.1%" in lines[0]
+        assert "-" not in lines[0].split("—")[1]
+
+    def test_a_tiny_move_is_called_flat_instead_of_pretending_precision(self):
+        lines = api._impact_lines(dict(self.CTX, pct=0.05))
+        assert "כמעט ללא שינוי" in lines[0]
+
+    def test_the_range_line_says_position_not_distance_from_the_high(self):
+        # הכשל החוזר: מספר נכון בניסוח שהופך אותו לשקר
+        line = [l for l in api._impact_lines(self.CTX) if "52 השבועות" in l][0]
+        assert "ב-75% מטווח 52 השבועות" in line
+        assert "משיא" not in line
+
+    def test_the_rsi_line_uses_the_shared_state_words(self):
+        line = [l for l in api._impact_lines(self.CTX) if l.startswith("RSI")][0]
+        assert line == "RSI 28.4 — מכירת יתר."
+
+    def test_the_moving_average_line_has_a_space_between_the_words(self):
+        up = api._impact_lines(dict(self.CTX, ma9=181.9, ma20=178.2))[-1]
+        down = api._impact_lines(dict(self.CTX, ma9=178.2, ma20=181.9))[-1]
+        assert up == "הממוצע הנע ל-9 ימים מעל הממוצע ל-20 — המומנטום הקצר חיובי."
+        assert down == "הממוצע הנע ל-9 ימים מתחת לממוצע ל-20 — המומנטום הקצר שלילי."
+
+    def test_missing_pieces_drop_their_line_and_keep_the_rest(self):
+        lines = api._impact_lines({"price": 10.0, "pct": 1.0, "rsi": None,
+                                   "week_pos": None, "ma9": None, "ma20": None})
+        assert len(lines) == 1 and "$10.0" in lines[0]
+
+    def test_no_context_means_no_lines(self):
+        assert api._impact_lines(None) == []
+        assert api._impact_lines({}) == []
+
+    def test_a_flat_year_does_not_divide_by_zero(self):
+        # week_pos כבר None כשהשיא והשפל זהים — כאן רק מוודאים שלא קורסים
+        assert api._impact_lines({"price": 5.0, "pct": 0.0, "week_pos": None}) 
+
+
+class TestNewsBriefEndpoint:
+    """המסלול המלא: מזהה -> תדריך, כולל מה שקורה כשאין חומר."""
+
+    def setup_method(self):
+        api._cache.clear()
+        api._news_src.clear()
+        del api._news_src_order[:]
+        api._news_src_put("abc123", {
+            "headline": "Oil rises on supply fears",
+            "summary": "OPEC said output would stay flat.",
+            "source": "Reuters",
+            "url": "https://reuters.com/x",
+            "tickers": ["XOM"],
+        })
+
+    def teardown_method(self):
+        api._cache.clear()
+        api._news_src.clear()
+        del api._news_src_order[:]
+
+    GOOD = "מחירי הנפט עלו על רקע חשש להיצע. המהלך מגיע אחרי שבוע של ירידות."
+
+    def _patches(self, what=None, ctx=None):
+        return (patch.object(api, "_brief_what", return_value=self.GOOD if what is None else what),
+                patch.object(api, "_ticker_context", return_value=ctx))
+
+    def test_a_malformed_id_is_rejected_before_any_work(self):
+        r = client.get("/news/brief/..%2Fetc")
+        assert r.status_code in (400, 404)
+
+    def test_an_id_no_longer_in_the_feed_says_so_in_hebrew(self):
+        r = client.get("/news/brief/zzz999")
+        assert r.status_code == 404
+        assert "רענן" in r.json()["error"]
+
+    def test_the_happy_path_returns_our_paragraph_and_our_numbers(self):
+        ctx = {"price": 110.0, "pct": 1.2, "rsi": 55.0, "week_high": 120.0,
+               "week_low": 90.0, "week_pos": 66, "ma9": 111.0, "ma20": 109.0}
+        p1, p2 = self._patches(ctx=ctx)
+        with p1, p2:
+            d = client.get("/news/brief/abc123").json()
+        assert d["what"] == self.GOOD
+        assert d["impact"][0]["ticker"] == "XOM"
+        assert any("52 השבועות" in l for l in d["impact"][0]["lines"])
+        assert d["url"] == "https://reuters.com/x"
+        assert d["source"] == "Reuters"
+
+    def test_the_publisher_text_is_never_returned_to_the_client(self):
+        # התקציר הוא חומר גלם בשרת בלבד — הוא לא מוצג ולא נשלח
+        p1, p2 = self._patches()
+        with p1, p2:
+            d = client.get("/news/brief/abc123").json()
+        assert "summary" not in d
+        assert "OPEC said output would stay flat." not in str(d)
+
+    def test_a_failed_paragraph_still_returns_the_numbers(self):
+        ctx = {"price": 110.0, "pct": 1.2, "rsi": 55.0, "week_pos": 66,
+               "week_high": 120.0, "week_low": 90.0, "ma9": 111.0, "ma20": 109.0}
+        p1, p2 = self._patches(what="", ctx=ctx)
+        with p1, p2:
+            d = client.get("/news/brief/abc123").json()
+        assert d["what"] == ""
+        assert d["impact"][0]["lines"]
+
+    def test_a_second_call_is_served_from_the_cache(self):
+        with patch.object(api, "_brief_what", return_value=self.GOOD) as m, \
+             patch.object(api, "_ticker_context", return_value=None):
+            client.get("/news/brief/abc123")
+            client.get("/news/brief/abc123")
+        assert m.call_count == 1, "פסקה שכבר נכתבה לא נכתבת שוב"
+
+    def test_an_entirely_empty_brief_is_not_cached(self):
+        # כישלון רגעי לא ננעל לשעה
+        with patch.object(api, "_brief_what", return_value="") as m, \
+             patch.object(api, "_ticker_context", return_value=None):
+            client.get("/news/brief/abc123")
+            client.get("/news/brief/abc123")
+        assert m.call_count == 2
+
+    def test_over_budget_skips_the_model_but_still_answers(self):
+        ctx = {"price": 110.0, "pct": 1.2, "week_pos": 66,
+               "week_high": 120.0, "week_low": 90.0}
+        with patch.object(api, "ai_budget_ok", return_value=False), \
+             patch.object(api, "_brief_what") as m, \
+             patch.object(api, "_ticker_context", return_value=ctx):
+            d = client.get("/news/brief/abc123").json()
+        assert m.call_count == 0
+        assert d["what"] == "" and d["impact"][0]["lines"]
+
+    def test_at_most_two_tickers_are_fetched_per_item(self):
+        api._news_src_put("many", {"headline": "h", "summary": "", "source": "s",
+                                   "url": "u", "tickers": ["A", "B", "C", "D"]})
+        with patch.object(api, "_brief_what", return_value=self.GOOD), \
+             patch.object(api, "_ticker_context", return_value=None) as m:
+            client.get("/news/brief/many")
+        assert m.call_count <= api.NEWS_TICKERS_MAX
