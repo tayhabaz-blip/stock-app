@@ -627,6 +627,8 @@ if ('serviceWorker' in navigator) {
       <div class="sentiment-bar-wrap" id="wlPulseBar"></div>
     </div>
     <div class="glass" id="wlBox"></div>
+    <div class="news-title" style="margin-top:2rem">חדשות על המניות שלך</div>
+    <div class="glass" id="wlNewsBox"><div class="loading-state">טוען חדשות...</div></div>
   </div>
   <div id="scanPage" style="display:none">
     <div style="font-size:20px;font-weight:600;margin-bottom:8px">סריקת מניות 🔍</div>
@@ -1025,7 +1027,7 @@ function showAnalyze(){
     stopTimer('price');schedule('price','price',updatePrice);
   }
 }
-function showWatchlist(){setPage('watchlistPage');document.getElementById('btnWatchlist').classList.add('active');renderWL();stopTimer('wl');schedule('wl','wl',()=>loadWLQuotes(getWL()));}
+function showWatchlist(){setPage('watchlistPage');document.getElementById('btnWatchlist').classList.add('active');renderWL();loadWatchlistNews();stopTimer('wl');schedule('wl','wl',()=>loadWLQuotes(getWL()));}
 function showScanner(){setPage('scanPage');document.getElementById('btnScan').classList.add('active');}
 function showCompare(){setPage('comparePage');document.getElementById('btnCompare').classList.add('active');}
 function loadHome(){const t=document.getElementById('homeInput').value.trim().toUpperCase();if(!t)return;showAnalyze();document.getElementById('ticker').value=t;analyze();}
@@ -1099,6 +1101,70 @@ async function toggleBrief(n,card,panel){
   }
 }
 
+// ── כרטיס ידיעה. משותף לפיד הכללי ולפיד רשימת המעקב בכוונה: שני מסכים
+// שמציגים את אותו דבר בשתי צורות הם שני מסכים שנפרדים זה מזה עם הזמן. ──
+function newsAgeText(ts){
+  // null*1000 הוא 0, ובלי הבדיקה הזו ידיעה בלי חותמת זמן הוצגה
+  // כ-"לפני 20692 ימים" — כלומר מאז 1970.
+  if(typeof ts!=='number'||!isFinite(ts)||ts<=0)return '';
+  const diff=Math.floor((Date.now()-ts*1000)/3600000);
+  if(!isFinite(diff)||diff<0)return '';
+  return diff<1?'לפני פחות משעה':diff<24?'לפני '+diff+' שעות':'לפני '+Math.floor(diff/24)+' ימים';
+}
+function newsMetaText(n){
+  const parts=[];
+  const when=newsAgeText(n&&n.datetime);
+  if(when)parts.push(when);
+  if(n&&n.source)parts.push(n.source);
+  if(n&&Array.isArray(n.tickers)&&n.tickers.length)parts.push(n.tickers.join(' · '));
+  return parts.join(' · ');
+}
+function appendNewsCard(box,n){
+  const card=document.createElement('div');card.className='news-card';
+  const dot=document.createElement('div');dot.className='news-dot';
+  const content=document.createElement('div');content.className='news-card-content';
+  const title=document.createElement('div');title.className='news-card-title';
+  title.textContent=n.headline_he||n.headline||'';
+  const meta=document.createElement('div');meta.className='news-card-meta';
+  meta.textContent=newsMetaText(n);
+  content.append(title,meta);
+  const chev=document.createElement('div');chev.className='news-chev';chev.textContent='⌄';
+  card.append(dot,content,chev);
+  const panel=document.createElement('div');panel.className='news-brief';panel.hidden=true;
+  const url=safeUrl(n.url);
+  if(n.id||url)card.addEventListener('click',()=>toggleBrief(n,card,panel));
+  else{card.style.cursor='default';}
+  if(!n.id)chev.style.display='none';
+  box.append(card,panel);
+}
+
+// ── חדשות רשימת המעקב. כאן לכל ידיעה יש מניה ידועה, ולכן התדריך שנפתח
+// בלחיצה מגיע עם המספרים של המניה הנכונה ולא בזיהוי משוער מהטקסט. ──
+async function loadWatchlistNews(){
+  const box=document.getElementById('wlNewsBox');
+  if(!box)return;
+  const list=getWL();
+  _openBrief=null;
+  if(!list.length){box.innerHTML='<div class="loading-state">הוסף מניות לרשימה כדי לראות חדשות עליהן</div>';return;}
+  box.innerHTML='<div class="loading-state">טוען חדשות...</div>';
+  const slow=setTimeout(()=>{
+    if(box.querySelector('.loading-state'))
+      box.innerHTML='<div class="loading-state">מעיר את השרת, זה עשוי לקחת עד דקה...</div>';
+  },6000);
+  try{
+    const res=await fetch(API+'/news/watchlist?tickers='+encodeURIComponent(list.join(',')));
+    clearTimeout(slow);
+    const data=await res.json();
+    const items=(data.news||[]);
+    if(!items.length){box.innerHTML='<div class="loading-state">אין חדשות על המניות שלך בשבוע האחרון</div>';return;}
+    box.textContent='';
+    items.forEach(n=>appendNewsCard(box,n));
+  }catch(e){
+    clearTimeout(slow);
+    box.innerHTML='<div class="loading-state">לא ניתן לטעון חדשות</div>';
+  }
+}
+
 // ── NEWS — התרגום מגיע מהשרת (headline_he), עם נפילה רכה למקור באנגלית ──
 async function loadNews(){
   const box=document.getElementById('newsBox');
@@ -1118,26 +1184,7 @@ async function loadNews(){
     const items=(data.news||[]).slice(0,8);
     if(!items.length){box.innerHTML='<div class="loading-state">אין חדשות כרגע</div>';return;}
     box.textContent='';
-    items.forEach(n=>{
-      const diff=Math.floor((Date.now()-n.datetime*1000)/3600000);
-      const when=diff<1?'לפני פחות משעה':diff<24?'לפני '+diff+' שעות':'לפני '+Math.floor(diff/24)+' ימים';
-      const card=document.createElement('div');card.className='news-card';
-      const dot=document.createElement('div');dot.className='news-dot';
-      const content=document.createElement('div');content.className='news-card-content';
-      const title=document.createElement('div');title.className='news-card-title';
-      title.textContent=n.headline_he||n.headline||'';
-      const meta=document.createElement('div');meta.className='news-card-meta';
-      meta.textContent=when+' · '+(n.source||'');
-      content.append(title,meta);
-      const chev=document.createElement('div');chev.className='news-chev';chev.textContent='⌄';
-      card.append(dot,content,chev);
-      const panel=document.createElement('div');panel.className='news-brief';panel.hidden=true;
-      const url=safeUrl(n.url);
-      if(n.id||url)card.addEventListener('click',()=>toggleBrief(n,card,panel));
-      else{card.style.cursor='default';chev.style.display='none';}
-      if(!n.id)chev.style.display='none';
-      box.append(card,panel);
-    });
+    items.forEach(n=>appendNewsCard(box,n));
   }catch(e){clearTimeout(slowNews);box.innerHTML='<div class="loading-state">לא ניתן לטעון חדשות</div>';}
 }
 
@@ -1151,7 +1198,9 @@ function getWL(){
 }
 function saveWL(l){try{localStorage.setItem('wl',JSON.stringify(l));}catch(e){}}
 function addWL(t){if(!validTicker(t))return;const l=getWL();if(!l.includes(t)){l.push(t);saveWL(l);}}
-function removeWL(t){saveWL(getWL().filter(x=>x!==t));renderWL();}
+// הסרת מניה חייבת להסיר גם את החדשות שלה: אחרת נשארות על המסך ידיעות
+// על מניה שכבר לא ברשימה, וזה נראה כמו באג.
+function removeWL(t){saveWL(getWL().filter(x=>x!==t));renderWL();loadWatchlistNews();}
 function renderWL(){
   const l=getWL();const box=document.getElementById('wlBox');
   if(!l.length){box.innerHTML='<div class="watchlist-empty">⭐<div style="margin-top:8px">אין מניות ברשימה</div></div>';
