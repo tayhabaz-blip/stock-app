@@ -699,3 +699,113 @@ test('קלט פגום אינו מפיל את התוכנית', () => {
   eq(T.trimTargets(null).length, 0, 'null');
   eq(T.trimTargets([null, { p: 1, pct: 5, rr: 1 }]).length, 1, 'איבר ריק');
 });
+
+/* ── התדריך שלנו לידיעה ─────────────────────────────────────────────
+ * הכלל שנשמר כאן: מה שמוצג אינו הכתבה. פסקה שאנחנו מנסחים, מספרים
+ * שאנחנו מחשבים, וקישור למקור — תמיד.
+ */
+group('התדריך לידיעה — שלנו, לא של המפרסם');
+{
+  // safeUrl נשען על location של הדפדפן — כאן מספיק בסיס כלשהו
+  const N = X.load(['briefHtml', 'nextOpenBrief', 'briefWorthCaching',
+                    'esc', 'seg', 'safeUrl'],
+                   "var location={href:'https://stockiq.example/'};");
+
+  const FULL = {
+    what: 'מחירי הנפט עלו על רקע חשש להיצע.',
+    impact: [{ ticker: 'XOM', lines: ['המניה נסחרת ב-$110 — עלייה של 1.2% מאז הסגירה הקודמת.',
+                                      'המחיר נמצא ב-66% מטווח 52 השבועות (שפל $90, שיא $120).'] }],
+    source: 'Reuters',
+    url: 'https://reuters.com/x'
+  };
+
+  test('הפסקה שלנו מוצגת', () => {
+    assert(N.briefHtml(FULL).includes('מחירי הנפט עלו'));
+  });
+
+  test('המספרים שלנו מוצגים תחת הטיקר', () => {
+    const h = N.briefHtml(FULL);
+    assert(h.includes('XOM'), 'הטיקר חייב להופיע');
+    assert(h.includes('52 השבועות'), 'שורת הטווח חייבת להופיע');
+  });
+
+  test('תמיד יש קישור לכתבה המקורית', () => {
+    const h = N.briefHtml(FULL);
+    assert(h.includes('https://reuters.com/x'), 'הקישור למקור הוא חובה');
+    assert(h.includes('Reuters'), 'שם המקור מופיע בקישור');
+  });
+
+  test('גם כשאין תדריך — הקישור למקור נשאר', () => {
+    const h = N.briefHtml({ what: '', impact: [], source: 'Reuters', url: 'https://reuters.com/x' });
+    assert(h.includes('לא הצלחנו'), 'חייבת להיות הודעה במקום פאנל ריק');
+    assert(h.includes('https://reuters.com/x'), 'הקישור נשאר גם בכישלון');
+  });
+
+  test('כשיש תוכן, ההסתייגות על מקור המספרים מוצגת', () => {
+    const h = N.briefHtml(FULL);
+    assert(h.includes('נכתב אצלנו'), 'הקורא חייב לדעת שהטקסט שלנו');
+    assert(h.includes('לא מהכתבה'), 'והמספרים אינם מהכתבה');
+  });
+
+  test('בלי תוכן אין הסתייגות שמתייחסת לתוכן שאינו קיים', () => {
+    const h = N.briefHtml({ what: '', impact: [], url: '' });
+    assert(!h.includes('נכתב אצלנו'));
+  });
+
+  test('טקסט מהשרת עובר בריחת תווים', () => {
+    const h = N.briefHtml({ what: '<img src=x onerror=alert(1)>', impact: [], url: '' });
+    assert(!h.includes('<img'), 'אסור שתגית מהשרת תיכנס ל-DOM');
+    assert(h.includes('&lt;img'), 'היא חייבת להופיע כטקסט');
+  });
+
+  test('כתובת שאינה http נחסמת', () => {
+    const h = N.briefHtml({ what: 'א', impact: [], url: 'javascript:alert(1)' });
+    assert(!h.includes('javascript:'), 'סכימה מסוכנת לא מגיעה ל-href');
+  });
+
+  test('שורות עטופות בבידוד דו-כיווני', () => {
+    // בלי זה "$110 — עלייה של 1.2%" מוצג הפוך במסך RTL
+    const h = N.briefHtml(FULL);
+    assert(h.includes('⁧'), 'שורה מעורבת עברית+לטינית חייבת בידוד');
+  });
+
+  test('מבנה חלקי מהשרת אינו מפיל את התצוגה', () => {
+    assert(typeof N.briefHtml(null) === 'string');
+    assert(typeof N.briefHtml({}) === 'string');
+    assert(typeof N.briefHtml({ impact: 'לא מערך' }) === 'string');
+    assert(typeof N.briefHtml({ impact: [{ ticker: 'A' }] }) === 'string');
+  });
+
+  test('פריט השפעה בלי שורות אינו מייצר כותרת ריקה', () => {
+    const h = N.briefHtml({ what: 'א', impact: [{ ticker: 'ZZZ', lines: [] }], url: '' });
+    assert(!h.includes('ZZZ'));
+  });
+
+  test('לחיצה חוזרת על אותה ידיעה סוגרת אותה', () => {
+    eq(N.nextOpenBrief(null, 'a'), 'a');
+    eq(N.nextOpenBrief('a', 'a'), null);
+    eq(N.nextOpenBrief('a', 'b'), 'b');
+  });
+
+  test('תדריך ריק אינו נשמר במטמון', () => {
+    // אחרת כישלון רגעי ננעל עד לרענון הדף
+    eq(N.briefWorthCaching({ what: '', impact: [] }), false);
+    eq(N.briefWorthCaching(null), false);
+    eq(N.briefWorthCaching({ what: 'א', impact: [] }), true);
+    eq(N.briefWorthCaching({ what: '', impact: [{ ticker: 'A', lines: ['x'] }] }), true);
+  });
+}
+
+group('החדשות מובילות לתדריך ולא החוצה');
+{
+  test('כרטיס עם מזהה פותח תדריך במקום לנווט', () => {
+    assert(X.has('card.addEventListener(\'click\',()=>toggleBrief(n,card,panel))'),
+      'הלחיצה חייבת לפתוח את הפאנל');
+  });
+
+  test('רענון החדשות מאפס את הסימון הפתוח', () => {
+    // הפאנלים נמחקים עם ה-innerHTML; בלי איפוס, לחיצה ראשונה אחרי רענון
+    // הייתה נחשבת "סגירה" ולא הייתה פותחת כלום
+    assert(X.has('_openBrief=null;'), 'הסימון חייב להתאפס יחד עם הכרטיסים');
+  });
+}
