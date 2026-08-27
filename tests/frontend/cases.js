@@ -898,3 +898,70 @@ group('התקדים נוסע ל-AI עם שיעור הבסיס');
     assert(X.has('twinBaseFwd:twinStats?twinStats.baseFwd:null'));
   });
 }
+
+/* ── חדשות רשימת המעקב ──────────────────────────────────────────────
+ * כאן לכל ידיעה יש מניה ידועה, ולכן שורת המטא מציגה אותה, והתדריך
+ * שנפתח מגיע עם המספרים של המניה הנכונה.
+ */
+group('חדשות רשימת המעקב');
+{
+  const W = X.load(['newsAgeText', 'newsMetaText']);
+
+  const HOUR = 3600000;
+  function ts(hoursAgo) { return Math.floor((Date.now() - hoursAgo * HOUR) / 1000); }
+
+  test('גיל הידיעה מנוסח בעברית תקינה', () => {
+    eq(W.newsAgeText(ts(0.5)), 'לפני פחות משעה');
+    eq(W.newsAgeText(ts(5)), 'לפני 5 שעות');
+    eq(W.newsAgeText(ts(50)), 'לפני 2 ימים');
+  });
+
+  test('חותמת זמן חסרה לא מייצרת טקסט שבור', () => {
+    // null*1000 הוא 0, ולפני התיקון זה הוצג כ-"לפני 20692 ימים"
+    eq(W.newsAgeText(undefined), '');
+    eq(W.newsAgeText(null), '');
+    eq(W.newsAgeText(0), '');
+    eq(W.newsAgeText('1700000000'), '');
+  });
+
+  test('שורת המטא מציגה את המניה שהידיעה שייכת לה', () => {
+    const m = W.newsMetaText({ datetime: ts(3), source: 'Reuters', tickers: ['NVDA'] });
+    assert(m.includes('NVDA'), 'הטיקר הוא כל ההבדל מהפיד הכללי');
+    assert(m.includes('Reuters'));
+    assert(m.includes('לפני 3 שעות'));
+  });
+
+  test('שתי מניות על אותה ידיעה מוצגות שתיהן', () => {
+    const m = W.newsMetaText({ datetime: ts(1), source: 'Reuters', tickers: ['AAPL', 'MSFT'] });
+    assert(m.includes('AAPL') && m.includes('MSFT'));
+  });
+
+  test('ידיעה בלי מניה לא מייצרת מפריד מיותם', () => {
+    const m = W.newsMetaText({ datetime: ts(2), source: 'CNBC' });
+    assert(!m.endsWith('·') && !m.includes('· ·'), 'התקבל: ' + m);
+  });
+
+  test('שדות חסרים לגמרי אינם מפילים את השורה', () => {
+    eq(typeof W.newsMetaText({}), 'string');
+    eq(typeof W.newsMetaText(null), 'string');
+  });
+
+  test('שני הפידים משתמשים באותו כרטיס', () => {
+    // שני מסכים שמציגים את אותו דבר בשתי צורות נפרדים זה מזה עם הזמן
+    assert(X.has('items.forEach(n=>appendNewsCard(box,n));'), 'הפיד הכללי');
+    assert(X.has('items.forEach(n=>appendNewsCard(box,n));'), 'פיד המעקב');
+    assert(X.has('function appendNewsCard(box,n)'), 'הכרטיס מוגדר פעם אחת');
+  });
+
+  test('מסך המעקב טוען את החדשות', () => {
+    assert(X.has('renderWL();loadWatchlistNews();'));
+  });
+
+  test('הסרת מניה מרעננת את החדשות', () => {
+    assert(X.has('renderWL();loadWatchlistNews();}'), 'אחרת נשארות ידיעות על מניה שהוסרה');
+  });
+
+  test('רשימה ריקה אינה שולחת בקשה לשרת', () => {
+    assert(X.has("הוסף מניות לרשימה כדי לראות חדשות עליהן"));
+  });
+}
