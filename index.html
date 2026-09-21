@@ -175,6 +175,11 @@
   .structure-box{border-radius:var(--r);padding:1.1rem 1.3rem;margin-bottom:1.25rem;
     background:rgba(251,191,36,0.07);border:1px solid rgba(251,191,36,0.3);
     border-inline-start:3px solid var(--warn)}
+  /* ── הודעת "התוכנית חושבה על מחיר אחר". משתמשת בטוקני הצבע ולא בלבן
+     שקוף, כדי שתיקרא גם בערכת הנושא הבהירה. ── */
+  .plan-stale{font-size:12.5px;line-height:1.7;color:var(--warn);
+    background:var(--warn-soft,rgba(251,191,36,0.10));border-radius:10px;
+    padding:0.6rem 0.9rem;margin-bottom:0.9rem}
   .structure-title{font-size:13px;font-weight:700;color:var(--warn);margin-bottom:6px}
   .structure-body{font-size:13px;line-height:1.75;color:var(--txt2)}
   .structure-body b{color:var(--txt);font-weight:700}
@@ -1587,12 +1592,17 @@ function rsi(d,p=14){
 }
 
 // ── ZONES — זיהוי תמיכה/התנגדות לפי כמות נגיעות (clustering) ──
-function zones(closes,highs,lows,livePrice){
+// ── labels הוא פרמטר רשות: כשהוא נמסר, כל רמה נושאת גם את התאריך שבו
+// המחיר נגע בה בפעם האחרונה. בלעדיו הכל עובד בדיוק כמו קודם ו-last יוצא
+// null. זה מה שמאפשר להציג רמה רחוקה כעובדה היסטורית ("המחיר היה שם
+// במרץ 2023") ולא כיעד מרחף בלי הקשר. ──
+function zones(closes,highs,lows,livePrice,labels){
   const cl=closes.filter(v=>v!==null);
   // מסווגים תמיכה מול התנגדות לפי המחיר החי, לא לפי הסגירה האחרונה —
   // אחרת רמה שהמחיר כבר עבר אותה היום עדיין מוצגת כ"התנגדות"
   const price=(livePrice!=null&&!isNaN(livePrice))?livePrice:cl[cl.length-1];
   const H=(highs||[]).map(v=>v), L=(lows||[]).map(v=>v);
+  const lb=Array.isArray(labels)?labels:null;
   const lookback=5;
   const pivots=[];
   for(let i=lookback;i<closes.length-lookback;i++){
@@ -1603,26 +1613,28 @@ function zones(closes,highs,lows,livePrice){
       if(H[j]!=null&&H[j]>=H[i])isHigh=false;
       if(L[j]!=null&&L[j]<=L[i])isLow=false;
     }
-    if(isHigh)pivots.push(H[i]);
-    if(isLow)pivots.push(L[i]);
+    if(isHigh)pivots.push({v:H[i],i:i});
+    if(isLow)pivots.push({v:L[i],i:i});
   }
   if(!pivots.length)return[];
   const tol=0.025;
   const clusters=[];
-  pivots.sort((a,b)=>a-b).forEach(p=>{
-    const c=clusters.find(c=>Math.abs(c.level-p)/c.level<=tol);
-    if(c){c.points.push(p);c.level=c.points.reduce((a,b)=>a+b,0)/c.points.length;}
-    else clusters.push({level:p,points:[p]});
+  pivots.sort((a,b)=>a.v-b.v).forEach(p=>{
+    const c=clusters.find(c=>Math.abs(c.level-p.v)/c.level<=tol);
+    if(c){c.points.push(p.v);c.idx.push(p.i);c.level=c.points.reduce((a,b)=>a+b,0)/c.points.length;}
+    else clusters.push({level:p.v,points:[p.v],idx:[p.i]});
   });
   const ranked=clusters
-    .map(c=>({p:parseFloat(c.level.toFixed(2)),touches:c.points.length}))
+    .map(c=>({p:parseFloat(c.level.toFixed(2)),touches:c.points.length,
+              lastIdx:Math.max.apply(null,c.idx)}))
     .filter(c=>c.touches>=2)
     .sort((a,b)=>b.touches-a.touches);
   return ranked.map(c=>({
     p:c.p,
     t:c.p<price?'תמיכה':'התנגדות',
     str:c.touches>=4?'חזקה מאוד':c.touches===3?'חזקה':'בינונית',
-    touches:c.touches
+    touches:c.touches,
+    last:(lb&&lb[c.lastIdx])?lb[c.lastIdx]:null
   }));
 }
 
@@ -1637,15 +1649,18 @@ function mergeZones(daily,long,price){
   const tol=0.02;
   const out=[];
   // מתחילים מהשבועי — הוא נושא את המשקל ההיסטורי
-  (long||[]).forEach(z=>out.push({p:z.p,touches:z.touches,tf:'שבועי',confirmed:false}));
+  (long||[]).forEach(z=>out.push({p:z.p,touches:z.touches,tf:'שבועי',confirmed:false,last:z.last||null}));
   (daily||[]).forEach(dz=>{
     const hit=out.find(z=>Math.abs(z.p-dz.p)/z.p<=tol);
     if(hit){
       hit.confirmed=true;                    // אותה רמה בשתי הרזולוציות
       hit.touches+=dz.touches;
       hit.p=parseFloat(((hit.p+dz.p)/2).toFixed(2));
+      // הנגיעה האחרונה היא המאוחרת מבין השתיים. תאריכים בתבנית
+      // YYYY-MM-DD משתווים נכון כמחרוזות, ולכן אין צורך בפענוח.
+      if(dz.last&&(!hit.last||dz.last>hit.last))hit.last=dz.last;
     }else{
-      out.push({p:dz.p,touches:dz.touches,tf:'יומי',confirmed:false});
+      out.push({p:dz.p,touches:dz.touches,tf:'יומי',confirmed:false,last:dz.last||null});
     }
   });
   return out.map(z=>{
@@ -1658,6 +1673,7 @@ function mergeZones(daily,long,price){
       touches:z.touches,
       tf:z.tf,
       confirmed:z.confirmed,
+      last:z.last||null,
       eff:eff
     };
   }).sort((a,b)=>b.eff-a.eff);
@@ -1841,9 +1857,15 @@ async function getAI(data){
   if(riskAmt>0){
     targets.forEach(t=>{t.rr=parseFloat(((t.p-entry)/riskAmt).toFixed(2));});
   }
-  targets=trimTargets(targets);
+  // ── שרשרת מלאה קודם, ואז פיצול לשניים: התוכנית עצמה, והרמות הרחוקות
+  // שמוצגות כהקשר היסטורי בלבד. שום רמה לא נמחקת יותר. ──
+  const fullChain=targets.slice();
+  targets=trimTargets(fullChain);
+  const reach=reachTargets(fullChain);
   // הפוטנציאל הגדול = היעד הרחוק ביותר ששרד את הקיצוץ
   const maxPot=targets.length?targets[targets.length-1].pct:null;
+  // ההישג הרחוק ביותר שקיים על הגרף — נפרד מהתוכנית, ולא מעורבב בה
+  const reachTop=reach.length?reach[reach.length-1]:null;
   const rr=(targets.length&&targets[0].rr!=null)?targets[0].rr:null;
 
   // ── המגמה שנמסרת ל-AI. קודם היא נגזרה אך ורק מהיחס בין שני הממוצעים,
@@ -1853,10 +1875,22 @@ async function getAI(data){
   const _cross=m9&&m20&&_m9>_m20;
   const _above=m9&&m20&&_p>_m9&&_p>_m20;
   const _below=m9&&m20&&_p<_m9&&_p<_m20;
-  const trend=_cross
-    ?(_below?'עולה, אך המחיר מתחת לשני הממוצעים הקצרים':'עולה')
-    :(_above?'יורד, אך המחיר מעל שני הממוצעים הקצרים':'יורד');
-  const rsiTxt=rsiVal<RSI_OVERSOLD?'נמוך — אזור קנייה':rsiVal>RSI_OVERBOUGHT?'גבוה — אזור מכירה':'נייטרלי';
+  // ── כשאין ממוצעים אין מגמה, וזו תשובה ולא חסר שצריך למלא.
+  // קודם שלושת התנאים יצאו שקריים והטרנרי נפל לזרוע האחרונה, כך שמניה
+  // שהונפקה לפני שלושה שבועות קיבלה "יורד" — נתון מומצא שנכנס לפרומפט
+  // של הניתוח ולניקוד של קרב ה-AI, בזמן שהכרטיס שלידו מציג "אין מספיק
+  // נתונים". הפונקציה assess כבר נהגה נכון באותו מצב, וכאן היא מיושרת. ──
+  const _haveMA=!!(m9&&m20&&!isNaN(_m9)&&!isNaN(_m20));
+  const trend=!_haveMA
+    ?TREND_UNAVAILABLE
+    :(_cross
+      ?(_below?'עולה, אך המחיר מתחת לשני הממוצעים הקצרים':'עולה')
+      :(_above?'יורד, אך המחיר מעל שני הממוצעים הקצרים':'יורד'));
+  // ── אותו כלל ל-RSI. השוואה של undefined לסף יוצאת שקרית בשני הכיוונים,
+  // ולכן חוסר נתון התחזה ל"נייטרלי" — סיווג, לא היעדר סיווג. ──
+  const _haveRSI=(rsiVal!=null&&!isNaN(rsiVal));
+  const rsiTxt=!_haveRSI?RSI_UNAVAILABLE
+    :(rsiVal<RSI_OVERSOLD?'נמוך — אזור קנייה':rsiVal>RSI_OVERBOUGHT?'גבוה — אזור מכירה':'נייטרלי');
 
   const ltCtx=window.__ltContext||null;
   // מחושב אחרי invalidation למטה — מוצהר כאן כדי שיהיה זמין ל-aiFacts
@@ -1939,6 +1973,13 @@ async function getAI(data){
     invalidationStr:invalidation?invalidation.str:null,
     nextSupportLevel:invalidation?invalidation.next:null,
     nextSupportPct:invalidation?invalidation.nextPct:null,
+    // ── ההישג הרחוק: הרמה הגבוהה ביותר שהמחיר נגע בה בפועל ושאינה חלק
+    // מהתוכנית. נמסרת למודל כעובדה היסטורית עם תאריך, כדי שיוכל לדבר על
+    // "כמה רחוק יכול להגיע" בלי להמציא מספר ובלי להציג אותו כיעד. ──
+    reachLevel:reachTop?reachTop.p:null,
+    reachPct:reachTop?reachTop.pct:null,
+    reachLast:reachTop?reachTop.last:null,
+    reachCount:reach.length,
     // הקשר ארוך טווח — מה שמאפשר לדבר על פריצות גדולות ומצבים לא שגרתיים
     ltHigh:ltCtx?ltCtx.ltHigh:null,
     ltLow:ltCtx?ltCtx.ltLow:null,
@@ -1987,6 +2028,20 @@ async function getAI(data){
     out+='אין יעד סביר ברמת הסיכון הזו — כל ההתנגדויות מעל רחוקות מדי מהסטופ\n';
   }else{
     out+='יעד: '+headline+'\n';
+  }
+  // ── הרמות שמעבר לתוכנית. הן לא יעדים לעסקה ולכן אין להן מספור ואין
+  // להן יחס סיכוי-סיכון — יחס מול סטופ של ימים על רמה שהמחיר עזב לפני
+  // שנים אינו מספר בעל משמעות. מה שכן נמסר זה מה שבדוק: המחיר, המרחק,
+  // ומתי המחיר היה שם בפעם האחרונה. ──
+  if(reach.length){
+    out+='\nהישג רחוק — רמות שהמחיר נגע בהן בפועל, לא יעדים לעסקה:\n';
+    reach.forEach(t=>{
+      const when=heMonthYear(t.last);
+      out+='· '+num('$'+t.p)+' · '+num('+'+t.pct+'%')+' מהכניסה'+
+           (t.tf?' · '+t.tf:'')+
+           (when?' · המחיר היה שם לאחרונה ב'+when:'')+'\n';
+    });
+    out+=seg('אין כאן יחס סיכוי-סיכון בכוונה: המרחק נמדד בשנים, לא בסטופ')+'\n';
   }
   // ── השיא הרב-שנתי כהקשר, לא כיעד. קודם הוא נדחף לשרשרת ככל יעד אחר,
   // וכך מניה שנמצאת 74% מתחת לשיא שלה קיבלה "יעד" של +289.6% עם יחס
@@ -2062,13 +2117,53 @@ function reconcile52(apiVal,series,pick){
  *
  * מניה שאין לה אף יעד מתחת לתקרה מקבלת רשימה ריקה, וזו תשובה נכונה:
  * "אין יעד סביר ברמת הסיכון הזו" עדיף על יעד מומצא של ‎+69%‎. */
+// ── מחרוזת אחת ויחידה לחוסר נתון, כדי שהתצוגה, הפרומפט והניקוד יזהו
+// את אותו מצב. השוואת מחרוזות במקומות מרוחקים היא בדיוק הדרך שבה שתי
+// שכבות נפרדות זו מזו בשקט. ──
+const TREND_UNAVAILABLE = 'לא זמין — אין מספיק ימי מסחר לחישוב הממוצעים';
+const RSI_UNAVAILABLE   = 'לא זמין';
 const MAX_TARGET_R = 5;
 const MAX_TARGETS  = 3;
+// ── כמה רמות רחוקות מוצגות כהקשר. שלוש מספיקות: מעבר לזה זו רשימת
+// מחירים ולא תמונה. ──
+const MAX_REACH    = 3;
 function trimTargets(list){
   if(!Array.isArray(list))return[];
   return list.filter(function(t){
     return t && (t.rr==null || t.rr<=MAX_TARGET_R);
   }).slice(0,MAX_TARGETS);
+}
+// ── הרמות שנפלו מהתוכנית, וזו אינה סיבה להעלים אותן.
+//
+// מה שהיה שבור במקרה NKE לא היה הרמה 165.15 — המחיר באמת היה שם. מה
+// שהיה שבור הוא המסגרת: "יעד 8 לעסקה, סיכוי מול סיכון 67.08:1". יחס
+// שמחושב מול סטופ של 4% על רמה שהמחיר עזב לפני שנים אינו מספר בעל
+// משמעות, והצגתו כיחס לעסקה היא בדיוק אותה משפחת פגמים.
+//
+// לכן ההפרדה: הרמות האלה חוזרות למסך בלי מספור של יעד, בלי יחס
+// סיכוי-סיכון, ועם התאריך שבו המחיר היה שם בפעם האחרונה — כלומר
+// כעובדה היסטורית בדוקה ולא כהבטחה. ──
+function reachTargets(list){
+  if(!Array.isArray(list))return[];
+  const far=list.filter(function(t){
+    return t && t.rr!=null && t.rr>MAX_TARGET_R;
+  });
+  if(far.length<=MAX_REACH)return far;
+  // ── חיתוך פשוט של שלוש הראשונות היה מוחק דווקא את הרמה הגבוהה ביותר —
+  // כלומר בדיוק את "עד לאן המחיר הגיע", שהיא כל הטעם בקטע הזה. לכן
+  // לוקחים את הקרובות ביותר ותמיד מצרפים את הגבוהה שבכולן. ──
+  return far.slice(0,MAX_REACH-1).concat([far[far.length-1]]);
+}
+// ── תאריך מלא לתצוגה עברית קצרה: "2023-03-14" → "מרץ 2023". ──
+const HE_MONTHS=['ינואר','פברואר','מרץ','אפריל','מאי','יוני',
+                 'יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
+function heMonthYear(iso){
+  if(typeof iso!=='string')return null;
+  const m=/^(\d{4})-(\d{2})/.exec(iso);
+  if(!m)return null;
+  const mi=parseInt(m[2],10)-1;
+  if(mi<0||mi>11)return null;
+  return HE_MONTHS[mi]+' '+m[1];
 }
 function widenLongRange(ltVal,wkVal,pick){
   const lt=(ltVal!=null&&!isNaN(ltVal))?ltVal:null;
@@ -2921,7 +3016,42 @@ async function updatePrice(){
     }
     if(ce){ce.textContent=(up?'▲':'▼')+' '+Math.abs(ch)+'% היום';ce.className='company-price-change '+(up?'up':'down');}
     const ahEl=document.getElementById('ahBadge');if(ahEl)ahEl.innerHTML=ahHtml(d.afterHours);
+    markPlanStale(p);
   }catch(e){}
+}
+
+// ── כמה המחיר צריך לזוז כדי שהתוכנית כבר לא תתאר את המצב. נבחר לפי
+// המשמעות ולא לפי תחושה: מרחק הפריצה מוצג בדיוק אחד אחרי הנקודה, ולכן
+// תזוזה של 1% היא כבר שינוי שנראה על המסך. ──
+const PLAN_STALE_PCT = 1.0;
+
+// ── התוכנית מחושבת פעם אחת בטעינה, בזמן שהמחיר בכותרת ממשיך לרוץ.
+// כך נוצר המצב שבו מתחת למחיר חי של 249 כתוב "נדרשת פריצה מעל 247"
+// ו"מרחק לפריצה: 2.1%" — על פריצה שכבר קרתה. חישוב מחדש של כל התמונה
+// בכל טיק הוא שינוי גדול ומסוכן; מה שחייב לקרות עכשיו הוא שהמסך יפסיק
+// להציג מספר ישן כאילו הוא של עכשיו. ──
+function markPlanStale(livePrice){
+  const txtEl=document.getElementById('aiText');
+  const box=txtEl?txtEl.parentNode:null;
+  const at=window.__planPrice;
+  if(!box||at==null||!isFinite(at)||at<=0||livePrice==null)return;
+  const drift=(livePrice-at)/at*100;
+  let note=document.getElementById('planStale');
+  if(Math.abs(drift)<PLAN_STALE_PCT){
+    if(note)note.remove();
+    return;
+  }
+  const txt='⏱ התוכנית למטה חושבה על מחיר '+num('$'+at.toFixed(2))+
+            ', והמחיר עכשיו '+num('$'+livePrice.toFixed(2))+
+            ' ('+num((drift>=0?'+':'')+drift.toFixed(1)+'%')+'). '+
+            'הרמות עצמן לא השתנו, המרחקים אליהן כן.';
+  if(!note){
+    note=document.createElement('div');
+    note.id='planStale';
+    note.className='plan-stale';
+    box.insertBefore(note,box.firstChild);
+  }
+  note.textContent=txt;
 }
 
 // ── ANALYZE ──
@@ -3008,7 +3138,7 @@ async function analyze(){
       const rh=await fetch(API+'/history/'+t+'?range=5y&interval=1wk');
       const dh=await rh.json();
       if(dh&&Array.isArray(dh.closes)&&dh.closes.length>30&&Array.isArray(dh.highs)&&dh.highs.length){
-        longZones=zones(dh.closes,dh.highs,dh.lows,price);
+        longZones=zones(dh.closes,dh.highs,dh.lows,price,dh.labels);
         const hs=dh.highs.filter(v=>v!=null),ls=dh.lows.filter(v=>v!=null);
         if(hs.length)ltHigh=parseFloat(Math.max.apply(null,hs).toFixed(2));
         if(ls.length)ltLow=parseFloat(Math.min.apply(null,ls).toFixed(2));
@@ -3020,7 +3150,7 @@ async function analyze(){
         if(ltHigh!=null&&price>=ltHigh*0.999)atMultiYearHigh=true;
       }
     }catch(e){}
-    const dailyZones=zones(d,highs,lows,price);
+    const dailyZones=zones(d,highs,lows,price,lb);
     const zs=longZones.length?mergeZones(dailyZones,longZones,price):dailyZones;
     window.__ltContext={ltHigh,ltLow,ltYears,atMultiYearHigh,
       weeklyZoneCount:longZones.length,mergedZoneCount:zs.length};
@@ -3142,6 +3272,9 @@ async function analyze(){
       getAI({ticker:t,price:price.toFixed(2),rsiVal:rv_,m9:lm9?.toFixed(2),m20:lm20?.toFixed(2),sg,zs,zsDaily:dailyZones,bullPct:sentData?.bull_pct,bearPct:sentData?.bear_pct,pe:json.pe_ratio,lows:lows,sector:json.sector,weekHigh:wHigh,weekLow:wLow,change5dPct,relVolume,daysToEarnings:json.days_to_earnings,twinStats}).then(res=>{
         const el=document.getElementById('aiText');
         if(el){el.className='ai-text';el.textContent=res.text||'לא ניתן לטעון ניתוח AI.';}
+        // המחיר שעליו נבנתה התוכנית — כדי שטיק מאוחר יותר ידע להגיד
+        // שהמספרים שמתחת כבר לא מתארים את המצב
+        window.__planPrice=price;
         // ── התרחיש השלילי בשורה נפרדת ובולטת, מתחת לניתוח. במכוון לא בתוך
         // הפסקה: זו הנקודה שבה התמונה מתבטלת, והיא לא אמורה להיבלע בטקסט. ──
         // ── הודעת "אין מבנה קרוב" ממסגרת את כל התוכנית שמתחתיה ──
