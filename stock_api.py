@@ -1,4 +1,5 @@
 import hashlib
+import math
 import os
 import re
 import threading
@@ -1411,6 +1412,128 @@ def _call_groq_with_fallback(payload: dict):
 # הוספת אינדיקטור חדש נעשית פעם אחת כאן ומשפיעה מיד על שתיהן. cache_fields
 # הוא אותה רשימת שדות ששימשה בעבר לבניית מפתח המטמון בכל endpoint בנפרד,
 # כך שמפתחות מטמון קיימים ממשיכים להיות תקפים אחרי הריפקטור הזה. ──
+# ── הקידומת שהדפדפן שולח כשאין מספיק ימי מסחר לחישוב הממוצעים.
+# מוגדרת כקבוע כדי ששינוי בנוסח בצד אחד לא ינתק בשקט את הזיהוי בצד השני. ──
+TREND_UNAVAILABLE_PREFIX = "לא זמין"
+
+# ══════════════════════════════════════════════════════════════════════
+# התקדים ההיסטורי — מחושב כאן, בקוד.
+#
+# עד כה המספרים האלה הגיעו מגוף הבקשה של הדפדפן ונכנסו לפרומפט בלי שום
+# אימות. לפי התקן של הפרויקט — "מספרים שמוצגים למשתמש מחושבים בקוד" —
+# זה היה החריג היחיד שנותר: הנתון הסטטיסטי היחיד בפרומפט שאיש לא חישב
+# בצד שלנו. כאן הוא מחושב מהסדרה שכבר נמצאת במטמון של /stock, כלומר
+# מאותו מערך בדיוק שהדפדפן קיבל — ולכן המספר שהמודל מקבל זהה למה
+# שהמשתמש רואה בחלון "תאום מוזר בזמן", ולא רק דומה לו.
+#
+# הפרמטרים חייבים להישאר זהים לאלה שבדפדפן (20/10/3). שינוי באחד הצדדים
+# בלבד יחזיר בדיוק את הסתירה שהמנגנון הזה נועד למנוע.
+# ══════════════════════════════════════════════════════════════════════
+
+TWIN_WINDOW = 20        # אורך חלון ההשוואה בימי מסחר
+TWIN_FORWARD = 10       # כמה ימים קדימה נמדדים אחרי כל תקדים
+TWIN_TOP_K = 3          # כמה תקדימים נלקחים
+
+
+def _twins_from_closes(closes, window_len=TWIN_WINDOW,
+                       forward_len=TWIN_FORWARD, top_k=TWIN_TOP_K):
+    """מוצא את התקופות שבהן תבנית המחיר דמתה ביותר למצב הנוכחי.
+
+    מחזיר None כשאין מספיק היסטוריה — וזו תשובה תקינה, לא כשל.
+
+    שתי נקודות עדינות שהועתקו מהמימוש בדפדפן בכוונה:
+    1. ההשוואה נעשית על שינוי באחוזים מתחילת החלון, ולא על מחירים — אחרת
+       המדד מודד את רמת המחיר ולא את הצורה.
+    2. שני חלונות שמתחילים בהפרש של יום-יומיים הם אותו אירוע שנספר
+       פעמיים. לכן נדרשת אי-חפיפה מלאה בין התקדימים הנבחרים.
+    """
+    clean = [float(c) for c in (closes or []) if isinstance(c, (int, float))]
+    n = len(clean)
+    cur_start = n - window_len
+    if cur_start < 0:
+        return None
+    cur_win = clean[cur_start:n]
+    base = cur_win[0]
+    if not base or base <= 0:
+        return None
+    cur_pct = [(v / base - 1) * 100 for v in cur_win]
+
+    candidates = []
+    max_start = cur_start - window_len - forward_len
+    for i in range(0, max_start + 1):
+        win = clean[i:i + window_len]
+        b = win[0]
+        if not b or b <= 0:
+            continue
+        ssd = 0.0
+        for k in range(window_len):
+            diff = (win[k] / b - 1) * 100 - cur_pct[k]
+            ssd += diff * diff
+        end_idx = i + window_len - 1
+        fwd_idx = end_idx + forward_len
+        if fwd_idx >= n or not clean[end_idx]:
+            continue
+        candidates.append({
+            "start": i,
+            "dist": math.sqrt(ssd / window_len),
+            "fwd": (clean[fwd_idx] / clean[end_idx] - 1) * 100,
+        })
+    if len(candidates) < top_k:
+        return None
+    candidates.sort(key=lambda c: c["dist"])
+
+    top = []
+    for c in candidates:
+        if len(top) >= top_k:
+            break
+        if any(abs(s["start"] - c["start"]) < window_len for s in top):
+            continue
+        top.append(c)
+    if len(top) < top_k:
+        return None
+
+    avg_fwd = sum(c["fwd"] for c in top) / len(top)
+    hits = sum(1 for c in top if c["fwd"] > 0)
+
+    # -- שיעור הבסיס של המניה עצמה. בלי המספר הזה "עלייה של 2.1% בממוצע"
+    # נשמע כמו יתרון גם כשכל חלון אקראי באותה מניה החזיר 2.0%. --
+    b_sum = 0.0
+    b_cnt = 0
+    for i in range(0, n - forward_len):
+        b0 = clean[i]
+        if not b0 or b0 <= 0:
+            continue
+        b_sum += (clean[i + forward_len] / b0 - 1) * 100
+        b_cnt += 1
+
+    return {
+        "avg_fwd": avg_fwd,
+        "win_rate": round(hits / len(top) * 100),
+        "samples": len(top),
+        "forward_len": forward_len,
+        "base_fwd": (b_sum / b_cnt) if b_cnt else None,
+    }
+
+
+def _server_twins(ticker):
+    """מחשב את התקדים מהסדרה שכבר במטמון של /stock.
+
+    בכוונה בלי קריאת רשת: הזרימה באפליקציה היא /stock ואז /ai תוך שניות,
+    ולכן המטמון חם והמערך הוא בדיוק זה שהדפדפן קיבל. אם הוא התקרר —
+    מחזירים None, וזה המצב היחיד שבו נופלים חזרה למספרים מהדפדפן.
+    """
+    if not ticker:
+        return None
+    try:
+        cached = cache_get("stock:" + str(ticker), 300)
+        if not cached:
+            return None
+        return _twins_from_closes(cached.get("closes"))
+    except Exception:
+        log.warning("server twin computation failed for %s", ticker, exc_info=True)
+        return None
+
+
 def _extract_stock_facts(body: dict):
     ticker = body.get("ticker", "")
     trend = body.get("trend", "")
@@ -1435,6 +1558,22 @@ def _extract_stock_facts(body: dict):
     twin_forward_len = body.get("twinForwardLen")  # אורך חלון ההמשך בימי מסחר
     twin_base_fwd = body.get("twinBaseFwd")        # תשואת חלון אקראי באותה מניה — נקודת ההשוואה
 
+    # ── ומכאן: אם אנחנו מסוגלים לחשב את זה בעצמנו, המספר שלנו גובר.
+    # המספרים מגוף הבקשה משמשים רק כשהמטמון התקרר ואין לנו במה לחשב. ──
+    _srv_twins = _server_twins(ticker)
+    if _srv_twins:
+        if (isinstance(twin_avg_fwd, (int, float))
+                and abs(_srv_twins["avg_fwd"] - twin_avg_fwd) > 0.5):
+            # לא שוברים כלום — פשוט מתעדים שהדפדפן והשרת לא הסכימו,
+            # וממשיכים עם המספר שחושב כאן.
+            log.warning("twin mismatch for %s: client %.2f vs server %.2f",
+                        ticker, twin_avg_fwd, _srv_twins["avg_fwd"])
+        twin_avg_fwd = _srv_twins["avg_fwd"]
+        twin_win_rate = _srv_twins["win_rate"]
+        twin_samples = _srv_twins["samples"]
+        twin_forward_len = _srv_twins["forward_len"]
+        twin_base_fwd = _srv_twins["base_fwd"]
+
     # ── התרחיש השלילי: הרמה שאם תישבר מבטלת את התמונה, והתמיכה שמתחתיה.
     # שתיהן חושבו באפליקציה מאזורים אמיתיים (יומי + שבועי) — המודל מקבל
     # אותן מוכנות ואסור לו להמציא רמות משלו. ──
@@ -1451,6 +1590,13 @@ def _extract_stock_facts(body: dict):
     lt_years = body.get("ltYears")
     at_multi_year_high = bool(body.get("atMultiYearHigh"))
     max_target_pct = body.get("maxTargetPct")
+
+    # ── ההישג הרחוק: רמה שהמחיר נגע בה בפועל ושאינה חלק מהתוכנית.
+    # היא נמסרת עם התאריך שבו המחיר היה שם, כדי שהמודל יוכל לתאר את
+    # הטווח הגדול בלי להמציא מספר — ובלי להציג אותו כיעד לעסקה. ──
+    reach_level = body.get("reachLevel")
+    reach_pct = body.get("reachPct")
+    reach_last = body.get("reachLast")
 
     # ── "אין מבנה קרוב": כשהרמה הקרובה ביותר רחוקה עשרות אחוזים, מספרי
     # הכניסה והסטופ נכונים מתמטית אך חסרי משמעות מעשית. חובה למסור זאת
@@ -1476,7 +1622,17 @@ def _extract_stock_facts(body: dict):
                 break
 
     facts = ["מניית " + str(ticker) + (" בסקטור " + str(sector) if sector else "") + "."]
-    facts.append("מגמה טכנית (ממוצעים נעים): " + str(trend) + ".")
+    # ── מגמה: מנוקה ומוגבלת באורך לפני שהיא נכנסת לפרומפט. זהו שדה שמגיע
+    # מגוף הבקשה, וכל שדה כזה חייב את אותו טיפול שכותרות החדשות כבר מקבלות —
+    # אחרת נקודת הקצה הזו היא מודל שפה כללי על חשבוננו. ──
+    trend_txt = " ".join(str(trend).split()).strip()[:120]
+    if not trend_txt or trend_txt.startswith(TREND_UNAVAILABLE_PREFIX):
+        # -- אין מספיק ימי מסחר לממוצעים. קודם הדפדפן שלח "יורד" במצב הזה,
+        # והמודל קיבל מגמה שלא נמדדה מעולם כעובדה. --
+        facts.append("מגמה טכנית: לא ניתן לחשב — אין מספיק ימי מסחר לממוצעים הנעים. "
+                     "אל תתאר מגמה, ואל תסיק כיוון מהיעדר הנתון.")
+    else:
+        facts.append("מגמה טכנית (ממוצעים נעים): " + trend_txt + ".")
     # ── המצב נגזר מהמספר בצד השרת ולא מהטקסט שהגיע מהדפדפן. המודל תיאר בעבר
     # RSI נמוך כ"תנודתיות יתר" — טעות מקצועית — ולכן אומרים לו במפורש. ──
     # הספים הם 30/70 התקניים — אותם ספים שכרטיס המדד באפליקציה כבר מציג,
@@ -1555,6 +1711,19 @@ def _extract_stock_facts(body: dict):
             "היעד הרחוק בשרשרת נמצא " + str(round(max_target_pct, 1)) +
             "% מעל מחיר הכניסה — פוטנציאל חריג בהיקפו, המבוסס על רמה שהמחיר "
             "נגע בה בפועל בעבר ולא על הערכה.")
+
+    # ── ההישג הרחוק, מעבר לתוכנית. המודל מקבל אותו עם ההוראה המפורשת
+    # שזו אינה עסקה: הרמה בדוקה, המרחק אמיתי, ואין לה יחס סיכוי-סיכון
+    # כי המרחק אליה נמדד בשנים ולא בסטופ. ──
+    if (isinstance(reach_level, (int, float))
+            and isinstance(reach_pct, (int, float)) and reach_pct > 0):
+        line = ("הישג רחוק: המחיר נגע בפועל ברמה " + str(round(reach_level, 2)) +
+                ", שהיא " + str(round(reach_pct, 1)) + "% מעל מחיר הכניסה")
+        if isinstance(reach_last, str) and re.match(r"^\d{4}-\d{2}", reach_last):
+            line += " (לאחרונה ב-" + reach_last[:7] + ")"
+        line += (". זו רמה היסטורית בדוקה ולא יעד לעסקה — מותר לציין עד לאן "
+                 "המחיר הגיע בעבר, ואסור לנסח זאת כתחזית, כהבטחה או כיעד.")
+        facts.append(line)
 
     if no_near_structure:
         bits = []
