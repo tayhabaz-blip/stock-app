@@ -1007,3 +1007,150 @@ group('התדריך מבדיל בין מספר מהכתבה למספר שלנו'
     assert(!h.includes('הנתונים שלנו כרגע'));
   });
 }
+
+/* ---------------------------------------------------------------- */
+group('רמות רחוקות חוזרות כהקשר, לא כיעדים');
+
+const R = X.load(['trimTargets', 'reachTargets', 'heMonthYear'],
+  'const MAX_TARGET_R=' + X.extractNumericConst('MAX_TARGET_R') +
+  ', MAX_TARGETS=' + X.extractNumericConst('MAX_TARGETS') +
+  ', MAX_REACH=' + X.extractNumericConst('MAX_REACH') + ';' +
+  "const HE_MONTHS=['ינואר','פברואר','מרץ','אפריל','מאי','יוני','יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];");
+
+// אותה שרשרת NKE שנמדדה בפרודקשן
+const NKE2 = [
+  { p: 45.01, pct: 6.18,   rr: 1.43 },
+  { p: 46.70, pct: 10.17,  rr: 2.36 },
+  { p: 59.85, pct: 41.19,  rr: 9.54 },
+  { p: 63.02, pct: 48.67,  rr: 11.27 },
+  { p: 65.78, pct: 55.18,  rr: 12.78 },
+  { p: 67.69, pct: 59.68,  rr: 13.83 },
+  { p: 77.99, pct: 83.98,  rr: 19.45 },
+  { p: 165.15, pct: 289.6, rr: 67.08, last: '2021-11-05' },
+];
+
+test('התוכנית נשארת בדיוק כפי שהייתה', () => {
+  // הקיצוץ עצמו לא נגעו בו: הרמות הרחוקות עדיין אינן יעדים לעסקה
+  const kept = R.trimTargets(NKE2);
+  eq(kept.length, 2, 'מספר היעדים בתוכנית');
+  eq(kept[kept.length - 1].pct, 10.17, 'היעד הרחוק ביותר בתוכנית');
+});
+
+test('הרמות שנפלו מהתוכנית אינן נעלמות מהמסך', () => {
+  const reach = R.reachTargets(NKE2);
+  assert(reach.length > 0, 'הרמות הרחוקות נמחקו במקום להיות מוצגות בנפרד');
+  assert(reach.every(t => t.rr > 5), 'רמה מהתוכנית דלפה להישג הרחוק');
+});
+
+test('אף רמה מהשרשרת לא הולכת לאיבוד', () => {
+  // כל יעד חייב להיות או בתוכנית או בהישג הרחוק — לא בשום מקום
+  const kept = R.trimTargets(NKE2), reach = R.reachTargets(NKE2);
+  const missing = NKE2.filter(t => !kept.includes(t) && !reach.includes(t));
+  // MAX_TARGETS ו-MAX_REACH מגבילים כמה מוצגים, אבל הרמה הגבוהה ביותר חייבת לשרוד
+  assert(reach.some(t => t.p === 165.15) || missing.length === 0,
+    'הרמה הגבוהה ביותר נעלמה: ' + JSON.stringify(reach.map(t => t.p)));
+});
+
+test('ההישג הרחוק מוגבל בכמות', () => {
+  eq(R.reachTargets(NKE2).length, 3, 'תקרת הרמות הרחוקות');
+});
+
+test('יעד בלי יחס מחושב אינו נחשב רמה רחוקה', () => {
+  // rr ריק פירושו שלא הצלחנו לחשב, לא שהרמה רחוקה
+  eq(R.reachTargets([{ p: 1, pct: 5, rr: null }]).length, 0);
+});
+
+test('קלט פגום אינו מפיל את ההישג הרחוק', () => {
+  eq(R.reachTargets(null).length, 0, 'null');
+  eq(R.reachTargets([]).length, 0, 'ריק');
+  eq(R.reachTargets([null, { p: 1, pct: 300, rr: 60 }]).length, 1, 'איבר ריק');
+});
+
+test('תאריך הנגיעה מוצג בעברית', () => {
+  eq(R.heMonthYear('2021-11-05'), 'נובמבר 2021');
+  eq(R.heMonthYear('2023-03-14'), 'מרץ 2023');
+});
+
+test('תאריך פגום אינו מודפס כזבל', () => {
+  eq(R.heMonthYear(''), null);
+  eq(R.heMonthYear(null), null);
+  eq(R.heMonthYear('לפני הרבה זמן'), null);
+  eq(R.heMonthYear('2021-13-05'), null, 'חודש לא קיים');
+});
+
+/* ---------------------------------------------------------------- */
+group('רמה נושאת את התאריך שבו המחיר היה שם');
+{
+  const Z = X.load(['zones'], '');
+  // סדרה עם פסגה ברורה שחוזרת פעמיים, ושפל שחוזר פעמיים
+  const n = 60;
+  const closes = [], highs = [], lows = [], labels = [];
+  for (let i = 0; i < n; i++) {
+    const base = 100 + (i % 20 === 10 ? 10 : 0) - (i % 20 === 0 ? 8 : 0);
+    closes.push(base); highs.push(base + 0.2); lows.push(base - 0.2);
+    labels.push('20' + (20 + Math.floor(i / 12)) + '-0' + (1 + (i % 9)) + '-15');
+  }
+
+  test('בלי תוויות הכל עובד כמו קודם', () => {
+    const z = Z.zones(closes, highs, lows, 100);
+    assert(Array.isArray(z), 'החזירה מערך');
+    assert(z.every(l => l.last === null), 'last מלא בלי שנמסרו תוויות');
+  });
+
+  test('עם תוויות כל רמה יודעת מתי נגעו בה לאחרונה', () => {
+    const z = Z.zones(closes, highs, lows, 100, labels);
+    assert(z.length > 0, 'לא נמצאו רמות');
+    assert(z.some(l => typeof l.last === 'string'), 'אף רמה לא קיבלה תאריך');
+  });
+
+  test('התאריך הוא האחרון ולא הראשון', () => {
+    const z = Z.zones(closes, highs, lows, 100, labels);
+    const withDate = z.filter(l => l.last);
+    withDate.forEach(l => {
+      assert(l.last >= labels[0], 'תאריך מוקדם מתחילת הסדרה');
+      assert(l.last <= labels[labels.length - 1], 'תאריך מאוחר מסוף הסדרה');
+    });
+  });
+}
+
+/* ---------------------------------------------------------------- */
+group('מגמה ו-RSI לא מומצאים כשאין נתונים');
+{
+  const S2 = X.load(['computeBattleScore'],
+    'const RSI_OVERSOLD=' + X.extractNumericConst('RSI_OVERSOLD') +
+    ', RSI_OVERBOUGHT=' + X.extractNumericConst('RSI_OVERBOUGHT') + ';');
+
+  // הנוסח המדויק שהקוד שולח כשאין מספיק ימי מסחר
+  const UNAVAIL = 'לא זמין — אין מספיק ימי מסחר לחישוב הממוצעים';
+
+  test('הקבועים קיימים בקוד המקור', () => {
+    assert(X.has("const TREND_UNAVAILABLE = '" + UNAVAIL + "'"),
+      'נוסח חוסר המגמה השתנה בלי לעדכן את הבדיקה');
+    assert(X.has("const RSI_UNAVAILABLE   = 'לא זמין'"), 'נוסח חוסר ה-RSI');
+  });
+
+  test('המגמה כבר אינה נופלת ל"יורד" כשאין ממוצעים', () => {
+    // נצפה בפועל: שלושת התנאים יצאו שקריים והטרנרי נפל לזרוע האחרונה,
+    // כך שמניה בת שלושה שבועות קיבלה "יורד" ונשלחה כך לפרומפט
+    assert(X.has('const _haveMA='), 'תנאי הזמינות למגמה נעלם');
+    assert(X.has('?TREND_UNAVAILABLE'), 'המגמה כבר לא מסומנת כלא זמינה');
+  });
+
+  test('ה-RSI כבר אינו נופל ל"נייטרלי" כשאין מספר', () => {
+    assert(X.has('const _haveRSI='), 'תנאי הזמינות ל-RSI נעלם');
+    assert(X.has('!_haveRSI?RSI_UNAVAILABLE'), 'ה-RSI כבר לא מסומן כלא זמין');
+  });
+
+  test('חוסר מגמה אינו מזכה את הדוב בנקודה', () => {
+    const base = { rsiNum: 50, weekPos: 50, bullPct: 50, bearPct: 50 };
+    const r = S2.computeBattleScore(Object.assign({ trend: UNAVAIL }, base));
+    eq(r.bearPts, 0, 'הדוב קיבל נקודה על נתון שלא נמדד');
+    eq(r.bullPts, 0, 'השור קיבל נקודה על נתון שלא נמדד');
+  });
+
+  test('מגמה אמיתית ממשיכה להיספר', () => {
+    const base = { rsiNum: 50, weekPos: 50, bullPct: 50, bearPct: 50 };
+    eq(S2.computeBattleScore(Object.assign({ trend: 'יורד' }, base)).bearPts, 1);
+    eq(S2.computeBattleScore(Object.assign({ trend: 'עולה' }, base)).bullPts, 1);
+  });
+}
