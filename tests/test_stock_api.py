@@ -4544,3 +4544,155 @@ class TestHebrewTypographyGuards:
                               "“שׁמִיד” מהפד אמר שהאינפלציה עיקשת ושהריבית תישאר גבוהה."}}]}):
             out = api._brief_what("Schmid speaks", "")
         assert out == '"שמיד" מהפד אמר שהאינפלציה עיקשת ושהריבית תישאר גבוהה.'
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# התקדים ההיסטורי מחושב אצלנו, לא מתקבל כנתון
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _synthetic_series(n=260, seed=42):
+    """סדרת מחירים דטרמיניסטית, כדי שהבדיקות לא ירצדו בין הרצות."""
+    import random
+    r = random.Random(seed)
+    p = 100.0
+    out = []
+    for _ in range(n):
+        p *= (1 + r.gauss(0.0006, 0.018))
+        out.append(round(p, 4))
+    return out
+
+
+class TestTwinsComputedInCode:
+    """עד כה המספרים על התקדים ההיסטורי הגיעו מגוף הבקשה של הדפדפן ונכנסו
+    לפרומפט בלי אימות — החריג האחרון לכלל "מספרים מחושבים בקוד". עכשיו הם
+    מחושבים כאן, מאותה סדרה בדיוק שהדפדפן קיבל מ-/stock.
+
+    המימוש אומת מול המימוש בדפדפן על אותה סדרה: שניהם החזירו
+    avgFwd=0.7629483654030192 ו-baseFwd=2.7441191777307976, זהים בכל הספרות."""
+
+    def test_short_history_is_not_an_error(self):
+        assert api._twins_from_closes([1.0] * 5) is None
+        assert api._twins_from_closes([]) is None
+        assert api._twins_from_closes(None) is None
+
+    def test_returns_the_documented_shape(self):
+        r = api._twins_from_closes(_synthetic_series())
+        assert r is not None
+        assert r["samples"] == api.TWIN_TOP_K
+        assert r["forward_len"] == api.TWIN_FORWARD
+        assert 0 <= r["win_rate"] <= 100
+        assert isinstance(r["base_fwd"], float)
+
+    def test_matches_the_browser_implementation(self):
+        # -- המספר שנמדד מול computeTwins בדפדפן על אותה סדרה. אם אחד
+        # הצדדים ישתנה בלי השני, המודל יקבל מספר אחר ממה שהמשתמש רואה
+        # בחלון "תאום מוזר בזמן" — בדיוק הסתירה שהמנגנון נועד למנוע. --
+        r = api._twins_from_closes(_synthetic_series())
+        assert round(r["avg_fwd"], 10) == round(0.7629483654030192, 10)
+        assert round(r["base_fwd"], 10) == round(2.7441191777307976, 10)
+        assert r["win_rate"] == 33
+
+    def test_precedents_do_not_overlap(self):
+        # שני חלונות שמתחילים בהפרש של יום הם אותו אירוע שנספר פעמיים
+        r = api._twins_from_closes(_synthetic_series())
+        assert r["samples"] == 3
+
+    def test_server_numbers_override_the_browser(self):
+        _clear_cache()
+        series = _synthetic_series()
+        cache_set("stock:AAPL", {"closes": series})
+        body = {"ticker": "AAPL", "trend": "עולה", "rsiNum": 55,
+                "twinAvgFwd": 99.9, "twinWinRate": 100, "twinSamples": 3,
+                "twinForwardLen": 10, "twinBaseFwd": -50.0}
+        _, facts, _ = api._extract_stock_facts(body)
+        joined = " ".join(facts)
+        assert "99.9%" not in joined, "המספר מהדפדפן דלף לפרומפט"
+        assert "0.8%" in joined, joined
+        _clear_cache()
+
+    def test_falls_back_to_the_browser_when_the_cache_is_cold(self):
+        _clear_cache()
+        body = {"ticker": "AAPL", "trend": "עולה", "rsiNum": 55,
+                "twinAvgFwd": 4.23, "twinWinRate": 67, "twinSamples": 3,
+                "twinForwardLen": 10}
+        _, facts, _ = api._extract_stock_facts(body)
+        assert "4.2%" in " ".join(facts)
+
+    def test_no_history_means_no_precedent_claim(self):
+        _clear_cache()
+        cache_set("stock:AAPL", {"closes": [1.0] * 5})
+        body = {"ticker": "AAPL", "trend": "עולה", "rsiNum": 55}
+        _, facts, _ = api._extract_stock_facts(body)
+        assert api.PRECEDENT_PREFIX not in " ".join(facts)
+        _clear_cache()
+
+
+class TestTrendIsNotInvented:
+    """כשאין מספיק ימי מסחר לממוצעים הנעים, הדפדפן שלח "יורד" — מגמה
+    שלא נמדדה מעולם — והיא נכנסה לפרומפט כעובדה, בזמן שהכרטיס שליד
+    הציג "אין מספיק נתונים"."""
+
+    def test_unavailable_trend_is_not_described_as_falling(self):
+        body = {"ticker": "NEWCO", "rsiNum": 55,
+                "trend": api.TREND_UNAVAILABLE_PREFIX + " — אין מספיק ימי מסחר לחישוב הממוצעים"}
+        _, facts, _ = api._extract_stock_facts(body)
+        joined = " ".join(facts)
+        assert "לא ניתן לחשב" in joined
+        assert "מגמה טכנית (ממוצעים נעים)" not in joined
+
+    def test_the_model_is_told_not_to_infer_direction(self):
+        body = {"ticker": "NEWCO", "rsiNum": 55, "trend": api.TREND_UNAVAILABLE_PREFIX}
+        _, facts, _ = api._extract_stock_facts(body)
+        assert "אל תסיק כיוון" in " ".join(facts)
+
+    def test_a_real_trend_still_reaches_the_prompt(self):
+        body = {"ticker": "AAPL", "rsiNum": 55, "trend": "עולה"}
+        _, facts, _ = api._extract_stock_facts(body)
+        assert "מגמה טכנית (ממוצעים נעים): עולה." in " ".join(facts)
+
+    def test_an_unbounded_trend_string_is_truncated(self):
+        # שדה מגוף הבקשה שנכנס לפרומפט בתשלום — חייב תקרת אורך,
+        # בדיוק כמו שכותרות החדשות כבר מקבלות
+        body = {"ticker": "AAPL", "rsiNum": 55, "trend": "א" * 5000}
+        _, facts, _ = api._extract_stock_facts(body)
+        trend_fact = [f for f in facts if f.startswith("מגמה טכנית")][0]
+        assert len(trend_fact) < 200
+
+
+class TestFarReachIsContextNotATarget:
+    """מקרה NKE: הרמה 165.15 היא רמה אמיתית שהמחיר נגע בה, והצגתה כ"יעד 8
+    עם סיכוי מול סיכון 67.08:1" הייתה השקר. הרמה חוזרת למסך כעובדה
+    היסטורית עם תאריך, בלי מספור של יעד ובלי יחס."""
+
+    BASE = {"ticker": "NKE", "rsiNum": 45, "trend": "יורד"}
+
+    def test_reach_reaches_the_prompt_with_its_date(self):
+        body = dict(self.BASE, reachLevel=165.15, reachPct=289.6, reachLast="2021-11-05")
+        _, facts, _ = api._extract_stock_facts(body)
+        joined = " ".join(facts)
+        assert "הישג רחוק" in joined
+        assert "165.15" in joined
+        assert "2021-11" in joined
+
+    def test_the_model_is_forbidden_to_call_it_a_target(self):
+        body = dict(self.BASE, reachLevel=165.15, reachPct=289.6)
+        _, facts, _ = api._extract_stock_facts(body)
+        line = [f for f in facts if f.startswith("הישג רחוק")][0]
+        assert "ולא יעד לעסקה" in line
+        assert "אסור לנסח זאת כתחזית" in line
+
+    def test_no_ratio_is_offered_for_it(self):
+        body = dict(self.BASE, reachLevel=165.15, reachPct=289.6)
+        _, facts, _ = api._extract_stock_facts(body)
+        line = [f for f in facts if f.startswith("הישג רחוק")][0]
+        assert ":1" not in line, "יחס סיכוי-סיכון דלף לרמה רחוקה"
+
+    def test_absent_reach_adds_nothing(self):
+        _, facts, _ = api._extract_stock_facts(dict(self.BASE))
+        assert not any(f.startswith("הישג רחוק") for f in facts)
+
+    def test_a_malformed_date_is_dropped_not_printed(self):
+        body = dict(self.BASE, reachLevel=165.15, reachPct=289.6, reachLast="לפני הרבה זמן")
+        _, facts, _ = api._extract_stock_facts(body)
+        line = [f for f in facts if f.startswith("הישג רחוק")][0]
+        assert "לאחרונה" not in line
